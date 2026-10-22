@@ -52,7 +52,7 @@ if (name === "claude") {
 }
 
 if (process.env.FAKE_LOG) {
-  appendFileSync(process.env.FAKE_LOG, `${JSON.stringify({ name, args, cwd: process.cwd(), promptBytes: prompt.length })}\n`);
+  appendFileSync(process.env.FAKE_LOG, `${JSON.stringify({ name, pid: process.pid, args, cwd: process.cwd(), promptBytes: prompt.length })}\n`);
 }
 
 const once = (key) => {
