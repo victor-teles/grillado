@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { build } from "esbuild";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -15,4 +15,5 @@ await build({
   banner: { js: "#!/usr/bin/env node" },
   define: { __GRILLADO_VERSION__: JSON.stringify(pkg.version) },
 });
+chmodSync("dist/cli.js", 0o755);
 console.log("built dist/cli.js");

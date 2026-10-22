@@ -266,7 +266,7 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply): string {
   for (const d of decisions) {
     const how = d.kind === "unknown" ? "left to a default" : d.accepted_recommendation ? "accepted the recommendation" : "your call";
     const statement = statements.get(d.key);
-    lines.push(`- **[R${d.round}:${d.key}]** ${d.title}: ${d.answer} (${how})${statement ? `. ${statement}` : ""}`);
+    lines.push(`- **[R${d.round}:${d.key}]** ${d.title} → ${d.answer} (${how})${statement ? `. ${statement}` : ""}`);
   }
   const open = [...new Set([...openQuestions(s).map((q) => q.title), ...plan.openDecisions])];
   if (open.length) {
