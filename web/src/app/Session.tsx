@@ -292,6 +292,23 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
                   </div>
                 </div>
                 <div className="dl">
+                  {early ? (
+                    <section aria-labelledby="grp-open">
+                      <h2 className="g" id="grp-open">
+                        Still open
+                      </h2>
+                      <dl style={{ margin: 0 }}>
+                        {open.map((x) => (
+                          <div className="row open-q" key={x.id}>
+                            <dt>{x.label}</dt>
+                            <dd>
+                              <span className="ans">Open · listed in the plan</span>
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  ) : null}
                   {groups.map((g, gi) => (
                     <section key={g.title} aria-labelledby={`grp-${gi}`}>
                       <h2 className="g" id={`grp-${gi}`}>
@@ -316,23 +333,6 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
                       </dl>
                     </section>
                   ))}
-                  {early ? (
-                    <section aria-labelledby="grp-open">
-                      <h2 className="g" id="grp-open">
-                        Still open
-                      </h2>
-                      <dl style={{ margin: 0 }}>
-                        {open.map((x) => (
-                          <div className="row open-q" key={x.id}>
-                            <dt>{x.label}</dt>
-                            <dd>
-                              <span className="ans">Open · listed in the plan</span>
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </section>
-                  ) : null}
                 </div>
                 {mobile ? null : (
                   <div className="ft">

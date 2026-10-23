@@ -102,7 +102,12 @@ function inline(text: string, ctx: { cite?: CiteRenderer; n: number }): ReactNod
       skip = false;
       return;
     }
-    if (p.startsWith("**") && p.endsWith("**")) nodes.push(<strong key={n}>{p.slice(2, -2)}</strong>);
+    if (p.startsWith("**") && p.endsWith("**")) {
+      const inner = p.slice(2, -2);
+      // "**[R1:platform]**" (the generated decision log) renders as plain citation chips.
+      if (ctx.cite && new RegExp(`^${CITE.source}$`).test(inner)) nodes.push(<Fragment key={n}>{inline(inner, ctx)}</Fragment>);
+      else nodes.push(<strong key={n}>{inline(inner, ctx)}</strong>);
+    }
     else if (p.startsWith("`") && p.endsWith("`") && p.length > 1) nodes.push(<code key={n}>{p.slice(1, -1)}</code>);
     else if (CITE.test(p) && p.startsWith("[")) {
       // The capture group repeats the inner text as the next part; skip it.

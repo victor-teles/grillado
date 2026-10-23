@@ -323,9 +323,6 @@ export function MobileStrip({ tree, open, onToggle }: { tree: TreeState; open: b
           <span className="ember" style={{ fontWeight: 600 }}>
             {word}
           </span>
-          <span>
-            · {tree.counts.settled} settled · {tree.counts.open} open
-          </span>
         </div>
         <div className="mdots" aria-hidden="true">
           {dots.map((n) => (

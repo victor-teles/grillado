@@ -228,7 +228,7 @@ function RoundForm({ session, round, act, banner }: { session: SessionView; roun
       <AgentQuestionFooter className="bar">
         <Stats session={session} />
         <span className="spacer" />
-        <button type="button" className="pill secondary wrap-btn" onClick={() => void act("wrap").catch(() => {})} disabled={status === "submitting"}>
+        <button type="button" className="pill secondary wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})} disabled={status === "submitting"}>
           Wrap it up
         </button>
       </AgentQuestionFooter>
@@ -387,7 +387,7 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
                 <Stats session={session} />
               )}
               <span className="spacer" />
-              <button type="button" className="pill secondary wrap-btn" onClick={() => void act("wrap").catch(() => {})}>
+              <button type="button" className="pill secondary wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})}>
                 Wrap it up
               </button>
               <button type="button" className="pill primary" disabled>

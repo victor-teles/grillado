@@ -449,7 +449,10 @@ button.agent:not(:disabled):hover{background:var(--muted)}
   .q[data-active] .opt.mini .od{display:none}
   .stats{gap:10px}
   .stat.el{display:none}
-  .bar .wrap-btn{display:none}
+  /* Mobile: a ghost "Wrap it up" left of Send, once something is settled (also in the ⋯ menu). */
+  .bar .wrap-btn{background:transparent;box-shadow:none;color:var(--muted-foreground);padding:0 10px;flex-shrink:0}
+  .bar .wrap-btn:not([data-has-settled]){display:none}
+  .bar .stats{gap:10px}
   .side,.side2{display:none}
   .side[data-sheet]{display:grid;position:fixed;left:0;right:0;bottom:0;top:132px;z-index:40;border:0;border-top:1px solid var(--border-strong);border-radius:18px 18px 0 0;box-shadow:0 -20px 50px oklch(0 0 0/.45);grid-template-rows:auto auto auto minmax(0,1fr) auto;background:var(--background)}
   .side[data-sheet]::before{content:"";justify-self:center;width:36px;height:4px;border-radius:4px;background:var(--border-strong);margin-top:8px}
@@ -567,5 +570,13 @@ html.light{--success-ink:oklch(0.47 0.14 153);--warning-ink:oklch(0.5 0.15 55)}
 .q [data-slot=agent-question-option].mini[data-selected]>label>span:nth-child(2)>span:first-child{color:var(--foreground)}
 .q:not([data-active]) [data-slot=agent-question-option].mini>label>span:nth-child(2)>span+span{display:none}
 /* "I don't know" on the active card: its note sits inline after the label, as on the board. */
-.q [data-slot=agent-question-option].unk>label>span:nth-child(2){display:flex;flex-wrap:wrap;align-items:baseline;column-gap:6px}
-.q [data-slot=agent-question-option].unk>label>span:nth-child(2)>span+span::before{content:"· ";color:var(--border-strong)}
+@media (min-width:768px){
+  .q [data-slot=agent-question-option].unk>label>span:nth-child(2){display:flex;flex-wrap:wrap;align-items:baseline;column-gap:6px}
+  .q [data-slot=agent-question-option].unk>label>span:nth-child(2)>span+span::before{content:"· ";color:var(--border-strong)}
+}
+/* Mobile: "I don't know" uses the regular option row, its hint a muted second line. */
+@media (max-width:767px){
+  .q [data-slot=agent-question-option].unk>label{padding-top:10px;padding-bottom:10px}
+  .q [data-slot=agent-question-option].unk>label>span:nth-child(2)>span:first-child{font-weight:500;color:var(--foreground)}
+  .q [data-slot=agent-question-option].unk>label>span:nth-child(2)>span+span{display:block}
+}
