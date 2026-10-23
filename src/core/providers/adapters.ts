@@ -60,6 +60,9 @@ export const codexSpec: AdapterSpec = {
       "exec",
       "--sandbox",
       "read-only",
+      // exec already defaults to never asking; pin it so a user config can't add a prompt.
+      "-c",
+      'approval_policy="never"',
       "--skip-git-repo-check",
       "--ephemeral",
       "--ignore-rules",

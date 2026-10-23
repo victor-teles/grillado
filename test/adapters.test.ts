@@ -37,7 +37,7 @@ describe("AC4: exact argv per adapter (tools off / read-only)", () => {
   test("codex", () => {
     expect(SPECS.codex.buildInvocation(req, files)).toEqual({
       args: [
-        "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "--color", "never",
+        "exec", "--sandbox", "read-only", "-c", 'approval_policy="never"', "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "--color", "never",
         "-C", "/tmp/agent-cwd", "--output-schema", "/tmp/run/schema.json", "-o", "/tmp/run/output.json", "-",
       ],
       stdin: "SYSTEM\n\n---\n\nUSER",
