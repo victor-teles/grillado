@@ -120,11 +120,11 @@ for (const vp of ["d", "m"]) {
         await snap("3-round-tree-sheet");
         await pg.keyboard.press("Escape");
       }
-      await pg.getByRole("button", { name: /Send answers/ }).click();
+      await pg.getByRole("button", { name: /Send round/ }).click();
       await pg.getByText("Preparing round 2").waitFor();
       await snap("3-waiting");
       await pg.getByText("Keep data local first?").waitFor({ timeout: 15000 });
-      await pg.getByRole("button", { name: /Send answers/ }).click();
+      await pg.getByRole("button", { name: /Send round/ }).click();
       await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15000 });
       await snap("4-confirm");
       await pg.getByRole("button", { name: "Reopen Platform" }).click();
@@ -155,7 +155,7 @@ for (const vp of ["d", "m"]) {
       for (const t of ["Build it for yourself first?", "Start with the capture flow?", "Include search in v1?", "Sync across devices?"]) {
         await pg.getByText(t).first().waitFor({ timeout: 15000 });
         if (vp === "m" && t === "Start with the capture flow?") await snap("3-round-wrap"); // ghost Wrap it up, 1+ settled
-        await pg.getByRole("button", { name: /Send answers/ }).click();
+        await pg.getByRole("button", { name: /Send round/ }).click();
         await pg.getByText(t).first().waitFor({ state: "detached", timeout: 15000 });
       }
       await pg.getByTestId("nudge").waitFor({ timeout: 15000 });

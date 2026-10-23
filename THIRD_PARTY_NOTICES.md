@@ -37,7 +37,7 @@ Copyright (c) 2023 shadcn) and the uai registry (https://uaiblocks.dev,
 https://github.com/victor-teles/uai, MIT, Copyright (c) 2026 Victor Mesquita).
 
 `web/src/components/ui/uai/agent-question.tsx` is vendored from uai PR #56 (stacked layout,
-commit 5120fb7) until that change is released; the same MIT terms apply.
+commit ed7da38) until that change is released; the same MIT terms apply.
 
 ## Fonts
 

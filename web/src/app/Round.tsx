@@ -181,9 +181,7 @@ function RoundForm({ session, round, act, banner }: { session: SessionView; roun
       value={values}
       onValueChange={setValues}
       onSubmit={(v, meta) => void submit(v, meta.untouched)}
-      // Uai #56 puts role="form" on its <section>, which axe rejects (aria-allowed-role: form is not
-      // an allowed role for section). Dropped here; the labelled section is still a named region.
-      role={undefined}
+      submitLabel="Send round"
     >
       <div className="scroll">
         <div className="col">
@@ -391,7 +389,7 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
                 Wrap it up
               </button>
               <button type="button" className="pill primary" disabled>
-                Send answers
+                Send round <kbd aria-hidden="true">↵</kbd>
               </button>
             </div>
           </div>

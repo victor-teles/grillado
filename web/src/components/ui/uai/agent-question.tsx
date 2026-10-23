@@ -4,7 +4,7 @@
  *  VENDORED, TEMPORARY: Uai "agent-question" with the stacked layout, ahead of its release.
  *
  *  Copied verbatim from victor-teles/uai PR #56 (branch feat/agent-question-stacked, commit
- *  5120fb7, src/registry/uai/components/agent-question.tsx). It is the registry's existing
+ *  ed7da38, src/registry/uai/components/agent-question.tsx). It is the registry's existing
  *  `agent-question` item with `layout="stacked"`, so once #56 ships, swapping this file is a
  *  plain reinstall over it (`npx shadcn add @uai/agent-question`); no import changes.
  *  Grillado-specific visuals live in web/src/styles/grillado.css, never in this file.
@@ -18,6 +18,7 @@ import {
   Children,
   type ComponentProps,
   createContext,
+  type FormEvent,
   isValidElement,
   type KeyboardEvent,
   type ReactNode,
@@ -76,6 +77,7 @@ type AgentQuestionContextValue = {
   variant: AgentQuestionVariant;
   layout: AgentQuestionLayout;
   recommendedLabel: string;
+  submitLabel: string;
   preselectRecommended: boolean;
   activeId: string | undefined;
   activate: (id: string, options?: { focus?: boolean }) => void;
@@ -201,6 +203,8 @@ export type AgentQuestionProps = Omit<ComponentProps<"section">, "onSubmit" | "d
   layout?: AgentQuestionLayout;
   /** The chip on recommended options and the word in their accessible name. */
   recommendedLabel?: string;
+  /** Stacked only: the text, and so the accessible name, of the one submit button. */
+  submitLabel?: string;
   /** Start each question with its recommended option chosen, drawn as untouched until the user touches it. */
   preselectRecommended?: boolean;
   /** Controlled active item (stacked only): the one that takes the number keys. */
@@ -237,6 +241,7 @@ export function AgentQuestion({
   variant = "card",
   layout = "stepper",
   recommendedLabel = "Recommended",
+  submitLabel = "Send answers",
   preselectRecommended = false,
   activeItem: activeItemProp,
   defaultActiveItem,
@@ -693,6 +698,7 @@ export function AgentQuestion({
     variant,
     layout,
     recommendedLabel,
+    submitLabel,
     preselectRecommended,
     activeId,
     activate,
@@ -725,19 +731,31 @@ export function AgentQuestion({
     primaryRef,
   };
 
+  // Stacked submits the whole set at once, so its root is a real form named by the header;
+  // the stepper stays a section. Enter is handled by the keyboard model, never by the browser.
+  const Root = (stacked ? "form" : "section") as "section";
+
   return (
     <AgentQuestionContext.Provider value={value}>
       <SummaryHeadingContext.Provider value={summaryHeadingRef}>
         {/* Number keys, arrows and Enter are delegated from the options and the input. */}
-        <section
+        <Root
           ref={sectionRef}
           data-slot="agent-question"
           data-variant={variant}
           data-layout={layout}
           data-status={status}
           aria-busy={busy || undefined}
-          role={stacked ? "form" : undefined}
           aria-labelledby={stacked ? headingId : undefined}
+          {...(stacked
+            ? {
+                noValidate: true,
+                onSubmit: (event: FormEvent<HTMLElement>) => {
+                  event.preventDefault();
+                  if (!busy && !collapsed && canSubmit) submit();
+                },
+              }
+            : {})}
           className={cn(
             stacked ? stackedRootVariants({ variant }) : rootVariants({ variant }),
             collapsed && "border-0 bg-transparent",
@@ -779,7 +797,7 @@ export function AgentQuestion({
           <span role="status" className="sr-only">
             {status === "answered" ? "Answers sent" : stacked ? announcement : ""}
           </span>
-        </section>
+        </Root>
       </SummaryHeadingContext.Provider>
     </AgentQuestionContext.Provider>
   );
@@ -1705,7 +1723,7 @@ export function AgentQuestionFooter({ className, children, ...props }: Component
   );
 }
 
-/** Stacked: key hints and the one "Send answers" for the whole set. */
+/** Stacked: key hints and the one submit (`submitLabel`, "Send answers") for the whole set. */
 function StackedFooter({ className, children, ...props }: ComponentProps<"div">) {
   const context = useAgentQuestion("AgentQuestionFooter");
   const compact = context.variant === "compact";
@@ -1773,7 +1791,7 @@ function StackedFooter({ className, children, ...props }: ComponentProps<"div">)
             context.busy ? "disabled:opacity-60" : "disabled:opacity-50",
           )}
         >
-          {context.busy ? "Sending…" : "Send answers"}
+          {context.busy ? "Sending…" : context.submitLabel}
         </Button>
       </div>
     </div>

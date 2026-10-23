@@ -580,3 +580,5 @@ html.light{--success-ink:oklch(0.47 0.14 153);--warning-ink:oklch(0.5 0.15 55)}
   .q [data-slot=agent-question-option].unk>label>span:nth-child(2)>span:first-child{font-weight:500;color:var(--foreground)}
   .q [data-slot=agent-question-option].unk>label>span:nth-child(2)>span+span{display:block}
 }
+/* "Send round ↵": the key hint is drawn, not part of the label (alt text "" keeps the name "Send round"). */
+.main:not([aria-busy]) .bar [data-slot=agent-question-continue]::after{content:"↵" / "";display:inline-grid;place-items:center;min-width:18px;height:18px;margin-left:8px;padding:0 4px;border-radius:5px;background:color-mix(in oklab,var(--primary-foreground) 18%,transparent);font:500 11px/1 "Geist Mono Variable",monospace}

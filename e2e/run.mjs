@@ -264,7 +264,7 @@ try {
   check("card shows 'Your call' once the pick moves off the suggestion", (await page.getByText("Your call").count()) === 1);
   check(
     "Send focused once every card is answered",
-    await page.waitForFunction(() => document.activeElement?.textContent?.startsWith("Send answers"), null, { timeout: 2000 }).then(
+    await page.waitForFunction(() => document.activeElement?.textContent?.startsWith("Send round"), null, { timeout: 2000 }).then(
       () => true,
       () => false,
     ),
@@ -277,7 +277,7 @@ try {
   check(
     "number key on the last open card never submits",
     (notSent.rounds[0]?.answers?.length ?? 0) === 0 && (await page.getByRole("heading", { name: "2 decisions are ready" }).count()) === 1 &&
-      (await page.evaluate(() => document.activeElement?.textContent?.startsWith("Send answers"))),
+      (await page.evaluate(() => document.activeElement?.textContent?.startsWith("Send round"))),
   );
   await page.keyboard.press("Enter"); // send
   await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
@@ -477,10 +477,10 @@ try {
     await pg.getByText("Build it for yourself first?").waitFor({ timeout: 15_000 });
     const wrapBtn = pg.locator(".bar").getByRole("button", { name: "Wrap it up" });
     check("mobile bar hides Wrap it up before anything is settled", !(await wrapBtn.isVisible()));
-    await pg.getByRole("button", { name: "Send answers" }).click();
+    await pg.getByRole("button", { name: "Send round" }).click();
     await pg.getByText("Start with the capture flow?").waitFor({ timeout: 15_000 });
     check("mobile bar shows Wrap it up once a decision is settled", await wrapBtn.isVisible());
-    const [wb, sb] = [await wrapBtn.boundingBox(), await pg.getByRole("button", { name: "Send answers" }).boundingBox()];
+    const [wb, sb] = [await wrapBtn.boundingBox(), await pg.getByRole("button", { name: "Send round" }).boundingBox()];
     check("mobile Wrap it up sits left of Send", wb && sb && wb.x + wb.width <= sb.x);
     await wrapBtn.click();
     await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
