@@ -210,68 +210,113 @@ try {
 
   await page.goto(url);
   check("token in URL is dropped after load", new URL(page.url()).search === "");
-  await page.getByRole("heading", { name: "Choose your agent" }).waitFor();
-  check("picker shown with 2 agents", true);
+  await page.getByRole("heading", { name: "Which agent should run this?" }).waitFor();
+  check("picker shown with 2 agents", (await page.getByRole("radio").count()) >= 2);
+  check("picker shows each CLI's --version", (await page.getByRole("radiogroup").textContent()).includes("9.9.9-fake"));
   const axePicker = await new AxeBuilder({ page }).analyze();
   check("axe: picker", axePicker.violations.length === 0, axePicker.violations.map((v) => v.id).join(","));
   await page.getByLabel("Remember my choice").check();
-  await page.getByRole("button", { name: /Claude Code/ }).first().click();
+  await page.getByRole("radio", { name: /Claude Code/ }).click();
+  await page.getByRole("button", { name: /Continue/ }).click();
 
-  await page.getByLabel("What are we cooking?").waitFor();
+  const ideaBox = page.getByRole("textbox", { name: "What are you planning?" });
+  await ideaBox.waitFor();
   const axeHome = await new AxeBuilder({ page }).analyze();
-  check("axe: home", axeHome.violations.length === 0, axeHome.violations.map((v) => `${v.id}:${v.nodes.length}`).join(","));
+  check("axe: home", axeHome.violations.length === 0, axeHome.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
   const config = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "config.json"), "utf8"));
   check("remembered default provider", config.defaultProvider === "claude");
+  check("agent chip carries the version", /Claude Code 9\.9\.9-fake/.test((await page.getByRole("banner").getByRole("button", { name: /Agent: Claude Code/ }).textContent()) ?? ""));
 
   // Keyboard-only from here on.
-  await page.getByLabel("What are we cooking?").fill("A grilling recipe app for weeknights");
+  await ideaBox.fill("A grilling recipe app for weeknights");
   await page.keyboard.press("Enter");
-  await page.getByText("Ship a narrow first version?").waitFor({ timeout: 15_000 });
-  check("round 1 shown", true);
+  await page.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15_000 });
+  check("round 1 stacks both questions at once", (await page.getByTestId("question").count()) === 2 && (await page.getByText("Start on the web?").count()) === 1);
   await shot(page, "round");
   await page.waitForURL(/\/s\//);
   const sessionId = new URL(page.url()).pathname.split("/").pop();
 
-  // Reduced motion: the pulsing "Waiting for you" dot doesn't animate.
-  const anim = await page.locator("[data-slot=agent-question-waiting] span").first().evaluate((el) => getComputedStyle(el).animationName);
-  check("prefers-reduced-motion: no pulse", anim === "none", anim);
+  // Reduced motion: cards only fade, the frontier glow doesn't breathe.
+  const rm = await page.evaluate(() => ({
+    card: getComputedStyle(document.querySelector("[data-testid=question]")).animationName,
+    glow: getComputedStyle(document.querySelector(".st-frontier .nd .gl")).animationName,
+  }));
+  check("prefers-reduced-motion: fade only, no breathing", rm.card === "gr-fade" && rm.glow === "none", JSON.stringify(rm));
+  await page.waitForTimeout(400); // heat word and cards finish their entrance before contrast is measured
   const axeRound = await new AxeBuilder({ page }).analyze();
-  check("axe: round view", axeRound.violations.length === 0, axeRound.violations.map((v) => `${v.id}:${v.nodes.length}`).join(","));
+  check("axe: round view (dark)", axeRound.violations.length === 0, axeRound.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+  check("tree shows the round's questions as open", (await page.locator("[role=treeitem].st-frontier").count()) === 2);
 
   // Refresh mid-round restores it (AC14).
   await page.reload();
-  await page.getByText("Ship a narrow first version?").waitFor();
+  await page.getByRole("heading", { name: "2 decisions are ready" }).waitFor();
   check("refresh restores the open round", true);
 
-  // AC15: recommended preselected → Enter, Enter submits; number key picks a non-recommended option.
+  // AC15 / stacked submit: suggestions are preselected (and count as answered), so "1" keeps Q1's
+  // pick and lands on Send; J moves to Q2, "2" picks its second option, Enter sends the whole round.
   await page.waitForTimeout(150);
-  const checked = await page.locator("fieldset:not([hidden]) [role=radio][data-state=checked]").getAttribute("aria-label");
-  check("recommended option preselected", /recommended/.test(checked ?? ""), checked);
-  await page.keyboard.press("Enter"); // accept rec for Q1 → continue
-  await page.getByText("Start on the web?").waitFor();
+  const checked = await page.locator("[data-testid=question] [role=radio][data-state=checked]").first().getAttribute("aria-label");
+  check("recommended option preselected", /recommended, preselected/i.test(checked ?? ""), checked);
+  check("preselected picks are marked untouched", (await page.locator("[data-slot=agent-question-option][data-untouched]").count()) === 2);
+  await page.keyboard.press("1");
+  await page.keyboard.press("j");
   await page.keyboard.press("2"); // Mobile app (not recommended)
+  check("card shows 'Your call' once the pick moves off the suggestion", (await page.getByText("Your call").count()) === 1);
+  check(
+    "Send focused once every card is answered",
+    await page.waitForFunction(() => document.activeElement?.textContent?.startsWith("Send answers"), null, { timeout: 2000 }).then(
+      () => true,
+      () => false,
+    ),
+    await page.evaluate(() => `${document.activeElement?.tagName} ${document.activeElement?.textContent?.slice(0, 40)}`),
+  );
   await page.keyboard.press("Enter"); // send
   await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
-  check("round 2 shown after keyboard submit", true);
+  check("round 2 shown after a keyboard stacked submit", true);
+  check("round 2 card says what opened it", (await page.getByText("Opened by").textContent())?.includes("Platform"));
   let saved = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
   check(
-    "accepted_recommendation recorded per answer",
-    saved.rounds[0].answers[0].accepted_recommendation === true && saved.rounds[0].answers[1].accepted_recommendation === false,
+    "stacked submit sends every answer with accepted_recommendation",
+    saved.rounds[0].answers.length === 2 && saved.rounds[0].answers[0].accepted_recommendation === true && saved.rounds[0].answers[1].accepted_recommendation === false,
     JSON.stringify(saved.rounds[0].answers.map((a) => [a.questionId, a.optionId, a.accepted_recommendation])),
   );
-  await page.waitForTimeout(150);
-  // "Something else" with free text.
-  const n = await page.locator("fieldset:not([hidden]) [data-slot=agent-question-option]").count();
-  await page.keyboard.press(String(n));
+
+  // Light theme from the header menu; axe again.
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "Light theme" }).click();
+  check("theme toggles to light", await page.evaluate(() => document.documentElement.classList.contains("light")));
+  await page.waitForTimeout(200);
+  const axeRoundLight = await new AxeBuilder({ page }).analyze();
+  check("axe: round view (light)", axeRoundLight.violations.length === 0, axeRoundLight.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+
+  // "Something else" with free text: option 3 opens the field, Enter saves, Enter sends.
+  await page.locator("[data-testid=question] legend").first().focus();
+  await page.keyboard.press("3");
   await page.keyboard.type("SQLite on the device");
+  await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
   check("confirm gate after frontier empties", true);
   await shot(page, "confirm");
   saved = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
   check("no plan before confirm (AC7)", !saved.plan && !existsSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md")));
+  check("free text saved", saved.decisions.storage?.answer === "SQLite on the device", saved.decisions.storage?.answer);
+  await page.waitForTimeout(300);
   const axeConfirm = await new AxeBuilder({ page }).analyze();
-  check("axe: confirm gate", axeConfirm.violations.length === 0, axeConfirm.violations.map((v) => `${v.id}:${v.nodes.length}`).join(","));
+  check("axe: confirm gate (light)", axeConfirm.violations.length === 0, axeConfirm.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+
+  // Reopen dialog lists what depends on the decision and previews it in the tree; Esc cancels.
+  await page.getByRole("button", { name: "Reopen Platform" }).click();
+  const dlg = page.getByRole("alertdialog", { name: "Reopen “Platform”?" });
+  await dlg.waitFor();
+  check("reopen dialog lists dependents", (await dlg.textContent()).includes("Storage"));
+  check("Cancel focused in reopen dialog", await page.evaluate(() => document.activeElement?.textContent === "Cancel"));
+  check("tree previews the re-asks", (await page.locator("[role=treeitem][data-preview]").count()) === 2);
+  await page.waitForTimeout(300); // let the 120 ms fade finish before measuring contrast
+  const axeDlg = await new AxeBuilder({ page }).analyze();
+  check("axe: reopen dialog", axeDlg.violations.length === 0, axeDlg.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+  await page.keyboard.press("Escape");
+  check("Esc closes the dialog", (await dlg.count()) === 0);
 
   await page.getByRole("button", { name: "Yes, plate it" }).click();
   await page.getByTestId("plan").waitFor({ timeout: 15_000 });
@@ -282,8 +327,17 @@ try {
   check("plan cites every decision (AC16)", ["[R1:scope]", "[R1:platform]", "[R2:storage]"].every((t) => plan.includes(t)));
   check("plan.md has no banned text / prompt contents (AC17)", !containsBanned(plan.replace(/grilling recipe app/gi, "")));
   check("UI shows file path", (await page.getByTestId("plan-path").textContent()) === planFile);
+  const cites = page.locator("[data-testid=plan] .cite");
+  check("citations render as R·n chips", (await cites.count()) === 3 && (await cites.nth(1).textContent()) === "R1·2", await cites.allTextContents().then((t) => t.join(" ")));
+  await cites.nth(1).click();
+  check("citation highlights the log entry", (await page.locator(".tl li[data-hl]").textContent())?.includes("Platform"));
   const axePlan = await new AxeBuilder({ page }).analyze();
-  check("axe: plan view", axePlan.violations.length === 0, axePlan.violations.map((v) => `${v.id}:${v.nodes.length}`).join(","));
+  check("axe: plan view (light)", axePlan.violations.length === 0, axePlan.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "Dark theme" }).click();
+  await page.waitForTimeout(200);
+  const axePlanDark = await new AxeBuilder({ page }).analyze();
+  check("axe: plan view (dark)", axePlanDark.violations.length === 0, axePlanDark.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
 
   // Agent ran in an empty temp cwd with the tools-off argv.
   const log = readFileSync(e.FAKE_LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l));
@@ -345,7 +399,7 @@ try {
     const ctx = await browser.newContext();
     const pg = await ctx.newPage();
     await pg.goto(u3);
-    await pg.getByLabel("What are we cooking?").fill("A tiny CRM");
+    await pg.getByRole("textbox", { name: "What are you planning?" }).fill("A tiny CRM");
     await pg.keyboard.press("Enter");
     const banner = pg.getByTestId("problem");
     await banner.waitFor({ timeout: 15_000 });
@@ -353,10 +407,51 @@ try {
     await shot(pg, "auth-error");
     check("auth banner offers retry", (await pg.getByRole("button", { name: "I've logged in, retry" }).count()) === 1);
     const axeErr = await new AxeBuilder({ page: pg }).analyze();
-    check("axe: error state", axeErr.violations.length === 0, axeErr.violations.map((v) => `${v.id}:${v.nodes.length}`).join(","));
+    check("axe: error state", axeErr.violations.length === 0, axeErr.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
     await ctx.close();
     const r = await stop(s3, "SIGINT");
     check("SIGINT (idle) exits 0", r.code === 0, `${r.ms} ms`);
+  }
+
+  // ---------------------------------------------------------------- long run: heat goes down, passivity nudge
+  {
+    const e5 = env(fakeBins(["claude"]), { FAKE_MODE: "long" });
+    const s5 = startServer(["--no-open"], e5);
+    const { url: u5 } = await s5.url;
+    const ctx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1440, height: 900 } });
+    const pg = await ctx.newPage();
+    await pg.goto(u5);
+    await pg.getByRole("textbox", { name: "What are you planning?" }).fill("A notes app");
+    await pg.keyboard.press("Enter");
+    const titles = ["Build it for yourself first?", "Start with the capture flow?", "Include search in v1?", "Sync across devices?", "Back up nightly?", "Launch to friends first?"];
+    const heat = [];
+    const nudges = [];
+    for (const [i, t] of titles.entries()) {
+      await pg.getByText(t).first().waitFor({ timeout: 15_000 });
+      await pg.waitForTimeout(150);
+      heat.push(Number(await pg.getByTestId("heat").getAttribute("data-level")));
+      nudges.push(await pg.getByTestId("nudge").count());
+      if (i === 4) {
+        await shot(pg, "nudge");
+        check("nudge copy", (await pg.getByTestId("nudge").textContent()).includes("You've kept every suggestion for 4 rounds"));
+        const axeN = await new AxeBuilder({ page: pg }).analyze();
+        check("axe: nudge", axeN.violations.length === 0, axeN.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+        await pg.getByRole("button", { name: "Review my picks" }).click();
+        check("'Review my picks' focuses the first card", await pg.evaluate(() => document.activeElement?.tagName === "LEGEND"));
+        await pg.getByRole("button", { name: "Looks right" }).click();
+        check("'Looks right' hides the nudge", (await pg.getByTestId("nudge").count()) === 0);
+        await pg.locator("[data-testid=question] legend").first().focus();
+      }
+      await pg.keyboard.press("Enter"); // keep every suggestion and send
+      if (i < titles.length - 1) await pg.getByText(t).first().waitFor({ state: "detached", timeout: 15_000 });
+    }
+    check("heat meter goes down when a round opens many decisions", heat[1] === 3 && heat[2] === 2, heat.join(" → "));
+    check("nudge only after 4 all-accept rounds", nudges.slice(0, 4).every((n) => n === 0) && nudges[4] === 1, nudges.join(","));
+    await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
+    const s5json = JSON.parse(readFileSync(path.join(e5.GRILLADO_HOME, "sessions", readdirSync(path.join(e5.GRILLADO_HOME, "sessions"))[0], "session.json"), "utf8"));
+    check("'Looks right' is remembered", s5json.nudgeDismissed === true);
+    await ctx.close();
+    await stop(s5, "SIGINT");
   }
 
   // ---------------------------------------------------------------- no agent → empty state (AC2)
@@ -373,9 +468,9 @@ try {
       "empty state lists all 4 install commands",
       ["npm i -g @anthropic-ai/claude-code", "npm i -g @openai/codex", "curl -fsSL https://x.ai/cli/install.sh | bash", "npm i -g @mariozechner/pi-coding-agent"].every((c) => text.includes(c)),
     );
-    check("no idea input in empty state", (await pg.getByLabel("What are we cooking?").count()) === 0);
+    check("no idea input in empty state", (await pg.getByRole("textbox", { name: "What are you planning?" }).count()) === 0);
     const axeEmpty = await new AxeBuilder({ page: pg }).analyze();
-    check("axe: empty state", axeEmpty.violations.length === 0, axeEmpty.violations.map((v) => `${v.id}:${v.nodes.length}`).join(","));
+    check("axe: empty state", axeEmpty.violations.length === 0, axeEmpty.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
     await ctx.close();
     await stop(s4, "SIGINT");
   }

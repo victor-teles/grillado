@@ -2,7 +2,7 @@
 // A stand-in for the claude / codex / grok / pi CLIs. It speaks each CLI's output format and plays
 // a small deterministic interview, so tests and the e2e run exercise the real adapters end to end.
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
-// leak-once | slow | broken-version | long), FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
+// leak-once | slow | broken-version | long), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -93,6 +93,8 @@ function authMessage() {
 if (mode === "auth") fail("auth");
 if (mode === "rate") fail("rate");
 if (mode === "slow") await new Promise((r) => setTimeout(r, 60_000));
+// FAKE_DELAY_MS: answer every turn after a pause (screenshots of the waiting states).
+if (process.env.FAKE_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DELAY_MS)));
 
 const state = JSON.parse(prompt.match(/<state>([\s\S]*?)<\/state>/)?.[1] ?? "{}");
 const isPlan = /"type":"plan"/.test(system);
