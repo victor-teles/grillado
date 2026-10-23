@@ -36,6 +36,20 @@ Components under `web/src/components/ui/` come from shadcn/ui (https://ui.shadcn
 Copyright (c) 2023 shadcn) and the uai registry (https://uaiblocks.dev,
 https://github.com/victor-teles/uai, MIT, Copyright (c) 2026 Victor Mesquita).
 
+`web/src/components/ui/uai/agent-question.tsx` is vendored from uai PR #56 (stacked layout,
+commit 5120fb7) until that change is released; the same MIT terms apply.
+
+## Fonts
+
+`web/src/fonts/` ships two variable fonts (Latin subset, WOFF2), both under the SIL Open Font
+License 1.1 (https://openfontlicense.org):
+
+- Inter, Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter).
+- Geist Mono, Copyright (c) 2023 Vercel, in collaboration with basement.studio
+  (https://github.com/vercel/geist-font).
+
+The fonts are not sold on their own and keep their reserved names.
+
 ## Bundled packages
 
 The published `dist/` bundles React, Radix UI, lucide-react, Tailwind CSS, Zod and other
