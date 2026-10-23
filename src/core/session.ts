@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { PlanReply, Question, RoundReply } from "./schema.ts";
+import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
 
@@ -26,6 +26,8 @@ export interface Round {
   n: number;
   questions: Question[];
   summary: string;
+  /** Decisions the agent expects to ask later (drawn as "waiting" in the tree). */
+  upcoming?: Upcoming[];
   answers?: Answer[];
   askedAt: string;
   answeredAt?: string;
@@ -34,11 +36,27 @@ export interface Round {
 export interface Decision {
   key: string;
   round: number;
+  /** Short name for the tree; falls back to the title. */
+  label?: string;
   title: string;
   answer: string;
   kind: "option" | "other" | "unknown";
   accepted_recommendation: boolean;
   dependsOn: string[];
+  /** Settled again after being reopened. */
+  reopened?: boolean;
+}
+
+/** A decision that was settled, then invalidated by a reopen; it waits to be asked again. */
+export interface StaleDecision {
+  key: string;
+  label: string;
+  title: string;
+  answer: string;
+  round: number;
+  dependsOn: string[];
+  /** Short reason for the tree, e.g. "Platform changed". */
+  reason: string;
 }
 
 export interface SessionError {
@@ -59,6 +77,10 @@ export interface Session {
   decisions: Record<string, Decision>;
   /** Decisions the user reopened, to be asked again in the next round. */
   reopened: string[];
+  /** Reopened decisions not yet settled again, for the tree (kept across rounds). */
+  stale?: Record<string, StaleDecision>;
+  /** "Looks right" on the passivity nudge hides it for the rest of the session. */
+  nudgeDismissed?: boolean;
   wrappedUp: boolean;
   keepGoing: boolean;
   summary: string;
@@ -128,7 +150,15 @@ export function applyRound(s: Session, reply: RoundReply): void {
   if (reply.type === "frontier_empty") {
     s.status = "confirm";
   } else {
-    s.rounds.push({ n: s.rounds.length + 1, questions: reply.questions, summary: reply.summary, askedAt: new Date().toISOString() });
+    const asked = new Set(reply.questions.map((q) => q.key));
+    // Keep only usable "upcoming" hints: not settled, not asked now, not duplicated.
+    const seen = new Set<string>();
+    const upcoming = (reply.upcoming ?? []).filter((u) => {
+      if (asked.has(u.key) || s.decisions[u.key] || seen.has(u.key)) return false;
+      seen.add(u.key);
+      return true;
+    });
+    s.rounds.push({ n: s.rounds.length + 1, questions: reply.questions, upcoming, summary: reply.summary, askedAt: new Date().toISOString() });
     s.reopened = [];
     s.status = "answering";
   }
@@ -146,6 +176,7 @@ export function submitAnswers(s: Session, roundN: number, answers: Answer[]): vo
     if (!a) throw new Error(`Missing answer for "${q.title}".`);
     const option = q.options.find((o) => o.id === a.optionId);
     let decision: Decision;
+    const label = q.label?.trim() || undefined;
     if (option) {
       decision = { key: q.key, round: round.n, title: q.title, answer: option.label, kind: "option", accepted_recommendation: false, dependsOn: q.dependsOn };
     } else if (a.optionId === OTHER_OPTION && a.text?.trim()) {
@@ -158,6 +189,11 @@ export function submitAnswers(s: Session, roundN: number, answers: Answer[]): vo
     // Only the recommended option counts as accepting it; the browser's flag is advisory.
     const accepted = Boolean(option && option.id === q.recommendedOptionId && a.accepted_recommendation !== false);
     decision.accepted_recommendation = accepted;
+    if (label) decision.label = label;
+    if (s.stale?.[q.key]) {
+      decision.reopened = true;
+      delete s.stale[q.key];
+    }
     s.decisions[q.key] = decision;
     recorded.push({ questionId: q.key, optionId: a.optionId, text: a.optionId === OTHER_OPTION ? decision.answer : undefined, accepted_recommendation: accepted });
   }
@@ -191,7 +227,22 @@ export function reopen(s: Session, key: string): string[] {
   if (!s.decisions[key]) throw new Error("Unknown decision.");
   if (s.status === "asking" || s.status === "synthesizing") throw new Error("Wait for the agent to finish first.");
   const affected = [key, ...dependentsOf(s, key)];
-  for (const k of affected) delete s.decisions[k];
+  const root = s.decisions[key];
+  const rootLabel = root.label || root.title;
+  s.stale ??= {};
+  for (const k of affected) {
+    const d = s.decisions[k];
+    s.stale[k] = {
+      key: k,
+      label: d.label || d.title,
+      title: d.title,
+      answer: d.answer,
+      round: d.round,
+      dependsOn: d.dependsOn,
+      reason: k === key ? "You reopened it" : `${rootLabel} changed`,
+    };
+    delete s.decisions[k];
+  }
   // An open round on screen is dropped too: its questions may depend on what just changed.
   const open = currentRound(s);
   if (open) s.rounds.pop();
@@ -210,6 +261,30 @@ export function wrapUp(s: Session): void {
   s.wrappedUp = true;
   s.status = "confirm";
   s.error = undefined;
+  touch(s);
+}
+
+/** Rounds in a row (most recent first) where every answer kept the recommendation untouched. */
+export function acceptStreak(s: Session): number {
+  let n = 0;
+  for (let i = s.rounds.length - 1; i >= 0; i--) {
+    const r = s.rounds[i];
+    if (!r.answers) continue; // the open round doesn't count
+    if (r.answers.length && r.answers.every((a) => a.accepted_recommendation)) n++;
+    else break;
+  }
+  return n;
+}
+
+export const NUDGE_AFTER_ROUNDS = 4;
+
+/** Show the passivity nudge on the open round after 4 all-accept rounds, until dismissed. */
+export function shouldNudge(s: Session): boolean {
+  return s.status === "answering" && !s.nudgeDismissed && acceptStreak(s) >= NUDGE_AFTER_ROUNDS;
+}
+
+export function dismissNudge(s: Session): void {
+  s.nudgeDismissed = true;
   touch(s);
 }
 

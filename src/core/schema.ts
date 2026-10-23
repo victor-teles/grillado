@@ -15,6 +15,8 @@ export const OptionSchema = z.object({
 
 export const QuestionSchema = z.object({
   key: DecisionKey,
+  /** Short noun phrase naming the decision in the tree, e.g. "Merge conflicts". */
+  label: z.string().max(60).default(""),
   title: z.string().min(1).max(160),
   body: z.string().max(2000),
   options: z.array(OptionSchema).min(2).max(6),
@@ -23,10 +25,23 @@ export const QuestionSchema = z.object({
   dependsOn: z.array(DecisionKey),
 });
 
+/** A decision the agent expects to ask later, once its prerequisites are settled (drawn as "waiting"). */
+export const UpcomingSchema = z.object({
+  key: DecisionKey,
+  label: z.string().min(1).max(60),
+  dependsOn: z.array(DecisionKey),
+});
+
 /** What the agent returns for a round request. One flat object so every CLI's schema mode accepts it. */
 export const RoundReplySchema = z.object({
   type: z.enum(["ask_round", "frontier_empty"]),
   questions: z.array(QuestionSchema).max(9),
+  /** Decisions that open up later. Optional for the agent; used only to draw the tree. */
+  // Lenient: a bad hint is dropped instead of failing the whole round.
+  upcoming: z.preprocess(
+    (v) => (Array.isArray(v) ? v.filter((u) => UpcomingSchema.safeParse(u).success).slice(0, 16) : []),
+    z.array(UpcomingSchema).max(16),
+  ),
   summary: z.string().max(2000),
 });
 
@@ -53,6 +68,7 @@ export const PlanReplySchema = z.object({
 
 export type Option = z.infer<typeof OptionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
+export type Upcoming = z.infer<typeof UpcomingSchema>;
 export type RoundReply = z.infer<typeof RoundReplySchema>;
 export type PlanReply = z.infer<typeof PlanReplySchema>;
 
@@ -73,6 +89,7 @@ export function toStrictJsonSchema(schema: z.ZodType): Record<string, unknown> {
     }
     // Strict structured-output modes reject some keywords. Zod still enforces them after parsing.
     delete obj.pattern;
+    delete obj.default;
     delete obj.minLength;
     delete obj.maxLength;
     if (obj.maximum === Number.MAX_SAFE_INTEGER) delete obj.maximum;

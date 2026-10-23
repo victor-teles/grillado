@@ -10,15 +10,19 @@ import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } f
 import {
   type Answer,
   type Session,
+  acceptStreak,
   createSession,
+  dismissNudge,
   keepGoing,
   reopen,
   setError,
+  shouldNudge,
   startSynthesis,
   submitAnswers,
   userText,
   wrapUp,
 } from "../core/session.ts";
+import { buildTree } from "../core/tree.ts";
 import type { Store } from "./store.ts";
 
 export const LOOPBACK = "127.0.0.1";
@@ -323,6 +327,9 @@ export class GrilladoServer {
       busy: this.inflight.has(s.id),
       progress: this.progress.get(s.id),
       planPath: s.plan?.path,
+      tree: buildTree(s),
+      acceptStreak: acceptStreak(s),
+      nudge: shouldNudge(s),
     };
   }
 
@@ -475,6 +482,11 @@ export class GrilladoServer {
       case "wrap": {
         this.abort(s);
         wrapUp(s);
+        this.changed(s);
+        break;
+      }
+      case "nudge": {
+        dismissNudge(s);
         this.changed(s);
         break;
       }

@@ -2,7 +2,7 @@
 // A stand-in for the claude / codex / grok / pi CLIs. It speaks each CLI's output format and plays
 // a small deterministic interview, so tests and the e2e run exercise the real adapters end to end.
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
-// leak-once | slow | broken-version), FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
+// leak-once | slow | broken-version | long), FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -97,15 +97,31 @@ if (mode === "slow") await new Promise((r) => setTimeout(r, 60_000));
 const state = JSON.parse(prompt.match(/<state>([\s\S]*?)<\/state>/)?.[1] ?? "{}");
 const isPlan = /"type":"plan"/.test(system);
 
-const TEMPLATES = [
-  { key: "scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
-  { key: "platform", title: "Start on the web?", deps: [], options: [["web", "Web app"], ["mobile", "Mobile app"], ["cli", "Command line"]] },
-  { key: "storage", title: "Keep data local first?", deps: ["platform"], options: [["local", "Local storage"], ["cloud", "Hosted database"]] },
+const BASE = [
+  { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
+  { key: "platform", label: "Platform", title: "Start on the web?", deps: [], options: [["web", "Web app"], ["mobile", "Mobile app"], ["cli", "Command line"]] },
+  { key: "storage", label: "Storage", title: "Keep data local first?", deps: ["platform"], options: [["local", "Local storage"], ["cloud", "Hosted database"]] },
 ];
+// FAKE_MODE=long: six rounds. Round 3 opens six questions at once, so the heat drops; rounds 1–4
+// accepted as suggested trigger the passivity nudge on round 5.
+const yn = [["yes", "Yes"], ["no", "No"]];
+const LONG = [
+  { key: "audience", label: "Audience", title: "Build it for yourself first?", deps: [], options: yn },
+  { key: "budget", label: "Budget", title: "Keep it free to run?", deps: [], options: yn },
+  { key: "core", label: "Core flow", title: "Start with the capture flow?", deps: ["audience"], options: yn },
+  ...["Search", "Tags", "Export", "Sharing", "Reminders", "Themes"].map((label) => ({
+    key: label.toLowerCase(), label, title: `Include ${label.toLowerCase()} in v1?`, deps: ["core"], options: yn, hint: false,
+  })),
+  { key: "sync", label: "Sync", title: "Sync across devices?", deps: ["search"], options: yn },
+  { key: "backup", label: "Backups", title: "Back up nightly?", deps: ["sync"], options: yn },
+  { key: "launch", label: "Launch", title: "Launch to friends first?", deps: ["backup"], options: yn },
+];
+const TEMPLATES = mode === "long" ? LONG : BASE;
 
 function question(t) {
   return {
     key: t.key,
+    label: t.label,
     title: t.title,
     body: `Context for ${t.key}.`,
     options: t.options.map(([id, label]) => ({ id, label, description: "" })),
@@ -130,7 +146,13 @@ function roundReply() {
   if (ready.length) {
     const q = ready.map(question);
     if (mode === "leak-once" && once("leak")) q[0].body = "This follows the grilling method.";
-    return { type: "ask_round", summary: `Round ${state.nextRound}`, questions: q };
+    const asked = new Set(ready.map((t) => t.key));
+    const upcoming = TEMPLATES.filter((t) => !settled.has(t.key) && !asked.has(t.key) && t.hint !== false && t.deps.some((d) => asked.has(d))).map((t) => ({
+      key: t.key,
+      label: t.label,
+      dependsOn: t.deps,
+    }));
+    return { type: "ask_round", summary: `Round ${state.nextRound}`, questions: q, upcoming };
   }
   if (state.keepGoing && !settled.has("extras")) {
     return { type: "ask_round", summary: "More", questions: [question({ key: "extras", title: "Add sharing later?", deps: ["scope"], options: [["later", "Later"], ["now", "Now"]] })] };
