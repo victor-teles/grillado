@@ -270,6 +270,15 @@ try {
     ),
     await page.evaluate(() => `${document.activeElement?.tagName} ${document.activeElement?.textContent?.slice(0, 40)}`),
   );
+  // A number key on the last open card only moves focus to Send; it never submits.
+  await page.keyboard.press("2");
+  await page.waitForTimeout(600);
+  const notSent = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
+  check(
+    "number key on the last open card never submits",
+    (notSent.rounds[0]?.answers?.length ?? 0) === 0 && (await page.getByRole("heading", { name: "2 decisions are ready" }).count()) === 1 &&
+      (await page.evaluate(() => document.activeElement?.textContent?.startsWith("Send answers"))),
+  );
   await page.keyboard.press("Enter"); // send
   await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
   check("round 2 shown after a keyboard stacked submit", true);
@@ -328,7 +337,8 @@ try {
   check("plan.md has no banned text / prompt contents (AC17)", !containsBanned(plan.replace(/grilling recipe app/gi, "")));
   check("UI shows file path", (await page.getByTestId("plan-path").textContent()) === planFile);
   const cites = page.locator("[data-testid=plan] .cite");
-  check("citations render as R·n chips", (await cites.count()) === 3 && (await cites.nth(1).textContent()) === "R1·2", await cites.allTextContents().then((t) => t.join(" ")));
+  check("citations render as R·n chips", (await cites.count()) === 6 && (await cites.nth(1).textContent()) === "R1·2", await cites.allTextContents().then((t) => t.join(" ")));
+  check("decision log shows chips, not raw ids", !/\[R\d+:/.test(await page.getByTestId("plan").textContent()));
   await cites.nth(1).click();
   check("citation highlights the log entry", (await page.locator(".tl li[data-hl]").textContent())?.includes("Platform"));
   const axePlan = await new AxeBuilder({ page }).analyze();
@@ -452,6 +462,34 @@ try {
     check("'Looks right' is remembered", s5json.nudgeDismissed === true);
     await ctx.close();
     await stop(s5, "SIGINT");
+  }
+
+  // ---------------------------------------------------------------- mobile: ghost Wrap it up, early confirm lists Still open first
+  {
+    const e6 = env(fakeBins(["claude"]), { FAKE_MODE: "long" });
+    const s6 = startServer(["--no-open"], e6);
+    const { url: u6 } = await s6.url;
+    const ctx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const pg = await ctx.newPage();
+    await pg.goto(u6);
+    await pg.getByRole("textbox", { name: "What are you planning?" }).fill("A notes app");
+    await pg.keyboard.press("Enter");
+    await pg.getByText("Build it for yourself first?").waitFor({ timeout: 15_000 });
+    const wrapBtn = pg.locator(".bar").getByRole("button", { name: "Wrap it up" });
+    check("mobile bar hides Wrap it up before anything is settled", !(await wrapBtn.isVisible()));
+    await pg.getByRole("button", { name: "Send answers" }).click();
+    await pg.getByText("Start with the capture flow?").waitFor({ timeout: 15_000 });
+    check("mobile bar shows Wrap it up once a decision is settled", await wrapBtn.isVisible());
+    const [wb, sb] = [await wrapBtn.boundingBox(), await pg.getByRole("button", { name: "Send answers" }).boundingBox()];
+    check("mobile Wrap it up sits left of Send", wb && sb && wb.x + wb.width <= sb.x);
+    await wrapBtn.click();
+    await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
+    check("early confirm says Wrapping up early", (await pg.getByText("Wrapping up early").count()) === 1);
+    check("early confirm lists Still open first", (await pg.locator(".dl h2").first().textContent()) === "Still open", await pg.locator(".dl h2").allTextContents().then((t) => t.join(",")));
+    const axeM = await new AxeBuilder({ page: pg }).analyze();
+    check("axe: early confirm (mobile)", axeM.violations.length === 0, axeM.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
+    await ctx.close();
+    await stop(s6, "SIGINT");
   }
 
   // ---------------------------------------------------------------- no agent → empty state (AC2)

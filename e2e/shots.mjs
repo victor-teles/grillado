@@ -64,6 +64,7 @@ async function page(theme, vp) {
   await ctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
   const pg = await ctx.newPage();
   const snap = async (name) => {
+    await pg.mouse.move(0, 0); // no stray hover outline from the last click
     await pg.waitForTimeout(250);
     const file = path.join(OUT, `${name}-${vp}-${theme}.png`);
     await pg.screenshot({ path: file });
@@ -153,16 +154,13 @@ for (const vp of ["d", "m"]) {
       await typeIdea(pg, "A notes app");
       for (const t of ["Build it for yourself first?", "Start with the capture flow?", "Include search in v1?", "Sync across devices?"]) {
         await pg.getByText(t).first().waitFor({ timeout: 15000 });
+        if (vp === "m" && t === "Start with the capture flow?") await snap("3-round-wrap"); // ghost Wrap it up, 1+ settled
         await pg.getByRole("button", { name: /Send answers/ }).click();
         await pg.getByText(t).first().waitFor({ state: "detached", timeout: 15000 });
       }
       await pg.getByTestId("nudge").waitFor({ timeout: 15000 });
       await snap("3-round-nudge");
-      if (vp === "d") await pg.getByRole("button", { name: "Wrap it up" }).first().click();
-      else {
-        await pg.getByRole("button", { name: "More" }).click();
-        await pg.getByRole("menuitem", { name: "Wrap it up" }).click();
-      }
+      await pg.locator(".bar").getByRole("button", { name: "Wrap it up" }).click();
       await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15000 });
       await snap("4-confirm-early");
       await pg.getByRole("button", { name: /Yes, plate it/ }).click();
