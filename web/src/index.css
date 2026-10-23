@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./styles/grillado.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -97,7 +98,8 @@
     }
 }
 
-:root {
+:root,
+.light {
     --radius: 0.875rem;
     --background: oklch(0.975 0.001 260);
     --foreground: oklch(0.247 0.006 258);

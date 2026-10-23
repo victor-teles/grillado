@@ -18,6 +18,8 @@ export interface SessionSummary {
   status: SessionStatus;
   rounds: number;
   decisions: number;
+  /** Open decisions listed in the plan (wrapped up early). */
+  open?: number;
   updatedAt: string;
 }
 
@@ -39,6 +41,8 @@ export interface Option {
 }
 export interface Question {
   key: string;
+  /** Short noun phrase for the tree and decision lists ("Sync", "Who can join"). */
+  label: string;
   title: string;
   body: string;
   options: Option[];
@@ -51,23 +55,67 @@ export interface Answer {
   text?: string;
   accepted_recommendation: boolean;
 }
+export interface Upcoming {
+  key: string;
+  label: string;
+  dependsOn: string[];
+}
 export interface Round {
   n: number;
   questions: Question[];
   summary: string;
+  upcoming?: Upcoming[];
   answers?: Answer[];
+  askedAt: string;
+  answeredAt?: string;
 }
 export interface Decision {
   key: string;
   round: number;
+  label?: string;
   title: string;
   answer: string;
   kind: "option" | "other" | "unknown";
   accepted_recommendation: boolean;
   dependsOn: string[];
+  reopened?: boolean;
+}
+export interface StaleDecision {
+  key: string;
+  label: string;
+  title: string;
+  answer: string;
+  round: number;
+  dependsOn: string[];
+  reason: string;
+}
+
+export type NodeStatus = "settled" | "frontier" | "blocked" | "stale" | "idea";
+export interface DecisionNode {
+  id: string;
+  label: string;
+  status: NodeStatus;
+  parentId: string | null;
+  dependsOn: string[];
+  depth: number;
+  openedInRound: number;
+  questionId?: string;
+  questionIndex?: number;
+  answer?: { round: number; questionId: string; label: string; kind: "option" | "other" | "unknown"; acceptedRecommendation: boolean; reopened?: boolean };
+  waitsOn?: string[];
+  staleReason?: string;
+}
+export type HeatLevel = 1 | 2 | 3 | 4 | 5;
+export interface TreeState {
+  rootId: string;
+  nodes: DecisionNode[];
+  counts: { settled: number; open: number };
+  heat: HeatLevel;
 }
 export interface SessionView {
   id: string;
+  createdAt: string;
+  updatedAt: string;
   provider: ProviderId;
   idea: string;
   context: string;
@@ -75,12 +123,18 @@ export interface SessionView {
   rounds: Round[];
   decisions: Record<string, Decision>;
   reopened: string[];
+  stale?: Record<string, StaleDecision>;
+  nudgeDismissed?: boolean;
   wrappedUp: boolean;
+  keepGoing?: boolean;
   summary: string;
   error?: { code: FailureCode; message: string };
-  plan?: { title: string; markdown: string; path: string; openDecisions: string[] };
+  plan?: { title: string; markdown: string; path: string; openDecisions: string[]; createdAt?: string };
   busy: boolean;
   progress?: string;
+  tree: TreeState;
+  acceptStreak: number;
+  nudge: boolean;
 }
 
 export const UNKNOWN_OPTION = "__unknown";

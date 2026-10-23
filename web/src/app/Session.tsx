@@ -1,251 +1,142 @@
-import { Download, Square } from "lucide-react";
+// In-session screens: dispatcher, problem banners, confirm (+ reopen dialogs), plating.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import {
-  AgentQuestion,
-  type AgentQuestionAnswers,
-  AgentQuestionDescription,
-  AgentQuestionFooter,
-  AgentQuestionHeader,
-  AgentQuestionItem,
-  AgentQuestionItems,
-  AgentQuestionOption,
-  AgentQuestionOptions,
-  AgentQuestionOther,
-  AgentQuestionTitle,
-  agentQuestionOtherKey,
-} from "@/components/ui/uai/agent-question";
-import {
-  StatusBanner,
-  StatusBannerAction,
-  StatusBannerActions,
-  StatusBannerContent,
-  StatusBannerDescription,
-  StatusBannerTitle,
-} from "@/components/ui/uai/status-banner";
-import { Thinking, ThinkingTrigger } from "@/components/ui/uai/thinking";
+import { clock, useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
-import { Markdown } from "./Markdown";
-import { type Answer, type AppState, type Decision, OTHER_OPTION, type Round, type SessionView, UNKNOWN_OPTION } from "./types";
+import { IAlert, IBranch, ICheck, IClock, IKey, IPlate, ISq, IUndo, IWifi } from "./icons";
+import { PlanView } from "./Plan";
+import { FiringUp, RoundView, SessionBody, SkeletonCard, Strip, WaitingView, waitLabel } from "./Round";
+import type { AppState, Decision, DecisionNode, SessionView, TreeState } from "./types";
 
-type Act = (action: string, body?: unknown) => Promise<void>;
+export type Act = (action: string, body?: unknown) => Promise<void>;
+const quiet = (p: Promise<void>) => void p.catch(() => {});
 
-export function SessionScreen({ session, app, act }: { session: SessionView; app: AppState; act: Act }) {
-  const round = session.rounds.at(-1);
-  const openRound = round && !round.answers ? round : undefined;
-  const decisions = Object.values(session.decisions).sort((a, b) => a.round - b.round);
-  const working = session.busy;
-  const failed = !working && session.error && (session.status === "asking" || session.status === "synthesizing");
-  const stalled = !working && !session.error && (session.status === "asking" || session.status === "synthesizing");
+export function SessionScreen({ session, app, act, onSwitch }: { session: SessionView; app: AppState; act: Act; onSwitch: () => void }) {
+  const banner = session.error && !session.busy ? <ProblemBanner session={session} app={app} act={act} onSwitch={onSwitch} /> : null;
+  switch (session.status) {
+    case "asking":
+      return session.rounds.length === 0 ? <FiringUp session={session} act={act} banner={banner} /> : <WaitingView session={session} act={act} banner={banner} />;
+    case "answering":
+      return <RoundView session={session} act={act} banner={banner} />;
+    case "confirm":
+      return <Confirm session={session} act={act} />;
+    case "synthesizing":
+      return <Plating session={session} act={act} banner={banner} />;
+    case "plated":
+      return <PlanView session={session} act={act} />;
+    default:
+      return null;
+  }
+}
 
+// ---------------------------------------------------------------- banners
+
+function Cmds({ text }: { text: string }) {
+  // "Run `codex login` in a terminal" → copyable command chips.
   return (
-    <div className="grid gap-6">
-      <header className="grid gap-2">
-        <Stages status={session.status} />
-        <h2 className="text-xl font-semibold break-words">{session.idea}</h2>
-        <Progress settled={decisions.length} open={openRound?.questions.length ?? 0} rounds={session.rounds.length} />
-      </header>
-
-      {working ? <Working session={session} onStop={() => act("stop")} /> : null}
-      {failed || stalled ? <ProblemBanner session={session} app={app} act={act} /> : null}
-
-      {session.status === "answering" && openRound ? (
-        <RoundCard key={`${session.id}-${openRound.n}`} round={openRound} onSubmit={(answers) => act("answers", { round: openRound.n, answers })} />
-      ) : null}
-
-      {session.status === "answering" || (session.status === "asking" && !session.error) ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" variant="secondary" onClick={() => act("wrap")} disabled={!decisions.length && !openRound}>
-            Wrap it up
-          </Button>
-          <span className="text-[12px] text-subtle-foreground">Stop asking and plate what we have. Open questions get listed in the plan.</span>
-        </div>
-      ) : null}
-
-      {session.status === "confirm" && !working ? <ConfirmGate session={session} decisions={decisions} act={act} /> : null}
-      {session.status === "plated" && session.plan ? <PlanView session={session} decisions={decisions} act={act} /> : null}
-
-      {decisions.length && session.status !== "confirm" && session.status !== "plated" ? (
-        <DecisionList session={session} decisions={decisions} act={act} canReopen={!working && session.status === "answering"} />
-      ) : null}
-    </div>
+    <>
+      {text.split(/(`[^`]+`)/g).map((part, i) =>
+        part.startsWith("`") ? <CopyButton key={i} kind="cmd" text={part.slice(1, -1)} label={`Copy ${part.slice(1, -1)}`} /> : <span key={i}>{part}</span>,
+      )}
+    </>
   );
 }
 
-const STAGES = [
-  { id: "idea", label: "Idea" },
-  { id: "grill", label: "On the grill" },
-  { id: "confirm", label: "Confirm" },
-  { id: "plan", label: "Plated" },
-];
-
-function Stages({ status }: { status: SessionView["status"] }) {
-  const current = status === "confirm" ? 2 : status === "synthesizing" || status === "plated" ? 3 : 1;
-  return (
-    <ol aria-label="Progress" className="flex flex-wrap items-center gap-2 text-[12px] text-subtle-foreground">
-      {STAGES.map((s, i) => (
-        <li key={s.id} aria-current={i === current ? "step" : undefined} className={i === current ? "font-medium text-foreground" : ""}>
-          {i > 0 ? <span aria-hidden="true" className="mr-2">→</span> : null}
-          {s.label}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function Progress({ settled, open, rounds }: { settled: number; open: number; rounds: number }) {
-  return (
-    <p className="text-[13px] text-muted-foreground tabular-nums" data-testid="progress">
-      Round {Math.max(rounds, 1)} · {settled} settled · {open} open
-    </p>
-  );
-}
-
-function useElapsed(active: boolean) {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    if (!active) return setSeconds(0);
-    const start = Date.now();
-    const t = setInterval(() => setSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
-    return () => clearInterval(t);
-  }, [active]);
-  return seconds;
-}
-
-function Working({ session, onStop }: { session: SessionView; onStop: () => void }) {
-  const elapsed = useElapsed(true);
-  const first = session.rounds.length === 0;
-  const plating = session.status === "synthesizing";
-  let title = plating ? "Plating your plan…" : first ? "Sizing up your idea…" : "Reading your answers…";
-  if (session.progress === "Taking another pass") title = "Taking another pass…";
-  if (elapsed >= 15) title = "Still cooking…";
-  const summary = plating ? "Turning your decisions into a plan." : first ? "Finding the first decisions." : "Working out what to ask next.";
-  return (
-    <div className="grid gap-2" role="status" aria-live="polite">
-      <Thinking variant="card" status="thinking" defaultOpen={false}>
-        <ThinkingTrigger title={title} summary={summary} />
-      </Thinking>
-      {elapsed >= 60 ? (
-        <Button type="button" variant="secondary" size="sm" className="justify-self-start" onClick={onStop}>
-          <Square aria-hidden="true" /> Stop
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
-function ProblemBanner({ session, app, act }: { session: SessionView; app: AppState; act: Act }) {
+export function ProblemBanner({ session, app, act, onSwitch }: { session: SessionView; app: AppState; act: Act; onSwitch: () => void }) {
   const provider = app.providers.find((p) => p.id === session.provider);
   const name = provider?.displayName ?? session.provider;
   const others = app.providers.filter((p) => p.status === "ready" && p.id !== session.provider);
   const code = session.error?.code ?? "unknown";
+  const retry = () => quiet(act("retry"));
+  const sw = others.length ? (
+    <button type="button" className="pill secondary sm" onClick={onSwitch}>
+      Switch agent
+    </button>
+  ) : null;
   const copy = {
-    auth: { tone: "warning" as const, title: `Log in to ${name}`, body: `${provider?.loginHint ?? "Log in with the agent's own command"}, then retry. Your answers are saved.`, retry: "I've logged in, retry" },
-    rate_limit: { tone: "warning" as const, title: `${name} hit its limit`, body: "Your answers are saved. Try again in a bit, or switch agents.", retry: "Retry" },
-    timeout: { tone: "warning" as const, title: `${name} took too long`, body: "Nothing came back in time. Your answers are saved.", retry: "Retry" },
-    not_found: { tone: "error" as const, title: `${name} isn't available`, body: "The command couldn't be started. Your answers are saved.", retry: "Retry" },
-    malformed: { tone: "error" as const, title: "The agent's reply didn't come through.", body: "Your answers are saved.", retry: "Retry" },
-    unknown: { tone: "error" as const, title: session.error?.message || "Something went wrong.", body: "Your answers are saved.", retry: "Retry" },
+    auth: {
+      tone: "warn",
+      icon: <IKey s={16} />,
+      title: `Log in to ${name} to continue`,
+      body: (
+        <>
+          <Cmds text={provider?.loginHint ?? "Log in with the agent's own command"} />, then come back.
+        </>
+      ),
+      retry: "I've logged in, retry",
+    },
+    rate_limit: { tone: "info", icon: <IClock s={16} />, title: `${name} needs a short break`, body: "It hit its usage limit. Try again in a few minutes, or switch agents.", retry: "Retry" },
+    timeout: { tone: "info", icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "Nothing came back in time. Your answers are saved.", retry: "Retry" },
+    malformed: { tone: "info", icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
+    not_found: { tone: "err", icon: <IWifi s={16} />, title: `Can't reach ${name}`, body: "The command couldn't be started. Grillado keeps your answers and retries when you ask.", retry: "Retry" },
+    unknown: { tone: "err", icon: <IAlert s={16} />, title: "Can't reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
   }[code];
   return (
-    <StatusBanner tone={copy.tone} variant="tinted" role="alert" data-testid="problem" data-code={code}>
-      <StatusBannerContent>
-        <StatusBannerTitle>{copy.title}</StatusBannerTitle>
-        <StatusBannerDescription>{copy.body}</StatusBannerDescription>
-        {code !== "unknown" && session.error?.message && code !== "malformed" ? (
-          <StatusBannerDescription className="text-subtle-foreground">{session.error.message}</StatusBannerDescription>
-        ) : null}
-      </StatusBannerContent>
-      <StatusBannerActions>
-        <StatusBannerAction onClick={() => act("retry")}>{copy.retry}</StatusBannerAction>
-        {others.map((p) => (
-          <StatusBannerAction
-            key={p.id}
-            onClick={async () => {
-              await act("provider", { id: p.id });
-              await act("retry");
-            }}
-          >
-            Switch to {p.displayName}
-          </StatusBannerAction>
-        ))}
-      </StatusBannerActions>
-    </StatusBanner>
-  );
-}
-
-function RoundCard({ round, onSubmit }: { round: Round; onSubmit: (answers: Answer[]) => Promise<void> }) {
-  const ref = useRef<HTMLElement | null>(null);
-  const defaults = useMemo<AgentQuestionAnswers>(() => Object.fromEntries(round.questions.map((q) => [q.key, q.recommendedOptionId])), [round]);
-  useEffect(() => {
-    // Focus the preselected option so number keys and Enter work right away (AC15).
-    const t = setTimeout(() => ref.current?.querySelector<HTMLElement>("fieldset:not([hidden]) [role=radio][data-state=checked]")?.focus(), 50);
-    return () => clearTimeout(t);
-  }, []);
-  return (
-    <div className="grid gap-2">
-      {round.summary ? <p className="text-[13px] text-muted-foreground">{round.summary}</p> : null}
-      <AgentQuestion
-        ref={ref}
-        aria-label={`Round ${round.n}`}
-        defaultValue={defaults}
-        onSubmit={(values) => {
-          const answers: Answer[] = round.questions.map((q) => {
-            const v = values[q.key];
-            const picked = typeof v === "string" ? v : q.recommendedOptionId;
-            if (picked === "other") {
-              return { questionId: q.key, optionId: OTHER_OPTION, text: String(values[agentQuestionOtherKey(q.key)] ?? ""), accepted_recommendation: false };
-            }
-            return { questionId: q.key, optionId: picked, accepted_recommendation: picked === q.recommendedOptionId };
-          });
-          return onSubmit(answers);
-        }}
-      >
-        <AgentQuestionHeader />
-        <AgentQuestionItems>
-          {round.questions.map((q) => (
-            <AgentQuestionItem key={q.key} id={q.key} required>
-              <AgentQuestionTitle>{q.title}</AgentQuestionTitle>
-              {q.body ? <AgentQuestionDescription>{q.body}</AgentQuestionDescription> : null}
-              <AgentQuestionOptions>
-                {q.options.map((o) => (
-                  <AgentQuestionOption key={o.id} value={o.id} label={o.label} description={o.description || undefined} recommended={o.id === q.recommendedOptionId} />
-                ))}
-                <AgentQuestionOption value={UNKNOWN_OPTION} label="I don't know" description="Pick a sensible default and note it" />
-                <AgentQuestionOther />
-              </AgentQuestionOptions>
-            </AgentQuestionItem>
-          ))}
-        </AgentQuestionItems>
-        <AgentQuestionFooter />
-      </AgentQuestion>
+    <div className={`banner ${copy.tone}`} role="alert" data-testid="problem" data-code={code}>
+      <span className="ic" aria-hidden="true">
+        {copy.icon}
+      </span>
+      <div>
+        <div className="t">{copy.title}</div>
+        <div className="s">{copy.body}</div>
+      </div>
+      <div className="acts">
+        {code === "auth" ? (
+          <span className="fb sm">
+            <ICheck s={12} />
+            Your answers are saved
+          </span>
+        ) : (
+          sw
+        )}
+        <button type="button" className={`pill ${code === "auth" ? "primary" : "secondary"} sm`} onClick={retry}>
+          {copy.retry}
+        </button>
+      </div>
     </div>
   );
 }
 
-function ReopenButton({ session, d, act, disabled }: { session: SessionView; d: Decision; act: Act; disabled?: boolean }) {
-  const [asking, setAsking] = useState(false);
-  const dependents = useMemo(() => dependentsOf(session, d.key), [session, d.key]);
-  if (!asking)
-    return (
-      <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => setAsking(true)} aria-label={`Reopen: ${d.title}`}>
-        Reopen
-      </Button>
-    );
+// ---------------------------------------------------------------- dialogs
+
+export function Dialog({ labelId, descId, onClose, children, role = "dialog" }: { labelId: string; descId?: string; onClose: () => void; children: React.ReactNode; role?: "dialog" | "alertdialog" }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const back = document.activeElement as HTMLElement | null;
+    const el = ref.current;
+    (el?.querySelector<HTMLElement>("[data-autofocus]") ?? el?.querySelector<HTMLElement>("button"))?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === "Tab" && el) {
+        const f = [...el.querySelectorAll<HTMLElement>("button:not([disabled]),a[href],input,[tabindex='0']")];
+        if (!f.length) return;
+        const i = f.indexOf(document.activeElement as HTMLElement);
+        if (e.shiftKey && i <= 0) {
+          e.preventDefault();
+          f.at(-1)?.focus();
+        } else if (!e.shiftKey && i === f.length - 1) {
+          e.preventDefault();
+          f[0].focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      back?.focus?.();
+    };
+  }, [onClose]);
   return (
-    <span className="flex flex-wrap items-center gap-2 text-[12px]" role="group" aria-label={`Reopen ${d.title}?`}>
-      <span>{dependents.length ? `Also reopens: ${dependents.map((k) => session.decisions[k]?.title ?? k).join(", ")}` : "Ask this again?"}</span>
-      <Button type="button" size="sm" autoFocus onClick={() => act("reopen", { key: d.key })}>
-        Reopen
-      </Button>
-      <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(false)}>
-        Cancel
-      </Button>
-    </span>
+    <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div ref={ref} className="dlg" role={role} aria-modal="true" aria-labelledby={labelId} aria-describedby={descId}>
+        {children}
+      </div>
+    </div>
   );
 }
 
-function dependentsOf(s: SessionView, key: string): string[] {
+export function dependentsOf(s: SessionView, key: string): string[] {
   const out = new Set<string>();
   let frontier = [key];
   while (frontier.length) {
@@ -262,106 +153,323 @@ function dependentsOf(s: SessionView, key: string): string[] {
   return [...out];
 }
 
-function DecisionRows({ session, decisions, act, canReopen }: { session: SessionView; decisions: Decision[]; act: Act; canReopen: boolean }) {
-  return (
-    <dl className="grid gap-1.5">
-      {decisions.map((d) => (
-        <div key={d.key} className="grid gap-0.5 rounded-lg border bg-card px-3 py-2">
-          <dt className="text-[12px] text-subtle-foreground">
-            R{d.round} · {d.title}
-          </dt>
-          <dd className="m-0 flex flex-wrap items-center justify-between gap-2">
-            <span className="font-medium">
-              {d.answer}
-              {d.accepted_recommendation ? <span className="ml-2 text-[11px] font-normal text-subtle-foreground">recommended</span> : null}
-            </span>
-            {canReopen ? <ReopenButton session={session} d={d} act={act} /> : null}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
+const nameOf = (d: Decision) => d.label || d.title;
 
-function DecisionList(props: { session: SessionView; decisions: Decision[]; act: Act; canReopen: boolean }) {
+export function ReopenDialog({ session, d, act, onClose, onPreview }: { session: SessionView; d: Decision; act: Act; onClose: () => void; onPreview?: (keys: string[] | null) => void }) {
+  const deps = useMemo(() => dependentsOf(session, d.key), [session, d.key]);
+  useEffect(() => {
+    onPreview?.([d.key, ...deps]);
+    return () => onPreview?.(null);
+  }, [d.key, deps, onPreview]);
+  const name = nameOf(d);
   return (
-    <section aria-labelledby="decided-title" className="grid gap-2">
-      <h3 id="decided-title" className="text-sm font-medium text-muted-foreground">
-        Decided so far
-      </h3>
-      <DecisionRows {...props} />
-    </section>
-  );
-}
-
-function ConfirmGate({ session, decisions, act }: { session: SessionView; decisions: Decision[]; act: Act }) {
-  const open = session.rounds.at(-1)?.answers ? [] : (session.rounds.at(-1)?.questions ?? []);
-  return (
-    <section aria-labelledby="confirm-title" className="grid gap-4 rounded-2xl border bg-card p-5">
-      <div>
-        <h3 id="confirm-title" className="text-lg font-semibold">
-          Is it done?
-        </h3>
-        <p className="text-muted-foreground">
-          {session.wrappedUp ? "We stopped early. " : "Every branch is settled. "}
-          Check the decisions, reopen anything that feels off, then plate it.
-        </p>
-      </div>
-      <DecisionRows session={session} decisions={decisions} act={act} canReopen />
-      {open.length ? (
-        <div className="rounded-lg border border-dashed p-3 text-[13px]">
-          <p className="font-medium">Still raw (will be listed as open decisions):</p>
-          <ul className="list-disc pl-5">
-            {open.map((q) => (
-              <li key={q.key}>{q.title}</li>
-            ))}
-          </ul>
-        </div>
+    <Dialog labelId="ro-t" descId="ro-d" onClose={onClose} role="alertdialog">
+      <h3 id="ro-t">Reopen “{name}”?</h3>
+      <p id="ro-d">{deps.length ? "You'll pick it again in the next round. These decisions depend on it, so they'll be asked again too:" : "You'll pick it again in the next round."}</p>
+      {deps.length ? (
+        <ul className="deps">
+          {deps.map((k) => (
+            <li key={k}>
+              <span className="hatch" aria-hidden="true" />
+              {session.decisions[k] ? nameOf(session.decisions[k]) : k}
+            </li>
+          ))}
+        </ul>
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => act("confirm")}>
-          Yes, plate it
-        </Button>
-        <Button type="button" variant="secondary" onClick={() => act("keep-going")}>
-          Keep going
-        </Button>
+      <p>Everything else stays settled.</p>
+      <div className="ft">
+        <button type="button" className="pill secondary" data-autofocus onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="pill primary"
+          onClick={() => {
+            onClose();
+            quiet(act("reopen", { key: d.key }));
+          }}
+        >
+          Reopen {name}
+        </button>
       </div>
-    </section>
+    </Dialog>
   );
 }
 
-function PlanView({ session, decisions, act }: { session: SessionView; decisions: Decision[]; act: Act }) {
-  const plan = session.plan!;
+function ReopenPicker({ decisions, onPick, onClose }: { decisions: Decision[]; onPick: (d: Decision) => void; onClose: () => void }) {
   return (
-    <section aria-labelledby="plan-title" className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4">
-        <div className="grid min-w-0">
-          <h3 id="plan-title" className="text-lg font-semibold">
-            Plated: {decisions.length} decisions{plan.openDecisions.length ? `, ${plan.openDecisions.length} open` : ""}
-          </h3>
-          <p className="text-[12px] break-all text-subtle-foreground">
-            Saved to <code data-testid="plan-path">{plan.path}</code>
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <CopyButton text={plan.markdown} label="Copy Markdown" />
-          <Button asChild variant="secondary" size="sm">
-            <a href={`/api/sessions/${session.id}/plan.md`} download>
-              <Download aria-hidden="true" /> Download .md
-            </a>
-          </Button>
-          <CopyButton text={plan.path} label="Copy file path" />
-        </div>
+    <Dialog labelId="rp-t" onClose={onClose}>
+      <h3 id="rp-t">Reopen a decision</h3>
+      <p>Pick one to answer again in the next round.</p>
+      <ul className="pick">
+        {decisions.map((d) => (
+          <li key={d.key}>
+            <button type="button" onClick={() => onPick(d)}>
+              <span>{nameOf(d)}</span>
+              <span className="a">{d.answer}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="ft">
+        <button type="button" className="pill secondary" onClick={onClose}>
+          Cancel
+        </button>
       </div>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <article className="rounded-2xl border bg-card p-5" data-testid="plan">
-          <Markdown source={plan.markdown} />
-        </article>
-        <aside aria-label="Decisions" className="grid content-start gap-2">
-          <h4 className="text-sm font-medium text-muted-foreground">Decisions</h4>
-          <DecisionRows session={session} decisions={decisions} act={act} canReopen />
-        </aside>
-      </div>
-    </section>
+    </Dialog>
   );
 }
+
+// ---------------------------------------------------------------- 4 confirm
+
+/** Settled decisions grouped by their top-level branch, in tree order. */
+export function groupDecisions(session: SessionView): { title: string; items: Decision[] }[] {
+  const tree = session.tree;
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]));
+  const top = (n: DecisionNode): DecisionNode => {
+    let cur = n;
+    while (cur.parentId && cur.parentId !== tree.rootId && byId.get(cur.parentId)) cur = byId.get(cur.parentId)!;
+    return cur;
+  };
+  const groups = new Map<string, { title: string; items: Decision[] }>();
+  const seen = new Set<string>();
+  for (const n of tree.nodes) {
+    const d = session.decisions[n.id];
+    if (!d) continue;
+    const t = top(n);
+    const g = groups.get(t.id) ?? { title: t.label, items: [] };
+    g.items.push(d);
+    groups.set(t.id, g);
+    seen.add(d.key);
+  }
+  const rest = Object.values(session.decisions).filter((d) => !seen.has(d.key));
+  if (rest.length) groups.set("__rest", { title: "Other", items: rest });
+  return [...groups.values()];
+}
+
+function Confirm({ session, act }: { session: SessionView; act: Act }) {
+  const mobile = useMobile();
+  const [reopening, setReopening] = useState<Decision | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [preview, setPreview] = useState<Set<string> | undefined>();
+  const onPreview = useMemo(() => (keys: string[] | null) => setPreview(keys ? new Set(keys) : undefined), []);
+  const groups = groupDecisions(session);
+  const all = groups.flatMap((g) => g.items);
+  const n = all.length;
+  const minutes = clock(Math.max(0, Math.floor((Date.parse(session.updatedAt) - Date.parse(session.createdAt)) / 1000)));
+  const plate = () => quiet(act("confirm"));
+  const open = session.tree.nodes.filter((x) => x.id !== session.tree.rootId && x.status !== "settled");
+  const early = open.length > 0;
+  return (
+    <SessionBody
+      session={session}
+      sideSub="whole plan"
+      compact
+      previewStale={preview}
+      main={
+        <div className="main" style={{ gridTemplateRows: mobile ? "minmax(0,1fr) auto" : "minmax(0,1fr)" }}>
+          <div className="scroll">
+            <div className="col" style={{ maxWidth: 640 }}>
+              <Strip session={session} />
+              <div className="intro" style={{ gap: 6 }}>
+                <div className="eb">
+                  {early ? <span className="badge2 warn">Wrapping up early</span> : <span className="badge2 ok"><ICheck s={12} />Nothing left open</span>}
+                  after {session.rounds.length} {session.rounds.length === 1 ? "round" : "rounds"} · {minutes} elapsed
+                </div>
+              </div>
+              <section className="card2 appr" aria-labelledby="confirm-title">
+                <div className="hd">
+                  <span className={`ic${early ? " warn" : ""}`} aria-hidden="true">
+                    <ICheck s={16} />
+                  </span>
+                  <div>
+                    <h1 id="confirm-title">Is it done?</h1>
+                    <p>
+                      {n} {n === 1 ? "decision" : "decisions"} settled,{" "}
+                      {early ? `${open.length} still open. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : "nothing open."} Read them over before the plan gets
+                      written.
+                    </p>
+                  </div>
+                </div>
+                <div className="dl">
+                  {groups.map((g, gi) => (
+                    <section key={g.title} aria-labelledby={`grp-${gi}`}>
+                      <h2 className="g" id={`grp-${gi}`}>
+                        {g.title}
+                      </h2>
+                      <dl style={{ margin: 0 }}>
+                        {g.items.map((d) => (
+                          <div className="row" key={d.key}>
+                            <dt>{nameOf(d)}</dt>
+                            <dd>
+                              <span className="ans">
+                                {d.answer}
+                                {!d.accepted_recommendation ? <span className="sub" style={{ fontWeight: 450 }}> · your call</span> : null}
+                              </span>
+                              <button type="button" className="ro" aria-label={`Reopen ${nameOf(d)}`} onClick={() => setReopening(d)}>
+                                <IUndo s={12} />
+                                Reopen
+                              </button>
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  ))}
+                  {early ? (
+                    <section aria-labelledby="grp-open">
+                      <h2 className="g" id="grp-open">
+                        Still open
+                      </h2>
+                      <dl style={{ margin: 0 }}>
+                        {open.map((x) => (
+                          <div className="row open-q" key={x.id}>
+                            <dt>{x.label}</dt>
+                            <dd>
+                              <span className="ans">Open · listed in the plan</span>
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  ) : null}
+                </div>
+                {mobile ? null : (
+                  <div className="ft">
+                    <button type="button" className="pill primary" autoFocus onClick={plate}>
+                      Yes, plate it <kbd>↵</kbd>
+                    </button>
+                    <button type="button" className="pill secondary" onClick={() => setPicking(true)} disabled={!n}>
+                      Reopen a decision
+                    </button>
+                    <span className="spacer" />
+                    <button type="button" className="pill ghost2" onClick={() => quiet(act("keep-going"))}>
+                      <IBranch s={14} />
+                      Keep going on a branch
+                    </button>
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+          {mobile ? (
+            <div className="mbar">
+              <button type="button" className="pill primary" style={{ flex: 1 }} onClick={plate}>
+                Yes, plate it
+              </button>
+              <button type="button" className="pill secondary" onClick={() => setPicking(true)} disabled={!n}>
+                Reopen…
+              </button>
+              <button type="button" className="pill ghost2" onClick={() => quiet(act("keep-going"))}>
+                Keep going
+              </button>
+            </div>
+          ) : null}
+          {picking ? (
+            <ReopenPicker
+              decisions={all}
+              onClose={() => setPicking(false)}
+              onPick={(d) => {
+                setPicking(false);
+                setReopening(d);
+              }}
+            />
+          ) : null}
+          {reopening ? <ReopenDialog session={session} d={reopening} act={act} onClose={() => setReopening(null)} onPreview={onPreview} /> : null}
+        </div>
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------- 5 plating
+
+function Plating({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
+  const busy = session.busy;
+  const elapsed = useSince(session.updatedAt, busy);
+  const groups = groupDecisions(session);
+  const n = Object.keys(session.decisions).length;
+  const base = `Plating your plan from ${n} ${n === 1 ? "decision" : "decisions"}…`;
+  const long = elapsed >= 15;
+  const label = elapsed >= 60 ? "Still writing the plan. This one is taking a while" : long ? "Still writing the plan" : base;
+  void waitLabel;
+  return (
+    <SessionBody
+      session={session}
+      sideSub={`${n} settled`}
+      compact
+      dim
+      showHeat={false}
+      showLegend={false}
+      main={
+        <div className="main" style={{ gridTemplateRows: "minmax(0,1fr)" }}>
+          <div className="scroll">
+            <div className="col" style={{ maxWidth: 720, gap: 14 }}>
+              <Strip session={session} />
+              {banner}
+              {busy ? (
+                <div className="waiting" role="status" aria-live="polite">
+                  <div className="row">
+                    {long ? (
+                      <span className="rs">
+                        <span className="dots" aria-hidden="true">
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                        <span className="shimmer">{label}</span>
+                        <span className="det mono">{clock(elapsed)}</span>
+                      </span>
+                    ) : (
+                      <span className="thinking">
+                        <span className="fl" aria-hidden="true">
+                          <IPlate s={18} />
+                        </span>
+                        <span className="shimmer">{label}</span>
+                      </span>
+                    )}
+                    {elapsed >= 60 ? (
+                      <button type="button" className="pill secondary sm" onClick={() => quiet(act("stop"))}>
+                        <ISq s={12} />
+                        Stop
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              <article className="card2 plating-doc" aria-label="Plan draft" style={{ padding: "24px 28px", display: "grid", gap: 16 }}>
+                <h1 style={{ fontSize: 22, lineHeight: "28px", fontWeight: 650, letterSpacing: "-.02em", margin: 0 }}>{session.idea.split("\n")[0]}</h1>
+                {groups.map((g, gi) => (
+                  <section key={g.title} className="psec" style={{ display: "grid", gap: 8, ["--k" as string]: gi }}>
+                    <h2 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: "var(--muted-foreground)" }}>{g.title}</h2>
+                    <ul style={{ display: "flex", flexWrap: "wrap", gap: 6, listStyle: "none", margin: 0, padding: 0 }}>
+                      {g.items.map((d, i) => (
+                        <li key={d.key} className="chip" style={{ ["--k" as string]: gi * 3 + i }}>
+                          <span className="ck" aria-hidden="true">
+                            <ICheck s={12} />
+                          </span>
+                          <span className="k">{nameOf(d)}</span>
+                          {d.answer}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+                {busy ? (
+                  <div aria-hidden="true" style={{ display: "grid", gap: 8 }}>
+                    <span className="sk" style={{ width: "40%", height: 12 }} />
+                    <span className="sk" style={{ width: "92%" }} />
+                    <span className="sk" style={{ width: "84%" }} />
+                    <span className="sk" style={{ width: "66%" }} />
+                  </div>
+                ) : null}
+              </article>
+              {busy && !groups.length ? <SkeletonCard /> : null}
+            </div>
+          </div>
+        </div>
+      }
+    />
+  );
+}
+export type { TreeState };

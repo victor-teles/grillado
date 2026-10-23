@@ -313,6 +313,7 @@ export class GrilladoServer {
         status: s.status,
         rounds: s.rounds.length,
         decisions: Object.keys(s.decisions).length,
+        open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
       })),
       dataDir: this.opts.store.dir,

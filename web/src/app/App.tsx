@@ -1,12 +1,14 @@
-import { Power } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { ApiError, api, subscribe } from "./api";
-import { Composer, NoAgent, Picker, RecentSessions } from "./Home";
+import { Header, useTheme } from "./chrome";
+import { CopyButton } from "./CopyButton";
+import { Landing, NoAgent, Picker } from "./Home";
+import { IPower } from "./icons";
 import { SessionScreen } from "./Session";
 import type { AppState, ProviderId, SessionView } from "./types";
 
 const sessionIdFromPath = () => /^\/s\/([\w-]+)$/.exec(location.pathname)?.[1] ?? null;
+const stepOf = (s: SessionView) => (s.status === "confirm" ? 2 : s.status === "synthesizing" || s.status === "plated" ? 3 : 1);
 
 export function App() {
   const [app, setApp] = useState<AppState | null>(null);
@@ -16,6 +18,7 @@ export function App() {
   const [locked, setLocked] = useState(false);
   const [notice, setNotice] = useState("");
   const [picking, setPicking] = useState(false);
+  const [theme, toggleTheme] = useTheme();
 
   const refreshApp = useCallback(async () => {
     try {
@@ -34,7 +37,7 @@ export function App() {
   }, [refreshApp]);
 
   useEffect(() => {
-    if (locked) return;
+    if (locked || down) return;
     return subscribe(
       (e) => {
         if (e.type === "app") void refreshApp();
@@ -43,7 +46,7 @@ export function App() {
       },
       () => setDown(true),
     );
-  }, [locked, refreshApp]);
+  }, [locked, down, refreshApp]);
 
   useEffect(() => {
     if (!sessionId) return setSession(null);
@@ -56,6 +59,7 @@ export function App() {
   const go = (id: string | null) => {
     history.pushState(null, "", id ? `/s/${id}` : "/");
     setSessionId(id);
+    setPicking(false);
     if (!id) void refreshApp();
   };
 
@@ -66,24 +70,46 @@ export function App() {
         setNotice("");
         setSession(await api.action(session.id, action, body));
       } catch (err) {
-        setNotice(err instanceof Error ? err.message : "That didn't work.");
+        // Round submits show their own error in the bar.
+        if (action !== "answers") setNotice(err instanceof Error ? err.message : "That didn't work.");
         throw err;
       }
     },
     [session],
   );
 
-  if (down) return <Stopped />;
+  const quit = async () => {
+    await api.quit().catch(() => {});
+    setDown(true);
+  };
+
+  if (down) return <Stopped theme={theme} onTheme={toggleTheme} />;
   if (locked)
     return (
-      <Shell>
-        <p role="alert">Open the link printed in your terminal to use this Grillado window.</p>
-      </Shell>
+      <div className="gr-app">
+        <Header onQuit={quit} theme={theme} onTheme={toggleTheme} />
+        <main className="page">
+          <div className="center">
+            <h1 className="h1">This window isn't connected</h1>
+            <p className="lead" role="alert">
+              Open the link printed in your terminal to use this Grillado window.
+            </p>
+          </div>
+        </main>
+      </div>
     );
-  if (!app) return <Shell>{null}</Shell>;
+  if (!app)
+    return (
+      <div className="gr-app">
+        <Header onQuit={quit} theme={theme} onTheme={toggleTheme} />
+        <main className="page" aria-busy="true" />
+      </div>
+    );
 
   const ready = app.providers.filter((p) => p.status === "ready");
-  const selected = app.providers.find((p) => p.id === (session?.provider ?? app.selected));
+  const provider = app.providers.find((p) => p.id === (session?.provider ?? app.selected));
+  const canSwitch = ready.length > 1 && !session?.busy;
+  const onSwitch = canSwitch ? () => setPicking(true) : undefined;
   const pick = async (id: ProviderId, remember: boolean) => {
     setApp(await api.selectProvider(id, remember));
     if (session && session.provider !== id) await act("provider", { id }).catch(() => {});
@@ -91,102 +117,96 @@ export function App() {
   };
 
   let body: React.ReactNode;
-  if (!ready.length && !session) body = <NoAgent state={app} onRescan={async () => setApp(await api.rescan())} />;
-  else if (picking || (app.needsPicker && !session)) body = <Picker state={app} onPick={pick} />;
-  else if (session) body = <SessionScreen session={session} app={app} act={(a, b) => act(a, b).catch(() => {})} />;
+  let showAgent = true;
+  if (!ready.length && !session) {
+    showAgent = false;
+    body = <NoAgent state={app} onRescan={async () => setApp(await api.rescan())} />;
+  } else if (picking || (app.needsPicker && !session)) {
+    showAgent = false;
+    body = <Picker state={app} onPick={pick} />;
+  } else if (session)
+    body = (
+      <main className="smain">
+        <SessionScreen session={session} app={app} act={act} onSwitch={() => setPicking(true)} />
+      </main>
+    );
   else
     body = (
-      <div className="grid gap-10">
-        <Composer
-          onStart={async (idea, context) => {
-            const s = await api.createSession(idea, context);
-            setSession(s);
-            go(s.id);
-          }}
-        />
-        <RecentSessions sessions={app.sessions} onOpen={go} />
-      </div>
+      <Landing
+        state={app}
+        provider={provider}
+        onSwitch={onSwitch}
+        onStart={async (idea, context) => {
+          const s = await api.createSession(idea, context);
+          setSession(s);
+          go(s.id);
+        }}
+        onOpen={go}
+      />
     );
 
+  const wrappable = session && (session.status === "answering" || session.status === "asking") && !picking;
   return (
-    <Shell
-      header={
-        <>
-          {selected && ready.length ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="rounded-full"
-              aria-label={`Agent: ${selected.displayName}. Switch agent`}
-              onClick={() => setPicking((v) => !v)}
-              disabled={ready.length < 2 || session?.busy}
-            >
-              <span aria-hidden="true" className="size-2 rounded-full bg-success" />
-              {selected.displayName}
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={async () => {
-              await api.quit().catch(() => {});
-              setDown(true);
-            }}
-          >
-            <Power aria-hidden="true" /> Quit
-          </Button>
-        </>
-      }
-      onHome={session ? () => go(null) : undefined}
-    >
+    <div className="gr-app">
+      <Header
+        step={session && !picking ? stepOf(session) : undefined}
+        title={session ? session.idea.split("\n")[0] : undefined}
+        round={session && !picking && (session.status === "answering" || session.status === "asking") ? Math.max(1, session.rounds.length + (session.status === "asking" ? 1 : 0)) : undefined}
+        provider={showAgent && ready.length ? provider : undefined}
+        onSwitch={onSwitch}
+        onHome={session || picking ? () => (picking && session ? setPicking(false) : go(null)) : undefined}
+        onWrap={wrappable ? () => void act("wrap").catch(() => {}) : undefined}
+        onQuit={quit}
+        theme={theme}
+        onTheme={toggleTheme}
+      />
       {notice ? (
-        <p role="alert" className="mb-4 rounded-lg border border-dashed p-3 text-sm">
+        <p role="alert" className="notice gr-notice">
           {notice}
         </p>
       ) : null}
       {body}
-    </Shell>
-  );
-}
-
-function Shell({ children, header, onHome }: { children: React.ReactNode; header?: React.ReactNode; onHome?: () => void }) {
-  return (
-    <div className="min-h-dvh bg-background text-foreground">
-      <header className="mx-auto flex max-w-4xl items-center justify-between gap-3 px-5 py-4">
-        <h1 className="text-lg font-semibold tracking-tight">
-          {onHome ? (
-            <a
-              href="/"
-              onClick={(e) => {
-                e.preventDefault();
-                onHome();
-              }}
-              className="focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              Grillado
-            </a>
-          ) : (
-            "Grillado"
-          )}
-        </h1>
-        <div className="flex items-center gap-2">{header}</div>
-      </header>
-      <main className="mx-auto max-w-4xl px-5 pb-16">{children}</main>
     </div>
   );
 }
 
-function Stopped() {
+function Stopped({ theme, onTheme }: { theme: "dark" | "light"; onTheme: () => void }) {
+  const [hint, setHint] = useState("This tab reconnects on its own");
+  useEffect(() => {
+    const t = setInterval(async () => {
+      try {
+        await api.state();
+        location.reload();
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) setHint("Grillado is running again. Open the new link from your terminal.");
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, []);
   return (
-    <Shell>
-      <section role="status" className="grid gap-2 rounded-2xl border bg-card p-6">
-        <h2 className="text-xl font-semibold">Grillado was stopped</h2>
-        <p className="text-muted-foreground">
-          Run <code className="rounded bg-muted px-1">npx grillado</code> to continue. Your session is saved.
-        </p>
-      </section>
-    </Shell>
+    <div className="gr-app">
+      <Header theme={theme} onTheme={onTheme} />
+      <main className="page">
+        <div className="center">
+          <span className="tile" aria-hidden="true">
+            <IPower s={24} />
+          </span>
+          <h1 className="h1">Grillado was stopped</h1>
+          <p className="lead">Your session is saved. Run this in a terminal to continue where you left off.</p>
+          <div className="inst card2" style={{ width: "100%", maxWidth: 420, gridTemplateColumns: "minmax(0,1fr) auto" }}>
+            <code className="mono">npx grillado</code>
+            <CopyButton kind="icon" text="npx grillado" label="Copy npx grillado" />
+          </div>
+          <span className="rs" role="status" style={{ marginTop: 18 }}>
+            <span className="dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            {hint}
+          </span>
+        </div>
+      </main>
+    </div>
   );
 }
