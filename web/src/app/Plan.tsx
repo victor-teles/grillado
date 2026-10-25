@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMobile } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { ICheck, IDl, IFolder, IPlate, IX } from "./icons";
-import { Markdown } from "./Markdown";
+import { type EditorMode, PlanEditor, usePlanDraft } from "./editor/PlanEditor";
 import { type Act, ReopenDialog } from "./Session";
 import type { Decision, SessionView } from "./types";
 
@@ -24,6 +24,8 @@ export function PlanView({ session, act }: { session: SessionView; act: Act }) {
   const [reopening, setReopening] = useState<Decision | null>(null);
   const [justPlated] = useState(() => !!plan.createdAt && Date.now() - Date.parse(plan.createdAt) < 8000);
   const docRef = useRef<HTMLDivElement>(null);
+  const draft = usePlanDraft(session.id, plan.markdown);
+  const [mode, setMode] = useState<EditorMode>("rich");
   const decisions = Object.values(session.decisions);
   const early = plan.openDecisions.length > 0;
   // Question position inside its round, for "R2·1" labels.
@@ -44,12 +46,18 @@ export function PlanView({ session, act }: { session: SessionView; act: Act }) {
     if (mobile) setSheet(true);
     requestAnimationFrame(() => document.getElementById(logId(key))?.scrollIntoView({ block: "nearest" }));
   };
-  const showCite = (key: string) => {
-    setHl(key);
-    setSheet(false);
+  const scrollToCite = (key: string) => {
     const el = docRef.current?.querySelector<HTMLElement>(`[data-cite="${CSS.escape(key)}"]`);
     el?.scrollIntoView({ block: "center" });
     el?.focus({ preventScroll: true });
+  };
+  const showCite = (key: string) => {
+    setHl(key);
+    setSheet(false);
+    if (mode === "rich") return scrollToCite(key);
+    // Chips only exist in the document view.
+    setMode("rich");
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollToCite(key)));
   };
   useEffect(() => {
     if (!sheet) return;
@@ -74,7 +82,7 @@ export function PlanView({ session, act }: { session: SessionView; act: Act }) {
                 {d.accepted_recommendation ? "" : " · your call"}
               </span>
               <span style={{ display: "flex", gap: 10 }}>
-                {decisionCited(plan.markdown, d) ? (
+                {decisionCited(draft.text, d) ? (
                   <button type="button" className="ro" onClick={() => showCite(d.key)}>
                     Show in plan
                   </button>
@@ -130,10 +138,10 @@ export function PlanView({ session, act }: { session: SessionView; act: Act }) {
               </div>
             </dl>
           )}
-          <CopyButton text={plan.markdown} label="Copy Markdown" />
+          <CopyButton text={draft.text} label="Copy Markdown" />
           {mobile ? null : (
             <>
-              <a className="pill secondary sm" href={`/api/sessions/${session.id}/plan.md`} download>
+              <a className="pill secondary sm" href={`/api/sessions/${session.id}/plan.md`} download onPointerDown={() => void draft.flush()}>
                 <IDl s={14} />
                 Download .md
               </a>
@@ -144,34 +152,35 @@ export function PlanView({ session, act }: { session: SessionView; act: Act }) {
       </div>
       <div className="split">
         <div className="docwrap" ref={docRef}>
-          <article className="doc" data-testid="plan" aria-label="Plan">
-            <Markdown
-              source={plan.markdown}
-              afterTitle={
-                <p className="sub">
-                  Plan · {decisions.length} decisions{plan.createdAt ? ` · ${written(plan.createdAt)}` : ""}
-                </p>
-              }
-              openBadge={<span className="badge2">Still raw · {plan.openDecisions.length}</span>}
-              cite={(round, key, n) => {
-                const i = qIndex.get(`${round}:${key}`);
-                const label = `R${round}·${i === undefined ? "?" : i + 1}`;
-                return (
-                  <button
-                    key={n}
-                    type="button"
-                    className="cite"
-                    data-cite={key}
-                    aria-pressed={hl === key}
-                    aria-label={`${label}: ${session.decisions[key] ? nameOf(session.decisions[key]) : key}, show in decisions log`}
-                    onClick={() => showLog(key)}
-                  >
-                    {label}
-                  </button>
-                );
-              }}
-            />
-          </article>
+          <PlanEditor
+            draft={draft}
+            mode={mode}
+            setMode={setMode}
+            afterTitle={
+              <p className="sub">
+                Plan · {decisions.length} decisions{plan.createdAt ? ` · ${written(plan.createdAt)}` : ""}
+                {plan.editedAt ? ` · edited` : ""}
+              </p>
+            }
+            openBadge={<span className="badge2">Still raw · {plan.openDecisions.length}</span>}
+            cite={(round, key, n) => {
+              const i = qIndex.get(`${round}:${key}`);
+              const label = `R${round}·${i === undefined ? "?" : i + 1}`;
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  className="cite"
+                  data-cite={key}
+                  aria-pressed={hl === key}
+                  aria-label={`${label}: ${session.decisions[key] ? nameOf(session.decisions[key]) : key}, show in decisions log`}
+                  onClick={() => showLog(key)}
+                >
+                  {label}
+                </button>
+              );
+            }}
+          />
         </div>
         {mobile ? null : (
           <aside className="side2" aria-labelledby="log-title" style={{ gridTemplateRows: "auto minmax(0,1fr)" }}>

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderId } from "../core/providers/types.ts";
@@ -62,6 +62,15 @@ export class Store {
     const file = this.planPath(id);
     writeAtomic(file, markdown);
     return file;
+  }
+
+  /** Copy an edited plan.md aside before a new plan replaces it. Returns the copy's path. */
+  keepEditedPlan(id: string): string | null {
+    const file = this.planPath(id);
+    if (!existsSync(file)) return null;
+    const copy = path.join(this.sessionDir(id), `plan.edited-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
+    copyFileSync(file, copy);
+    return copy;
   }
 
   readPlan(id: string): string | null {

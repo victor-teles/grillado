@@ -13,6 +13,7 @@ import {
   acceptStreak,
   createSession,
   dismissNudge,
+  editPlan,
   keepGoing,
   reopen,
   setError,
@@ -342,6 +343,10 @@ export class GrilladoServer {
       const loaded = this.opts.store.load(id);
       if (!loaded) throw new Error("Session not found");
       s = loaded;
+      // plan.md is the source of truth for the plan text: pick up edits made while we were down
+      // (or by hand, in another editor).
+      const md = s.plan ? this.opts.store.readPlan(id) : null;
+      if (s.plan && md !== null && md !== s.plan.markdown) s.plan.markdown = md;
       // A run that was cut off by a restart can't resume on its own (AC14): offer Retry.
       if ((s.status === "asking" || s.status === "synthesizing") && !s.error) {
         setError(s, "unknown", "Interrupted. Retry to continue.");
@@ -501,8 +506,17 @@ export class GrilladoServer {
         this.startPlan(s);
         break;
       }
+      case "plan": {
+        if (busy) throw new Error("The agent is still working.");
+        editPlan(s, body?.markdown);
+        this.opts.store.writePlan(s.id, s.plan!.markdown);
+        this.changed(s);
+        return this.json(res, 200, { ok: true, savedAt: s.plan!.editedAt });
+      }
       case "reopen": {
         if (busy) throw new Error("The agent is still working.");
+        // A new plan will overwrite plan.md; keep the user's edited version next to it.
+        if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
         reopen(s, String(body?.key ?? ""));
         this.startRound(s);
         break;

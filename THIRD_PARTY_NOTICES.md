@@ -55,3 +55,24 @@ The fonts are not sold on their own and keep their reserved names.
 The published `dist/` bundles React, Radix UI, lucide-react, Tailwind CSS, Zod and other
 MIT/ISC-licensed packages listed in `package.json` (devDependencies). Their license comments
 are preserved in the bundles.
+
+## Diagrams (Mermaid)
+
+The plan editor renders ```` ```mermaid ```` blocks with Mermaid (https://github.com/mermaid-js/mermaid,
+MIT, Copyright (c) 2014 - 2022 Knut Sveidqvist). It is loaded only when a plan has a diagram and
+is bundled into `dist/web/assets/` with its dependencies, under these licenses:
+
+- MIT: @braintree/sanitize-url, @iconify/utils, @mermaid-js/parser, @upsetjs/venn.js, cytoscape,
+  cytoscape-cose-bilkent, cytoscape-fcose, cose-base, layout-base, dagre-d3-es, dayjs, es-toolkit,
+  katex, khroma, lodash-es, marked, roughjs (and hachure-fill, path-data-parser, points-on-curve,
+  points-on-path), stylis, ts-dedent, uuid.
+- ISC: d3 and its d3-* modules, d3-sankey, internmap, delaunator.
+- Apache-2.0: chevrotain and its @chevrotain/* packages.
+- MPL-2.0 OR Apache-2.0: DOMPurify (used here under Apache-2.0).
+- BSD-3-Clause: rw.
+- Unlicense: robust-predicates.
+
+The build writes the full license text of every npm package in the web bundle (Mermaid's
+dependencies included) to `dist/web/third-party-licenses.txt` (`scripts/licenses-plugin.ts`). Grillado does **not** ship elkjs (EPL-2.0):
+the import is replaced by a stub (`web/src/vendor/elk-stub.js`) and Mermaid is configured to
+use its dagre layout for every diagram.

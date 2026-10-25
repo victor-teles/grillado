@@ -401,7 +401,9 @@ button.agent:not(:disabled):hover{background:var(--muted)}
 .doc h3{font-size:14px;line-height:20px;font-weight:620;margin:16px 0 4px}
 .doc h4{font-size:13px;font-weight:620;margin:12px 0 4px}
 .doc p{margin:0 0 8px;color:var(--foreground)}
-.doc ul,.doc ol{margin:0 0 8px;padding-left:18px}.doc li{margin:2px 0}
+.doc ul,.doc ol{margin:0 0 8px;padding-left:22px}.doc li{margin:2px 0}
+/* The CSS reset strips list markers; plans need them back. */
+.doc ul{list-style:disc}.doc ol{list-style:decimal}.doc li::marker{color:var(--subtle-foreground)}
 .doc pre{overflow-x:auto;border-radius:8px;background:var(--muted);padding:12px;font-size:12.5px}
 .doc code{background:var(--muted);border-radius:4px;padding:0 4px}
 .doc pre code{background:none;padding:0}
@@ -410,6 +412,26 @@ button.agent:not(:disabled):hover{background:var(--muted)}
 .doc .sub{font-size:12.5px;margin-bottom:14px}
 .doc .open{border:1px dashed var(--border-strong);border-radius:12px;padding:12px 14px;margin-top:22px;background:repeating-linear-gradient(135deg,color-mix(in oklab,var(--foreground) 4%,transparent) 0 6px,transparent 6px 12px)}
 .doc .open h2{margin-top:0;display:flex;gap:8px;align-items:center}
+/* ---------- plan editor (behavior-first; final visuals come from Designer) ---------- */
+.ped{display:grid;min-height:100%;align-content:start}
+.ped>.doc{width:100%;box-sizing:border-box}
+.ped-bar{position:sticky;top:0;z-index:2;display:flex;gap:12px;align-items:center;justify-content:space-between;max-width:720px;width:100%;margin:0 auto;padding:10px 40px;background:var(--background);border-bottom:1px solid var(--border)}
+.ped-modes{display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:var(--muted)}
+.ped-mode{height:26px;padding:0 12px;border:0;border-radius:999px;background:transparent;color:var(--muted-foreground);font:500 12px/1 "Inter Variable",ui-sans-serif,sans-serif;cursor:pointer}
+.ped-mode[aria-pressed=true]{background:var(--background);color:var(--foreground);box-shadow:0 0 0 1px var(--border)}
+.ped-save{display:inline-flex;gap:8px;align-items:center;font-size:12px}
+.ped-save[data-save=error]{color:var(--destructive)}
+.doc .blk{border-radius:6px;margin:0 -8px;padding:0 8px;cursor:text}
+.doc .blk:hover{background:color-mix(in oklab,var(--foreground) 3%,transparent)}
+.doc .blk[data-editing]{background:none;display:grid;gap:8px;margin-bottom:8px}
+.blk-edit,.ped-raw{display:block;width:100%;resize:vertical;border:1px solid var(--border-strong);border-radius:8px;background:var(--card);color:var(--foreground);padding:8px 10px;font-size:12.5px;line-height:20px;overflow:hidden}
+.blk-edit:focus-visible,.ped-raw:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+.ped-raw{min-height:60vh}
+.doc .mmd{margin:8px 0 12px}
+.doc .mmd-svg{display:flex;justify-content:center;overflow-x:auto}
+.doc .mmd-svg svg{max-width:100%;height:auto}
+.doc .mmd-err{font-size:12.5px;color:var(--destructive);margin-bottom:6px;white-space:pre-wrap}
+.doc .mmd[data-state=loading] pre{opacity:.6}
 .tl{list-style:none;margin:0;padding:8px 20px 20px;display:grid;overflow:auto;min-height:0;align-content:start}
 .tl .rd{font:500 11px/16px "Geist Mono Variable",monospace;color:var(--subtle-foreground);padding:12px 0 6px;display:block}
 .tl .rd::before{display:none}
@@ -474,6 +496,7 @@ button.agent:not(:disabled):hover{background:var(--muted)}
   .runsum .st{justify-content:flex-start}
   .runsum .acts{justify-content:flex-start}
   .doc{padding:18px 16px 40px;font-size:13.5px}
+  .ped-bar{padding:8px 16px}
   .hide-m{display:none!important}
 }
 @media (min-width:768px){.only-m{display:none!important}}

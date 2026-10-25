@@ -1,93 +1,124 @@
 import { Fragment, type ReactNode } from "react";
+import { type Block, parseBlocks } from "./editor/blocks";
+import { Diagram } from "./editor/Diagram";
 
 export type CiteRenderer = (round: number, key: string, n: number) => ReactNode;
 
 /**
  * Minimal, safe Markdown → React (no raw HTML): headings, lists, paragraphs, code fences, **bold**, `code`.
  * `[R2:key]` citations become chips via `cite`; an "Open decisions" section is wrapped for the hatched style.
+ * ```mermaid fences render as diagrams.
+ *
+ * Editing (plan editor): with `onBlock`, every top-level block is wrapped in
+ * `<div class="blk" data-block=kind>` and clicking it calls `onBlock(block)`. `edit` swaps the
+ * blocks inside `edit.start..edit.end` for `edit.node` (the block editor).
  */
-export function Markdown({ source, cite, afterTitle, openBadge }: { source: string; cite?: CiteRenderer; afterTitle?: ReactNode; openBadge?: ReactNode }) {
+export function Markdown({
+  source,
+  cite,
+  afterTitle,
+  openBadge,
+  onBlock,
+  edit,
+}: {
+  source: string;
+  cite?: CiteRenderer;
+  afterTitle?: ReactNode;
+  openBadge?: ReactNode;
+  onBlock?: (b: Block) => void;
+  edit?: { start: number; end: number; node: ReactNode };
+}) {
   const out: ReactNode[] = [];
   let openSection: ReactNode[] | null = null;
   const push = (n: ReactNode) => (openSection ? openSection.push(n) : out.push(n));
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  let i = 0;
-  let key = 0;
-  let titled = false;
-  const ctx = { cite, n: 0 };
-  while (i < lines.length) {
-    const line = lines[i];
-    if (!line.trim()) {
-      i++;
-      continue;
-    }
-    if (line.startsWith("```")) {
-      const body: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith("```")) body.push(lines[i++]);
-      i++;
-      push(
-        <pre key={key++}>
-          <code>{body.join("\n")}</code>
-        </pre>,
-      );
-      continue;
-    }
-    const h = /^(#{1,4})\s+(.*)$/.exec(line);
-    if (h) {
-      const level = h[1].length;
-      i++;
-      if (level === 1 && !titled) {
-        titled = true;
-        out.push(<h1 key={key++}>{inline(h[2], ctx)}</h1>);
-        if (afterTitle) out.push(<Fragment key={key++}>{afterTitle}</Fragment>);
-        continue;
-      }
-      if (level <= 2 && openSection) {
-        out.push(
-          <section key={key++} className="open" aria-label="Open decisions">
-            {openSection}
-          </section>,
-        );
-        openSection = null;
-      }
-      const Tag = (["h1", "h2", "h3", "h4"] as const)[level - 1];
-      if (level === 2 && /^open decisions$/i.test(h[2].trim())) {
-        openSection = [
-          <h2 key={key++}>
-            {h[2]}
-            {openBadge}
-          </h2>,
-        ];
-        continue;
-      }
-      push(<Tag key={key++}>{inline(h[2], ctx)}</Tag>);
-      continue;
-    }
-    if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
-      const ordered = /^\s*\d+\./.test(line);
-      const items: string[] = [];
-      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, ""));
-      const List = ordered ? "ol" : "ul";
-      push(
-        <List key={key++}>
-          {items.map((t, n) => (
-            <li key={n}>{inline(t, ctx)}</li>
-          ))}
-        </List>,
-      );
-      continue;
-    }
-    const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*([-*]|\d+\.)\s)/.test(lines[i])) para.push(lines[i++]);
-    push(<p key={key++}>{inline(para.join(" "), ctx)}</p>);
-  }
-  if (openSection)
+  const closeOpen = () => {
+    if (!openSection) return;
     out.push(
-      <section key={key++} className="open" aria-label="Open decisions">
+      <section key={`open-${out.length}`} className="open" aria-label="Open decisions">
         {openSection}
       </section>,
     );
+    openSection = null;
+  };
+  const ctx = { cite, n: 0 };
+  let titled = false;
+  let editShown = false;
+  const showEdit = () => {
+    if (!edit || editShown) return;
+    editShown = true;
+    push(<Fragment key="edit">{edit.node}</Fragment>);
+  };
+  const wrap = (b: Block, node: ReactNode) =>
+    onBlock ? (
+      <div
+        key={b.start}
+        className="blk"
+        data-block={b.kind}
+        onClick={(e) => {
+          // Chips, links and other controls inside a block keep their own behavior.
+          if ((e.target as HTMLElement).closest("button,a,input,textarea,select")) return;
+          if (window.getSelection()?.toString()) return; // selecting text isn't a request to edit
+          onBlock(b);
+        }}
+      >
+        {node}
+      </div>
+    ) : (
+      <Fragment key={b.start}>{node}</Fragment>
+    );
+
+  for (const b of parseBlocks(source)) {
+    // Blocks inside (or starting inside) the edited range are replaced by the block editor.
+    if (edit && b.start >= edit.start && (b.start < edit.end || b.end <= edit.end)) {
+      showEdit();
+      continue;
+    }
+    if (edit && b.start >= edit.end) showEdit();
+    if (b.kind === "fence") {
+      push(
+        wrap(
+          b,
+          b.lang === "mermaid" ? (
+            <Diagram code={b.body} />
+          ) : (
+            <pre>
+              <code>{b.body}</code>
+            </pre>
+          ),
+        ),
+      );
+    } else if (b.kind === "heading") {
+      if (b.level === 1 && !titled) {
+        titled = true;
+        out.push(wrap(b, <h1>{inline(b.text, ctx)}</h1>));
+        if (afterTitle) out.push(<Fragment key="after-title">{afterTitle}</Fragment>);
+        continue;
+      }
+      if (b.level <= 2) closeOpen();
+      if (b.level === 2 && /^open decisions$/i.test(b.text.trim())) {
+        openSection = [];
+        push(
+          wrap(
+            b,
+            <h2>
+              {b.text}
+              {openBadge}
+            </h2>,
+          ),
+        );
+        continue;
+      }
+      const Tag = (["h1", "h2", "h3", "h4"] as const)[b.level - 1];
+      push(wrap(b, <Tag>{inline(b.text, ctx)}</Tag>));
+    } else if (b.kind === "list") {
+      const items = b.items.map((t, n) => <li key={n}>{inline(t, ctx)}</li>);
+      push(wrap(b, b.ordered ? <ol start={b.first === 1 ? undefined : b.first}>{items}</ol> : <ul>{items}</ul>));
+    } else {
+      push(wrap(b, <p>{inline(b.text, ctx)}</p>));
+    }
+  }
+  showEdit();
+  closeOpen();
   return <>{out}</>;
 }
 

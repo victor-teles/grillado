@@ -320,6 +320,8 @@ try {
   await dlg.waitFor();
   check("reopen dialog lists dependents", (await dlg.textContent()).includes("Storage"));
   check("Cancel focused in reopen dialog", await page.evaluate(() => document.activeElement?.textContent === "Cancel"));
+  // The preview lands a frame after the dialog; wait for it instead of racing it.
+  await page.locator("[role=treeitem][data-preview]").nth(1).waitFor({ timeout: 2000 }).catch(() => {});
   check("tree previews the re-asks", (await page.locator("[role=treeitem][data-preview]").count()) === 2);
   await page.waitForTimeout(300); // let the 120 ms fade finish before measuring contrast
   const axeDlg = await new AxeBuilder({ page }).analyze();
@@ -349,6 +351,77 @@ try {
   const axePlanDark = await new AxeBuilder({ page }).analyze();
   check("axe: plan view (dark)", axePlanDark.violations.length === 0, axePlanDark.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
 
+  // ---- v1.1 plan editor: rich/raw toggle, autosave to plan.md, Mermaid, list markers.
+  const axeIds = (r) => r.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(",");
+  const onDisk = () => readFileSync(planFile, "utf8");
+  const waitDisk = async (pred, ms = 5000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      if (pred(onDisk())) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  };
+  const marker = await page.evaluate(() => getComputedStyle(document.querySelector("[data-testid=plan] ul")).listStyleType);
+  check("plan lists show bullets", marker === "disc", marker);
+  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Markdown" }).click();
+  const rawBox = page.getByRole("textbox", { name: "Plan Markdown" });
+  check("raw view shows plan.md byte for byte, raw [R1:id]s included", (await rawBox.inputValue()) === plan && plan.includes("[R1:platform]"));
+  const axeRaw = await new AxeBuilder({ page }).analyze();
+  check("axe: plan editor, Markdown view (dark)", axeRaw.violations.length === 0, axeIds(axeRaw));
+  const diagrams = "\n## Flow\n\n```mermaid\nflowchart TD\n  A[Idea] --> B[Plan]\n```\n\n```mermaid\n---\nconfig:\n  layout: elk\n---\nflowchart LR\n  C[Asks for ELK] --> D[Gets dagre]\n```\n\n```mermaid\nflowchart TD\n  A -->\n```\n";
+  const typed = plan + diagrams;
+  await rawBox.fill(typed);
+  await shot(page, "plan-editor-markdown-dark");
+  check("raw edit autosaves to plan.md", await waitDisk((t) => t === typed));
+  await page.getByTestId("save-status").getByText(/^Saved/).waitFor({ timeout: 5000 });
+  check("save status says Saved", true);
+  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Document" }).click();
+  await page.locator(".mmd[data-state=ok] svg").first().waitFor({ timeout: 15_000 });
+  await page.locator(".mmd[data-state=ok] svg").nth(1).waitFor({ timeout: 15_000 });
+  check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] svg").count()) === 2);
+  await page.locator(".mmd[data-state=error]").waitFor({ timeout: 5000 });
+  check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .mmd-err").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] pre").textContent()).includes("A -->"));
+  await page.locator(".mmd").first().scrollIntoViewIfNeeded();
+  await shot(page, "plan-editor-diagrams-dark");
+  // Edit one block in place in the rich view.
+  const para = page.locator("[data-testid=plan] .blk[data-block=para]").first();
+  const before = (await para.textContent()) ?? "";
+  await para.click({ position: { x: 4, y: 4 } });
+  const blockBox = page.getByRole("textbox", { name: /Edit block as Markdown/ });
+  await blockBox.waitFor();
+  await blockBox.press("End");
+  await blockBox.pressSequentially(" Edited in place.");
+  await shot(page, "plan-editor-block-edit-dark");
+  const axeBlock = await new AxeBuilder({ page }).analyze();
+  check("axe: plan editor, editing a block (dark)", axeBlock.violations.length === 0, axeIds(axeBlock));
+  await blockBox.press("Escape");
+  check("Escape closes the block editor", (await blockBox.count()) === 0);
+  check("block edit autosaves to plan.md", await waitDisk((t) => t.includes(`${before} Edited in place.`) || t.includes("Edited in place.")));
+  const edited = onDisk();
+  check("only the edited block changed on disk", edited === typed.replace(`\n${before}\n`, `\n${before} Edited in place.\n`), JSON.stringify(before.slice(0, 40)));
+  check("citations survive the edits", ["[R1:scope]", "[R1:platform]", "[R2:storage]"].every((t) => edited.includes(t)));
+  const axeDocDark = await new AxeBuilder({ page }).analyze();
+  check("axe: plan editor with diagrams (dark)", axeDocDark.violations.length === 0, axeIds(axeDocDark));
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "Light theme" }).click();
+  await page.locator(".mmd[data-state=ok] svg").first().waitFor();
+  await page.waitForTimeout(400);
+  const axeDocLight = await new AxeBuilder({ page }).analyze();
+  check("axe: plan editor with diagrams (light)", axeDocLight.violations.length === 0, axeIds(axeDocLight));
+  await page.locator(".mmd").first().scrollIntoViewIfNeeded();
+  await shot(page, "plan-editor-diagrams-light");
+  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Markdown" }).click();
+  const axeRawLight = await new AxeBuilder({ page }).analyze();
+  check("axe: plan editor, Markdown view (light)", axeRawLight.violations.length === 0, axeIds(axeRawLight));
+  await shot(page, "plan-editor-markdown-light");
+  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Document" }).click();
+  await page.reload();
+  await page.getByTestId("plan").waitFor();
+  check("edits survive a reload", ((await page.getByTestId("plan").textContent()) ?? "").includes("Edited in place."));
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "Dark theme" }).click();
+
   // Agent ran in an empty temp cwd with the tools-off argv.
   const log = readFileSync(e.FAKE_LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   const runs = log.filter((l) => l.args[0] !== "--version" && l.args[0] !== "--help");
@@ -371,6 +444,18 @@ try {
   check("SIGINT exits 0 within 3s", st.code === 0, `${st.ms} ms`);
   await page.getByRole("heading", { name: "Grillado was stopped" }).waitFor({ timeout: 10_000 });
   check("tab shows 'stopped' state", true);
+
+  // Plan edits survive a restart (v1.1 acceptance): new process, same data dir.
+  const sessionPath = `/s/${sessionId}`;
+  const again = startServer(["--no-open"], e);
+  const { url: url2, port: port2 } = await again.url;
+  await page.goto(url2);
+  await page.goto(`http://127.0.0.1:${port2}${sessionPath}`);
+  await page.getByTestId("plan").waitFor({ timeout: 10_000 });
+  await page.locator(".mmd[data-state=ok]").nth(1).waitFor({ timeout: 15_000 }).catch(() => {});
+  const restored = (await page.getByTestId("plan").textContent()) ?? "";
+  check("plan edits survive a restart", restored.includes("Edited in place.") && (await page.locator(".mmd[data-state=ok]").count()) === 2, restored.slice(0, 80));
+  check("restart: second server exits 0", (await stop(again, "SIGINT")).code === 0);
   await context.close();
 
   // ---------------------------------------------------------------- slow run + SIGTERM kills children

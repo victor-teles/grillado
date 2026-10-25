@@ -85,7 +85,7 @@ export interface Session {
   keepGoing: boolean;
   summary: string;
   error?: SessionError;
-  plan?: { title: string; markdown: string; path: string; openDecisions: string[]; createdAt: string };
+  plan?: { title: string; markdown: string; path: string; openDecisions: string[]; createdAt: string; editedAt?: string };
 }
 
 export function createSession(input: { idea: string; context?: string; provider: ProviderId }): Session {
@@ -253,6 +253,22 @@ export function reopen(s: Session, key: string): string[] {
   s.error = undefined;
   touch(s);
   return affected;
+}
+
+/** Largest plan the editor may save (the HTTP body limit is 1 MB). */
+export const MAX_PLAN_CHARS = 500_000;
+
+/**
+ * The user edited the plan (editor autosave). The text is stored exactly as sent, so raw
+ * `[R1:id]` citations and anything else the editor doesn't understand survive untouched.
+ */
+export function editPlan(s: Session, markdown: unknown) {
+  if (s.status !== "plated" || !s.plan) throw new Error("There's no plan to edit yet.");
+  if (typeof markdown !== "string") throw new Error("Expected the plan as Markdown text.");
+  if (markdown.length > MAX_PLAN_CHARS) throw new Error("The plan is too long to save.");
+  s.plan.markdown = markdown;
+  s.plan.editedAt = new Date().toISOString();
+  touch(s);
 }
 
 /** "Wrap it up": stop asking; the plan lists what's still open (user story 8). */
