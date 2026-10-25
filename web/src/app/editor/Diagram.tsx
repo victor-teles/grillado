@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { type DiagramResult, type MermaidLike, renderDiagram } from "./diagram";
+import { useEffect, useRef, useState } from "react";
+import { type DiagramResult, type MermaidLike, diagramLabel, diagramType, explainDiagramError, renderDiagram } from "./diagram";
 
 // Mermaid is ~1 MB of JS, so it's only fetched when a plan actually has a diagram.
 let mermaid: Promise<MermaidLike> | null = null;
@@ -17,20 +17,27 @@ function useDark() {
 }
 
 /**
- * A ```mermaid block. Re-renders (debounced) whenever the code or theme changes; an invalid
- * diagram shows its error and source instead of breaking the document.
- * Styling hooks: `.mmd[data-state=loading|ok|error]`, `.mmd-svg`, `.mmd-err`.
+ * A ```mermaid block. Re-renders (debounced) whenever the code or theme changes. When the code
+ * stops parsing, the last version that worked stays (dimmed) with a plain-language error.
+ * Styling hooks: `.mmd[data-state=loading|ok|error]`, `.mmd-svg`, `.mmd-last`, `.mmd-tag`,
+ * `.mmd-err`, `.mmd-det`, `.mmd-f` (footer), `.mmd-ph` (placeholder).
  */
-export function Diagram({ code }: { code: string }) {
+export function Diagram({ code, onEdit }: { code: string; onEdit?: () => void }) {
   const dark = useDark();
   const [res, setRes] = useState<DiagramResult | null>(null);
+  const [details, setDetails] = useState(false);
+  const last = useRef<{ svg: string; label: string } | null>(null);
+  // The error bar is a status region; wait a second so it doesn't chatter while typing.
+  const [said, setSaid] = useState("");
   useEffect(() => {
     let live = true;
     const t = setTimeout(() => {
       renderDiagram(code, { dark, load: loadMermaid }).then((r) => {
         // Mermaid leaves a scratch node behind when a render fails.
         document.getElementById(`d${r.id}`)?.remove();
-        if (live) setRes(r);
+        if (!live) return;
+        if (r.ok) last.current = { svg: r.svg, label: diagramLabel(code, r.svg) };
+        setRes(r);
       });
     }, 120);
     return () => {
@@ -38,25 +45,56 @@ export function Diagram({ code }: { code: string }) {
       clearTimeout(t);
     };
   }, [code, dark]);
+  const explained = res && !res.ok ? explainDiagramError(code, res.error) : null;
+  useEffect(() => {
+    const t = setTimeout(() => setSaid(explained ? `Diagram can't be drawn. ${explained.message}` : ""), 1000);
+    return () => clearTimeout(t);
+  }, [explained?.message]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const state = res === null ? "loading" : res.ok ? "ok" : "error";
+  const shown = res?.ok ? { svg: res.svg, label: diagramLabel(code, res.svg) } : last.current;
   return (
     <figure className="mmd" data-state={state} data-testid="diagram">
-      {res?.ok ? (
-        // Mermaid output is sanitized (securityLevel: "strict").
-        <div className="mmd-svg" role="img" aria-label="Diagram" dangerouslySetInnerHTML={{ __html: res.svg }} />
+      {res === null && !shown ? (
+        <div className="mmd-ph sub">Drawing the diagram…</div>
+      ) : shown ? (
+        <div className={res?.ok ? "mmd-wrap" : "mmd-wrap mmd-last"}>
+          {/* Mermaid output is sanitized (securityLevel: "strict"). */}
+          <div className="mmd-svg" role="img" aria-label={shown.label} dangerouslySetInnerHTML={{ __html: shown.svg }} />
+          {res && !res.ok ? <span className="mmd-tag sub">Last version that worked</span> : null}
+        </div>
       ) : (
-        <>
-          {res && !res.ok ? (
-            <figcaption className="mmd-err">
-              <strong>Diagram can't be drawn.</strong> {res.error}
-            </figcaption>
-          ) : null}
-          <pre>
-            <code>{code}</code>
-          </pre>
-        </>
+        <pre>
+          <code>{code}</code>
+        </pre>
       )}
+      {res && !res.ok ? (
+        <figcaption className="mmd-err" data-line={explained?.line}>
+          <strong>Diagram can't be drawn.</strong> {explained?.message}{" "}
+          <button type="button" className="ro" aria-expanded={details} onClick={() => setDetails(!details)}>
+            Details
+          </button>
+          {details ? <pre className="mmd-det mono">{res.error}</pre> : null}
+        </figcaption>
+      ) : null}
+      <span className="sr-only" role="status">
+        {said}
+      </span>
+      <div className="mmd-f">
+        <span className="mono sub">mermaid · {diagramType(code)}</span>
+        {onEdit ? (
+          <button
+            type="button"
+            className="ro"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+          >
+            Edit source
+          </button>
+        ) : null}
+      </div>
     </figure>
   );
 }

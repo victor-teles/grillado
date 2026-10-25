@@ -56,6 +56,15 @@ The published `dist/` bundles React, Radix UI, lucide-react, Tailwind CSS, Zod a
 MIT/ISC-licensed packages listed in `package.json` (devDependencies). Their license comments
 are preserved in the bundles.
 
+## Markdown editor (CodeMirror)
+
+The plan editor's Markdown view uses CodeMirror 6 (https://codemirror.net, MIT, Copyright (C)
+2018-2021 by Marijn Haverbeke and others). It is loaded only when the Markdown view opens and is
+bundled into `dist/web/assets/` with its dependencies, all MIT: @codemirror/view, @codemirror/state,
+@codemirror/commands, @codemirror/language, @codemirror/lang-markdown (and the language packages
+it pulls in), @lezer/common, @lezer/lr, @lezer/highlight, @lezer/markdown, crelt, style-mod,
+w3c-keyname, @marijn/find-cluster-break.
+
 ## Diagrams (Mermaid)
 
 The plan editor renders ```` ```mermaid ```` blocks with Mermaid (https://github.com/mermaid-js/mermaid,

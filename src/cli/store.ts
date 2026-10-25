@@ -73,6 +73,13 @@ export class Store {
     return copy;
   }
 
+  /** The losing side of a "plan.md changed outside Grillado" conflict. */
+  writeConflict(id: string, markdown: string) {
+    const file = path.join(this.sessionDir(id), "plan.conflict.md");
+    writeAtomic(file, markdown);
+    return file;
+  }
+
   readPlan(id: string): string | null {
     const file = this.planPath(id);
     return existsSync(file) ? readFileSync(file, "utf8") : null;

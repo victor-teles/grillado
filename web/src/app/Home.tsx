@@ -142,7 +142,7 @@ function AgentRow({ p, k, checked, lastUsed, onSelect }: { p: ProviderView; k: n
   return (
     <button type="button" role="radio" data-id={p.id} aria-checked={checked} disabled={off} tabIndex={checked ? 0 : -1} className="ag" onClick={onSelect}>
       <span className="mono3" aria-hidden="true">
-        {monogram(p.id)}
+        {monogram(p.displayName)}
       </span>
       <span style={{ minWidth: 0 }}>
         <span className="n">

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { IMore, IMoon, IPlate, IPower, ISun, ISwap, Mark } from "./icons";
 import type { ProviderId, ProviderView } from "./types";
+import { monogram } from "./copy";
+export { monogram };
 
 // ---------------------------------------------------------------- hooks
 
@@ -55,9 +57,7 @@ export const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padS
 // ---------------------------------------------------------------- header parts
 
 export const STEPS = ["Idea", "On the grill", "Confirm", "Plan"] as const;
-const MONO: Record<ProviderId, string> = { claude: "CC", codex: "CX", grok: "GK", pi: "PI" };
-export const monogram = (id: ProviderId) => MONO[id];
-
+/** Avatar letters from the agent's display name: initials of two words, else its first two letters. */
 export function Steps({ step }: { step: number }) {
   return (
     <ol className="steps" aria-label="Session progress">
@@ -77,7 +77,7 @@ export function AgentChip({ provider, compact, onSwitch }: { provider: ProviderV
   const inner = (
     <>
       <span className="mono2" aria-hidden="true">
-        {monogram(provider.id)}
+        {monogram(provider.displayName)}
       </span>
       <span className="sr-only">Agent: </span>
       <span className={compact ? "sr-only" : undefined}>{provider.displayName}</span>

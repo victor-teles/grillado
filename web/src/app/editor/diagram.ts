@@ -35,3 +35,37 @@ export async function renderDiagram(code: string, opts: { dark: boolean; load: (
     return { ok: false, error: msg.split("\n").slice(0, 4).join("\n"), id };
   }
 }
+
+const CLOSE: Record<string, string> = { "[": "]", "(": ")", "{": "}" };
+
+/** The diagram type from its first line ("flowchart LR" → flowchart). */
+export function diagramType(code: string): string {
+  const first = code.split("\n").find((l) => l.trim() && !l.trim().startsWith("%%"))?.trim() ?? "";
+  return first.split(/\s+/)[0] || "diagram";
+}
+
+/** Accessible name for a rendered diagram: its type and how many nodes it draws. */
+export function diagramLabel(code: string, svg: string): string {
+  const nodes = (svg.match(/class="[^"]*\bnode\b[^"]*"/g) ?? []).length;
+  return `${diagramType(code)} diagram${nodes ? `, ${nodes} ${nodes === 1 ? "node" : "nodes"}` : ""}`;
+}
+
+/**
+ * Plain-language version of a Mermaid parse error, with the line it's about. Mermaid usually
+ * reports the line after an unclosed shape, so look back for the line where the shape opened.
+ */
+export function explainDiagramError(code: string, raw: string): { line?: number; message: string } {
+  const lines = code.split("\n");
+  const reported = Number(/line (\d+)/i.exec(raw)?.[1] ?? "0");
+  const upTo = reported > 0 ? Math.min(reported, lines.length) : lines.length;
+  for (let i = upTo - 1; i >= 0; i--) {
+    const stack: string[] = [];
+    for (const c of lines[i].replace(/"[^"]*"/g, "")) {
+      if (c in CLOSE) stack.push(CLOSE[c]);
+      else if (stack.length && c === stack.at(-1)) stack.pop();
+    }
+    if (stack.length) return { line: i + 1, message: `Line ${i + 1}: a shape isn't closed. Add the missing ${stack.at(-1)} at the end of the label.` };
+  }
+  if (reported > 0) return { line: reported, message: `Line ${reported}: Mermaid can't read this line.` };
+  return { message: "Mermaid can't read this diagram." };
+}

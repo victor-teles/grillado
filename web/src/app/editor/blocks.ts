@@ -101,3 +101,59 @@ export function citations(source: string): string[] {
   for (const m of source.matchAll(/\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/g)) out.push(...m[1].split(/\s*,\s*/));
   return out;
 }
+
+const CITES = /\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/g;
+
+/** Decision keys cited in a piece of text ("[R1:a, R2:b]" → a, b). */
+export function citedKeys(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(CITES)) for (const r of m[1].split(/\s*,\s*/)) out.push(r.replace(/^R\d+:/, ""));
+  return out;
+}
+
+/**
+ * Split paragraph text into sentences, keeping every character (the parts join back to the
+ * input). Splits after . ! ? followed by space, never inside `code` or a [cite].
+ */
+export function sentences(text: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  let code = false;
+  let bracket = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "`") code = !code;
+    else if (!code && c === "[") bracket++;
+    else if (!code && c === "]") bracket = Math.max(0, bracket - 1);
+    else if (!code && !bracket && (c === "." || c === "!" || c === "?") && /\s/.test(text[i + 1] ?? "")) {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      out.push(text.slice(from, j));
+      from = j;
+      i = j - 1;
+    }
+  }
+  if (from < text.length) out.push(text.slice(from));
+  return out;
+}
+
+export interface Passage {
+  /** DOM id of the passage in the rich view. */
+  id: string;
+  keys: string[];
+}
+
+export const passageId = (blockStart: number, i: number) => `psg-${blockStart}-${i}`;
+
+/** Every sentence or list item that cites a decision, in document order (v1.1 §3 "context"). */
+export function passages(md: string): Passage[] {
+  const out: Passage[] = [];
+  for (const b of parseBlocks(md)) {
+    const parts = b.kind === "para" ? sentences(b.text) : b.kind === "list" ? b.items : [];
+    parts.forEach((t, i) => {
+      const keys = citedKeys(t);
+      if (keys.length) out.push({ id: passageId(b.start, i), keys });
+    });
+  }
+  return out;
+}

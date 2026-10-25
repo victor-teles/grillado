@@ -18,6 +18,7 @@ export class Autosaver {
   private inflight: Promise<void> | null = null;
   private failed = false;
   private _state: SaveState = "saved";
+  private held = false;
   /** The last text the server confirmed. */
   lastSaved: string;
 
@@ -42,15 +43,33 @@ export class Autosaver {
     this.failed = false;
     this.set("pending");
     this.clearTimer();
+    if (this.held) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.run();
     }, this.opts.delay ?? 600);
   }
 
+  /** Stop saving (plan.md changed on disk and the user hasn't picked a version yet). */
+  hold() {
+    this.held = true;
+    this.clearTimer();
+  }
+
+  get holding() {
+    return this.held;
+  }
+
+  /** Saving again; anything typed meanwhile is saved now. */
+  release() {
+    this.held = false;
+    if (this.draft !== null) void this.run();
+  }
+
   /** Save now (blur, toggle, leaving the page). Resolves once everything typed so far is saved or failed. */
   async flush(): Promise<void> {
     this.clearTimer();
+    if (this.held) return;
     if (this.draft === null && this.failed && !this.inflight) this.draft = this.failedText;
     // Loop: a save already in flight may be followed by one for text typed meanwhile.
     while (this.inflight || this.draft !== null) {
@@ -65,6 +84,7 @@ export class Autosaver {
   /** Forget pending work (e.g. the plan was replaced by a new one). */
   reset(text: string) {
     this.clearTimer();
+    this.held = false;
     this.draft = null;
     this.failed = false;
     this.lastSaved = text;
@@ -85,7 +105,7 @@ export class Autosaver {
       return;
     }
     const text = this.draft;
-    if (text === null) return;
+    if (text === null || this.held) return;
     this.draft = null;
     if (text === this.lastSaved) {
       this.set("saved", { savedAt: Date.now() });

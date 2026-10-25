@@ -335,16 +335,37 @@ try {
   const planFile = path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md");
   const plan = existsSync(planFile) ? readFileSync(planFile, "utf8") : "";
   check("plan.md saved", plan.length > 0, planFile);
-  check("plan cites every decision (AC16)", ["[R1:scope]", "[R1:platform]", "[R2:storage]"].every((t) => plan.includes(t)));
+  check(
+    "plan.md has a decision block for every answer (AC16)",
+    ["key: scope", "key: platform", "key: storage"].every((t) => plan.includes(t)) && (plan.match(/^```decision$/gm) ?? []).length === 3 && plan.includes("[R1:platform]"),
+  );
   check("plan.md has no banned text / prompt contents (AC17)", !containsBanned(plan.replace(/grilling recipe app/gi, "")));
   check("UI shows file path", (await page.getByTestId("plan-path").textContent()) === planFile);
+  check("no Decisions log rail (Q1)", (await page.locator("aside.side2").count()) === 0 && (await page.getByText("Decisions log").count()) === 0);
+  check("save status persists as 'Saved to plan.md' (replaces the 'Saved to disk' badge)", (await page.getByTestId("save-status").textContent())?.includes("Saved to plan.md"));
   const cites = page.locator("[data-testid=plan] .cite");
-  check("citations render as R·n chips", (await cites.count()) === 6 && (await cites.nth(1).textContent()) === "R1·2", await cites.allTextContents().then((t) => t.join(" ")));
-  check("decision log shows chips, not raw ids", !/\[R\d+:/.test(await page.getByTestId("plan").textContent()));
+  check("citations render as R·n chips", (await cites.count()) === 3 && (await cites.nth(1).textContent()) === "R1·2", await cites.allTextContents().then((t) => t.join(" ")));
+  check("document shows chips and decision cards, not raw ids or YAML", !/\[R\d+:|kept_suggestion/.test(await page.getByTestId("plan").textContent()));
+  const cards = page.locator("[data-testid=plan] .dz");
+  check("each decision renders as a compact card", (await cards.count()) === 3 && (await page.getByRole("group", { name: "Decision R1·2" }).count()) === 1);
   await cites.nth(1).click();
-  check("citation highlights the log entry", (await page.locator(".tl li[data-hl]").textContent())?.includes("Platform"));
+  check("a citation moves focus to its decision card", await page.evaluate(() => document.activeElement?.matches(".dz[data-key=platform]")));
+  check("focusing a card highlights the passages that cite it", (await page.locator("[data-testid=plan] mark.ctx").count()) === 1 && ((await page.locator("mark.ctx").textContent()) ?? "").includes("Mobile app"));
+  check("card points at its passages (aria-describedby)", !!(await page.locator(".dz[data-key=platform]").getAttribute("aria-describedby")));
   const axePlan = await new AxeBuilder({ page }).analyze();
   check("axe: plan view (light)", axePlan.violations.length === 0, axePlan.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+  // Decisions tab (manual activation): arrows move focus, Enter selects.
+  await page.getByRole("tab", { name: /Document/ }).focus();
+  await page.keyboard.press("ArrowRight");
+  check("tabs: arrow keys move focus without switching", (await page.getByRole("tab", { name: /Decisions/ }).getAttribute("aria-selected")) === "false");
+  await page.keyboard.press("Enter");
+  await page.getByRole("heading", { name: "Decisions", level: 1 }).waitFor();
+  check("Decisions tab lists every answer by round", (await page.locator(".drow").count()) === 3 && (await page.getByRole("heading", { name: "Round 2" }).count()) === 1);
+  const axeTab = await new AxeBuilder({ page }).analyze();
+  check("axe: Decisions tab (light)", axeTab.violations.length === 0, axeTab.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
+  await page.getByRole("button", { name: "Show in plan: Storage" }).click();
+  await page.locator("mark.ctx").first().waitFor({ timeout: 2000 });
+  check("Show in plan returns to the document and highlights the passage", (await page.getByRole("tab", { name: /Document/ }).getAttribute("aria-selected")) === "true");
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "Dark theme" }).click();
   await page.waitForTimeout(200);
@@ -362,30 +383,83 @@ try {
     }
     return false;
   };
+  // The Markdown view is CodeMirror; read and replace its text through the view.
+  const rawText = () => page.evaluate(() => document.querySelector("[data-testid=plan-raw] .cm-editor").cmView.state.doc.toString());
+  const setRaw = (t) =>
+    page.evaluate((t) => {
+      const v = document.querySelector("[data-testid=plan-raw] .cm-editor").cmView;
+      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: t } });
+    }, t);
+  const toMode = async (name) => {
+    await page.getByRole("radiogroup", { name: "Plan view" }).getByRole("radio", { name }).click();
+    if (name === "Markdown") await page.locator("[data-testid=plan-raw][data-ready]").waitFor({ timeout: 10_000 });
+    else await page.getByTestId("plan").waitFor();
+  };
   const marker = await page.evaluate(() => getComputedStyle(document.querySelector("[data-testid=plan] ul")).listStyleType);
   check("plan lists show bullets", marker === "disc", marker);
-  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Markdown" }).click();
-  const rawBox = page.getByRole("textbox", { name: "Plan Markdown" });
-  check("raw view shows plan.md byte for byte, raw [R1:id]s included", (await rawBox.inputValue()) === plan && plan.includes("[R1:platform]"));
+  await toMode("Markdown");
+  check("raw view shows plan.md byte for byte, raw [R1:id]s included", (await rawText()) === plan && plan.includes("[R1:platform]"));
+  check("raw view is labelled 'plan.md, Markdown source' with a status line", (await page.getByRole("textbox", { name: "plan.md, Markdown source" }).count()) === 1 && /plan\.md\s*Markdown\s*Ln 1, Col 1/.test((await page.locator(".ced-status").textContent()) ?? ""));
   const axeRaw = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor, Markdown view (dark)", axeRaw.violations.length === 0, axeIds(axeRaw));
+  // A decision block that doesn't parse gets a line marker and a plain message; rich keeps the last valid card.
+  const broken = plan.replace(/(key: platform[\s\S]*?)kept_suggestion: (true|false)/, "$1kept_suggestion: maybe");
+  await setRaw(broken);
+  await page.locator(".cm-errmsg").waitFor({ timeout: 3000 });
+  check("invalid decision block: line marker + plain message in Markdown view", (await page.locator(".cm-errline").count()) === 1 && ((await page.locator(".cm-errmsg").textContent()) ?? "").includes("must be true or false"));
+  await toMode("Rich");
+  check("invalid decision block: rich view shows the last valid card", (await page.locator(".dz[data-key=platform][data-invalid]").count()) === 1 && ((await page.locator(".dz[data-key=platform] .dz-a").textContent()) ?? "") === "Mobile app");
+  await toMode("Markdown");
+  await setRaw(plan);
   const diagrams = "\n## Flow\n\n```mermaid\nflowchart TD\n  A[Idea] --> B[Plan]\n```\n\n```mermaid\n---\nconfig:\n  layout: elk\n---\nflowchart LR\n  C[Asks for ELK] --> D[Gets dagre]\n```\n\n```mermaid\nflowchart TD\n  A -->\n```\n";
-  const typed = plan + diagrams;
-  await rawBox.fill(typed);
+  const filler = Array.from({ length: 40 }, (_, i) => `\nNote ${i + 1}: a line of filler text so the plan is taller than the window.\n`).join("");
+  const typed = plan + diagrams + "\n## Notes\n" + filler;
+  await setRaw(typed);
   await shot(page, "plan-editor-markdown-dark");
   check("raw edit autosaves to plan.md", await waitDisk((t) => t === typed));
-  await page.getByTestId("save-status").getByText(/^Saved/).waitFor({ timeout: 5000 });
-  check("save status says Saved", true);
-  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Document" }).click();
+  await page.getByTestId("save-status").getByText("Saved to plan.md").waitFor({ timeout: 5000 });
+  check("save status says Saved to plan.md", true);
+  // Typing while scrolled down must not jump the page back to the top (steering bug).
+  const scrollOf = () => page.evaluate(() => document.querySelector(".docwrap").scrollTop);
+  await page.evaluate(() => (document.querySelector(".docwrap").scrollTop = 900));
+  await page.waitForTimeout(150);
+  const rawBefore = await scrollOf();
+  const wrapBox = await page.locator(".docwrap").boundingBox();
+  await page.mouse.click(wrapBox.x + wrapBox.width / 2, wrapBox.y + wrapBox.height / 2);
+  await page.keyboard.press("End");
+  const rawAtClick = await scrollOf();
+  await page.keyboard.type("!");
+  await page.waitForTimeout(150);
+  const rawAfter = await scrollOf();
+  check("Markdown view: typing while scrolled down keeps the scroll", rawBefore > 500 && Math.abs(rawAfter - rawAtClick) < 30, `${rawBefore} → ${rawAtClick} → ${rawAfter}`);
+  await page.keyboard.press("Backspace");
+  check("raw keystrokes save too", await waitDisk((t) => t === typed));
+  await toMode("Rich");
   await page.locator(".mmd[data-state=ok] svg").first().waitFor({ timeout: 15_000 });
   await page.locator(".mmd[data-state=ok] svg").nth(1).waitFor({ timeout: 15_000 });
   check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] svg").count()) === 2);
+  check("diagram SVG is an image named by type and node count", /^flowchart diagram, 2 nodes$/.test((await page.locator(".mmd[data-state=ok] [role=img]").first().getAttribute("aria-label")) ?? ""));
   await page.locator(".mmd[data-state=error]").waitFor({ timeout: 5000 });
   check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .mmd-err").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] pre").textContent()).includes("A -->"));
   await page.locator(".mmd").first().scrollIntoViewIfNeeded();
   await shot(page, "plan-editor-diagrams-dark");
+  // The block editor keeps the scroll too.
+  const lowPara = page.locator("[data-testid=plan] .blk[data-block=para]", { hasText: "Note 30:" });
+  await lowPara.scrollIntoViewIfNeeded();
+  await lowPara.click({ position: { x: 4, y: 4 } });
+  const lowBox = page.getByRole("textbox", { name: /Edit block as Markdown/ });
+  await lowBox.waitFor();
+  const blkAtOpen = await scrollOf();
+  await lowBox.press("End");
+  await lowBox.pressSequentially("!");
+  await page.waitForTimeout(150);
+  const blkAfter = await scrollOf();
+  check("block editor: typing while scrolled down keeps the scroll", blkAtOpen > 500 && Math.abs(blkAfter - blkAtOpen) < 30, `${blkAtOpen} → ${blkAfter}`);
+  await lowBox.press("Backspace");
+  await lowBox.press("Escape");
   // Edit one block in place in the rich view.
   const para = page.locator("[data-testid=plan] .blk[data-block=para]").first();
+  await para.scrollIntoViewIfNeeded();
   const before = (await para.textContent()) ?? "";
   await para.click({ position: { x: 4, y: 4 } });
   const blockBox = page.getByRole("textbox", { name: /Edit block as Markdown/ });
@@ -400,9 +474,43 @@ try {
   check("block edit autosaves to plan.md", await waitDisk((t) => t.includes(`${before} Edited in place.`) || t.includes("Edited in place.")));
   const edited = onDisk();
   check("only the edited block changed on disk", edited === typed.replace(`\n${before}\n`, `\n${before} Edited in place.\n`), JSON.stringify(before.slice(0, 40)));
-  check("citations survive the edits", ["[R1:scope]", "[R1:platform]", "[R2:storage]"].every((t) => edited.includes(t)));
+  check("citations and decision blocks survive the edits", ["[R1:scope]", "[R1:platform]", "[R2:storage]", "key: platform"].every((t) => edited.includes(t)));
   const axeDocDark = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor with diagrams (dark)", axeDocDark.violations.length === 0, axeIds(axeDocDark));
+
+  // plan.md changed outside Grillado (Q5): no local edits → reloads by itself.
+  const outside = edited.replace("## Flow", "## Flow (edited in vim)");
+  writeFileSync(planFile, outside);
+  await page.getByRole("heading", { name: "Flow (edited in vim)" }).waitFor({ timeout: 5000 });
+  check("outside edit reloads plan.md automatically when nothing is unsaved", (await page.getByText("plan.md changed outside Grillado").count()) === 0);
+  check("reload is announced politely", await page.getByRole("status").filter({ hasText: "Reloaded plan.md" }).count().then((n) => n === 1));
+  // Both sides changed: hold the save, write the file, and the banner asks.
+  await page.route("**/plan", (r) => (r.request().method() === "POST" ? new Promise(() => {}) : r.continue()));
+  const flowPara = page.locator("[data-testid=plan] .blk[data-block=para]").first();
+  await flowPara.click({ position: { x: 4, y: 4 } });
+  await blockBox.waitFor();
+  await blockBox.press("End");
+  await blockBox.pressSequentially(" Mine.");
+  await blockBox.press("Escape");
+  const theirs = outside.replace("## Notes", "## Notes (theirs)");
+  writeFileSync(planFile, theirs);
+  const conflict = page.getByRole("alert").filter({ hasText: "plan.md changed outside Grillado" });
+  await conflict.waitFor({ timeout: 5000 });
+  check("both sides changed: banner asks which to keep", (await conflict.getByRole("button", { name: "Keep mine" }).count()) === 1 && (await conflict.getByRole("button", { name: "Load the file" }).count()) === 1);
+  const axeConflict = await new AxeBuilder({ page }).analyze();
+  check("axe: conflict banner (dark)", axeConflict.violations.length === 0, axeIds(axeConflict));
+  await shot(page, "plan-editor-conflict-dark");
+  await page.unroute("**/plan");
+  await conflict.getByRole("button", { name: "Keep mine" }).click();
+  const conflictFile = path.join(path.dirname(planFile), "plan.conflict.md");
+  check("Keep mine: my version saved, theirs kept as plan.conflict.md", (await waitDisk((t) => t.includes(" Mine.") && !t.includes("(theirs)"))) && existsSync(conflictFile) && readFileSync(conflictFile, "utf8") === theirs);
+  // Put the earlier edit back so the restart check below sees it.
+  const mine = onDisk();
+  await toMode("Markdown");
+  await setRaw(mine.replace(" Mine.", ""));
+  check("back to the edited plan", await waitDisk((t) => t === outside));
+  await toMode("Rich");
+
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "Light theme" }).click();
   await page.locator(".mmd[data-state=ok] svg").first().waitFor();
@@ -411,14 +519,15 @@ try {
   check("axe: plan editor with diagrams (light)", axeDocLight.violations.length === 0, axeIds(axeDocLight));
   await page.locator(".mmd").first().scrollIntoViewIfNeeded();
   await shot(page, "plan-editor-diagrams-light");
-  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Markdown" }).click();
+  await toMode("Markdown");
   const axeRawLight = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor, Markdown view (light)", axeRawLight.violations.length === 0, axeIds(axeRawLight));
   await shot(page, "plan-editor-markdown-light");
-  await page.getByRole("group", { name: "Plan view" }).getByRole("button", { name: "Document" }).click();
+  await toMode("Rich");
   await page.reload();
   await page.getByTestId("plan").waitFor();
   check("edits survive a reload", ((await page.getByTestId("plan").textContent()) ?? "").includes("Edited in place."));
+  check("save status still says Saved to plan.md after a reload", (await page.getByTestId("save-status").textContent())?.includes("Saved to plan.md"));
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "Dark theme" }).click();
 
@@ -455,6 +564,80 @@ try {
   await page.locator(".mmd[data-state=ok]").nth(1).waitFor({ timeout: 15_000 }).catch(() => {});
   const restored = (await page.getByTestId("plan").textContent()) ?? "";
   check("plan edits survive a restart", restored.includes("Edited in place.") && (await page.locator(".mmd[data-state=ok]").count()) === 2, restored.slice(0, 80));
+  // Change a decision inline (Q2): works like Reopen for what depends on it.
+  {
+    const card = page.locator(".dz[data-key=platform]");
+    await card.focus();
+    await page.keyboard.press("Enter");
+    await card.getByRole("radiogroup").waitFor();
+    const opts = card.locator(".dz-opt");
+    const labels = await opts.allTextContents();
+    check("Change shows the options with Current and Recommended tags", labels.some((l) => l.includes("Current")) && labels.some((l) => l.includes("Recommended")), labels.join(" | "));
+    const pickIdx = (await opts.evaluateAll((els) => els.findIndex((e, i) => i < els.length - 1 && e.getAttribute("aria-checked") === "false"))) + 1;
+    await page.keyboard.press(String(pickIdx));
+    check("picking a new answer warns which dependents will be re-asked", ((await card.locator(".dz-warn").textContent()) ?? "").includes("Storage"));
+    check("the primary becomes 'Save and re-ask 1'", (await card.getByRole("button", { name: "Save and re-ask 1" }).count()) === 1);
+    const axeChange = await new AxeBuilder({ page }).analyze();
+    check("axe: changing a decision (dark)", axeChange.violations.length === 0, axeIds(axeChange));
+    await shot(page, "plan-editor-change-dark");
+    await page.keyboard.press("Escape");
+    check("Esc cancels and puts focus back on the card", (await card.locator(".dz-opts").count()) === 0 && (await page.evaluate(() => document.activeElement?.matches(".dz[data-key=platform]"))));
+    await page.keyboard.press("Enter");
+    await page.keyboard.press(String(pickIdx));
+    const newAnswer = ((await card.locator(".dz-opt").nth(pickIdx - 1).locator("span").first().textContent()) ?? "").trim();
+    await page.keyboard.press("Enter");
+    await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
+    const planFile2 = path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md");
+    const after = readFileSync(planFile2, "utf8");
+    const sess = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
+    check("saving the change updates the block in plan.md", after.includes(`key: platform\nquestion: Start on the web?\nanswer: ${newAnswer}`), newAnswer);
+    check("its dependents are re-asked in a new round", ["answering", "asking"].includes(sess.status) && sess.stale?.storage && !sess.decisions.storage && sess.rounds.at(-1).questions.some((q) => q.key === "storage"));
+    await page.locator("[data-testid=question] legend").first().focus();
+    await page.keyboard.press("1");
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Yes, plate it" }).click();
+    await page.getByTestId("plan").waitFor({ timeout: 15_000 });
+    const replated = readFileSync(planFile2, "utf8");
+    check("the next plan carries the changed answer; the edited plan is kept beside it", replated.includes(`answer: ${newAnswer}`) && readdirSync(path.dirname(planFile2)).some((f) => f.startsWith("plan.edited-")));
+    // Mobile: plan view and Decisions tab, light and dark; "Load the file" side of the conflict.
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const theme of ["Light theme", "Dark theme"]) {
+      await page.getByRole("button", { name: "More" }).click();
+      await page.getByRole("menuitem", { name: theme }).click();
+      await page.waitForTimeout(300);
+      const tag = theme.startsWith("Light") ? "light" : "dark";
+      const axeM = await new AxeBuilder({ page }).analyze();
+      check(`axe: plan view (mobile, ${tag})`, axeM.violations.length === 0, axeIds(axeM));
+      await shot(page, `plan-m-${tag}`);
+      await page.getByRole("tab", { name: /Decisions/ }).click();
+      await page.getByRole("heading", { name: "Decisions", level: 1 }).waitFor();
+      const axeMT = await new AxeBuilder({ page }).analyze();
+      check(`axe: Decisions tab (mobile, ${tag})`, axeMT.violations.length === 0, axeIds(axeMT));
+      await shot(page, `decisions-m-${tag}`);
+      await page.getByRole("tab", { name: /Document/ }).click();
+    }
+    await page.route("**/plan", (r) => (r.request().method() === "POST" ? new Promise(() => {}) : r.continue()));
+    const p0 = page.locator("[data-testid=plan] .blk[data-block=para]").first();
+    await p0.click({ position: { x: 4, y: 4 } });
+    const box2 = page.getByRole("textbox", { name: /Edit block as Markdown/ });
+    await box2.waitFor();
+    await box2.press("End");
+    await box2.pressSequentially(" Mine again.");
+    await box2.press("Escape");
+    const fileSide = readFileSync(planFile2, "utf8").replace("## Problem", "## Problem (from the file)");
+    writeFileSync(planFile2, fileSide);
+    const banner2 = page.getByRole("alert").filter({ hasText: "plan.md changed outside Grillado" });
+    await banner2.waitFor({ timeout: 5000 });
+    const axeMC = await new AxeBuilder({ page }).analyze();
+    check("axe: conflict banner (mobile, dark)", axeMC.violations.length === 0, axeIds(axeMC));
+    await shot(page, "conflict-m-dark");
+    await page.unroute("**/plan");
+    await banner2.getByRole("button", { name: "Load the file" }).click();
+    await page.getByRole("heading", { name: "Problem (from the file)" }).waitFor({ timeout: 5000 });
+    const cf2 = path.join(path.dirname(planFile2), "plan.conflict.md");
+    check("Load the file: the file wins, my edits are kept as plan.conflict.md", readFileSync(planFile2, "utf8") === fileSide && readFileSync(cf2, "utf8").includes(" Mine again.") && (await banner2.count()) === 0);
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
   check("restart: second server exits 0", (await stop(again, "SIGINT")).code === 0);
   await context.close();
 

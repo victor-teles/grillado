@@ -4,6 +4,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly data: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -23,7 +24,7 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown, ini
     throw new ApiError("Grillado isn't running.", 0);
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(data?.error ?? `Request failed (${res.status})`, res.status);
+  if (!res.ok) throw new ApiError(data?.error ?? `Request failed (${res.status})`, res.status, data ?? {});
   return data as T;
 }
 
@@ -35,8 +36,8 @@ export const api = {
   createSession: (idea: string, context: string) => call<SessionView>("POST", "/api/sessions", { idea, context }),
   session: (id: string) => call<SessionView>("GET", `/api/sessions/${encodeURIComponent(id)}`),
   /** Autosave of the edited plan. Small bodies use `keepalive` so a save started while leaving the page still lands. */
-  savePlan: (id: string, markdown: string) =>
-    call<{ ok: true; savedAt: string }>("POST", `/api/sessions/${encodeURIComponent(id)}/plan`, { markdown }, { keepalive: markdown.length < 60_000 }),
+  savePlan: (id: string, markdown: string, base?: string) =>
+    call<{ ok: true; savedAt: string }>("POST", `/api/sessions/${encodeURIComponent(id)}/plan`, { markdown, base }, { keepalive: markdown.length < 60_000 }),
   action: (id: string, action: string, body?: unknown) =>
     call<SessionView>("POST", `/api/sessions/${encodeURIComponent(id)}/${action}`, body),
 };

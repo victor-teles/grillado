@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ICheck, ICopy } from "./icons";
 
-async function copy(text: string) {
+export async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {

@@ -3,18 +3,23 @@
 //
 // Styling hooks for Designer (no final visuals yet):
 //   .ped[data-mode=rich|raw]                 editor root
-//   .ped-bar, .ped-modes, .ped-mode[aria-pressed]   view toggle
+//   .ped-bar, .ped-modes[role=radiogroup], .ped-mode[aria-checked]   Rich | Markdown toggle
 //   .ped-save[data-save=idle|pending|saving|saved|error]   autosave status
 //   .blk[data-block=heading|list|fence|para], .blk[data-editing]   blocks in the rich view
 //   .blk-edit (textarea), .blk-preview (live diagram under a ```mermaid block being edited)
-//   .ped-raw (raw Markdown textarea)
+//   .doc-raw .ced (CodeMirror Markdown view; see CodeEditor.tsx)
+//   .dz (decision blocks; see DecisionCard.tsx), mark.ctx (passages citing the active decision)
 //   .mmd[data-state=loading|ok|error], .mmd-svg, .mmd-err   diagrams
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type DecisionFields, decisionProblems, parseDecisionBody } from "../../../../src/core/decision-block.ts";
+import { textHash } from "../../../../src/core/text-hash.ts";
+import { ApiError, api } from "../api";
+import { reconcile } from "./reconcile";
 import { Autosaver, type SaveState } from "./autosave";
 import { type Block, parseBlocks, splice } from "./blocks";
+import { CodeEditor } from "./CodeEditor";
 import { Diagram } from "./Diagram";
-import { Markdown, type CiteRenderer } from "../Markdown";
+import { type CiteRenderer, type FenceBlock, Markdown } from "../Markdown";
 
 export type EditorMode = "rich" | "raw";
 
@@ -23,29 +28,76 @@ export interface PlanDraft {
   change: (text: string) => void;
   flush: () => Promise<void>;
   save: { state: SaveState | "idle"; error?: string; savedAt?: number };
-  /** Bumps when the text was replaced from outside (another tab, a new plan). */
+  /** Bumps when the text was replaced from outside (another tab, a new plan, plan.md on disk). */
   epoch: number;
+  /** plan.md changed on disk while there were unsaved edits here (Q5). */
+  conflict: { disk: string } | null;
+  resolve: (keep: "mine" | "file") => Promise<void>;
+  /** Polite announcement ("Reloaded plan.md"), cleared after a while. */
+  notice: string;
 }
 
-/** Local draft of the plan, autosaved. Server updates are adopted only when nothing is unsaved. */
-export function usePlanDraft(sessionId: string, serverMarkdown: string): PlanDraft {
+/**
+ * Local draft of the plan, autosaved. Server updates are adopted when nothing is unsaved here;
+ * when both sides changed, saving stops and `conflict` asks which version to keep.
+ */
+export function usePlanDraft(sessionId: string, serverMarkdown: string, reloadedAt?: string): PlanDraft {
   const [text, setText] = useState(serverMarkdown);
   const [epoch, setEpoch] = useState(0);
   const [save, setSave] = useState<PlanDraft["save"]>({ state: "idle" });
+  const [conflict, setConflict] = useState<{ disk: string } | null>(null);
+  const [notice, setNotice] = useState("");
+  const textRef = useRef(serverMarkdown);
+  // The server version our edits start from; sent with every save so the server can refuse a
+  // save made on top of an older plan.md.
+  const base = useRef(serverMarkdown);
+  const sent = useRef(new Set<string>());
+  const seenReload = useRef(reloadedAt);
   const saver = useRef<Autosaver | null>(null);
+  const openConflict = useCallback((disk: string) => {
+    saver.current!.hold();
+    setConflict({ disk });
+  }, []);
   saver.current ??= new Autosaver(serverMarkdown, {
-    save: (t) => api.savePlan(sessionId, t).then(() => undefined),
+    save: async (t) => {
+      sent.current.add(t);
+      if (sent.current.size > 8) sent.current.delete(sent.current.values().next().value!);
+      try {
+        await api.savePlan(sessionId, t, textHash(base.current));
+        base.current = t;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409 && typeof err.data.markdown === "string") openConflict(err.data.markdown);
+        throw err;
+      }
+    },
     onState: (state, info) => setSave({ state, ...info }),
   });
 
   useEffect(() => {
     const s = saver.current!;
-    if (serverMarkdown === s.lastSaved || s.dirty) return;
+    const external = reloadedAt !== seenReload.current;
+    seenReload.current = reloadedAt;
+    const what = reconcile({ lastSaved: s.lastSaved, dirty: s.dirty, sent: sent.current, text: textRef.current }, serverMarkdown);
+    if (what === "ignore") {
+      if (!s.dirty) base.current = serverMarkdown;
+      if (!s.dirty && serverMarkdown !== s.lastSaved && serverMarkdown === textRef.current) s.reset(serverMarkdown);
+      return;
+    }
+    if (what === "conflict") return openConflict(serverMarkdown);
+    base.current = serverMarkdown;
     s.reset(serverMarkdown);
+    textRef.current = serverMarkdown;
     setText(serverMarkdown);
     setEpoch((n) => n + 1);
     setSave({ state: "idle" });
-  }, [serverMarkdown]);
+    if (external) setNotice("Reloaded plan.md");
+  }, [serverMarkdown, reloadedAt, openConflict]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(""), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   useEffect(() => {
     const s = saver.current!;
@@ -58,28 +110,69 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string): PlanDra
   }, []);
 
   const change = useCallback((t: string) => {
+    textRef.current = t;
     setText(t);
     saver.current!.change(t);
   }, []);
   const flush = useCallback(() => saver.current!.flush(), []);
-  return { text, change, flush, save, epoch };
+  const resolve = useCallback(
+    async (keep: "mine" | "file") => {
+      const c = conflict;
+      if (!c) return;
+      const s = saver.current!;
+      const mine = textRef.current;
+      // The version that loses is kept next to plan.md as plan.conflict.md.
+      await api.action(sessionId, "plan-conflict", { markdown: keep === "mine" ? c.disk : mine }).catch(() => undefined);
+      setConflict(null);
+      base.current = c.disk;
+      s.reset(c.disk);
+      if (keep === "file") {
+        textRef.current = c.disk;
+        setText(c.disk);
+        setEpoch((n) => n + 1);
+        setSave({ state: "idle" });
+      } else {
+        s.change(mine);
+        await s.flush();
+      }
+    },
+    [conflict, sessionId],
+  );
+  return { text, change, flush, save, epoch, conflict, resolve, notice };
 }
 
-function SaveStatus({ save, onRetry }: { save: PlanDraft["save"]; onRetry: () => void }) {
+/** Inline Feedback save status (v1.1 §2). The live region only speaks up for failures and recovery. */
+function SaveStatus({ save, onRetry, conflict }: { save: PlanDraft["save"]; onRetry: () => void; conflict: boolean }) {
+  const [slow, setSlow] = useState(false);
+  const failedRef = useRef(false);
+  const [announce, setAnnounce] = useState("");
+  useEffect(() => {
+    if (save.state !== "saving") return setSlow(false);
+    const t = setTimeout(() => setSlow(true), 400);
+    return () => clearTimeout(t);
+  }, [save.state]);
+  useEffect(() => {
+    if (save.state === "error" && !conflict) {
+      failedRef.current = true;
+      setAnnounce("Couldn't save");
+    } else if (save.state === "saved" && failedRef.current) {
+      failedRef.current = false;
+      setAnnounce("Saved again");
+    }
+  }, [save.state, conflict]);
+  const state = conflict ? "pending" : save.state === "saving" && !slow ? "pending" : save.state;
   const label =
-    save.state === "idle"
-      ? "Edits save to plan.md"
-      : save.state === "pending"
-        ? "Edited"
-        : save.state === "saving"
+    state === "idle" || state === "saved"
+      ? "Saved to plan.md"
+      : state === "pending"
+        ? "Edited · saving soon"
+        : state === "saving"
           ? "Saving…"
-          : save.state === "saved"
-            ? `Saved${save.savedAt ? ` ${new Date(save.savedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}` : ""}`
-            : "Couldn't save";
+          : "Couldn't save to plan.md";
   return (
-    <span className="ped-save sub" data-save={save.state} data-testid="save-status">
-      <span role="status">{label}</span>
-      {save.state === "error" ? (
+    <span className="ped-save sub" data-save={state} data-testid="save-status">
+      <span>{label}</span>
+      {state === "error" ? (
         <>
           <span className="sr-only">{save.error}</span>
           <button type="button" className="ro" onClick={onRetry}>
@@ -87,14 +180,28 @@ function SaveStatus({ save, onRetry }: { save: PlanDraft["save"]; onRetry: () =>
           </button>
         </>
       ) : null}
+      <span className="sr-only" role="status">
+        {announce}
+      </span>
     </span>
   );
 }
 
-function autosize(el: HTMLTextAreaElement | null) {
+/** Grow a textarea to fit its text without the page jumping (the old height: auto reset collapsed the layout and scrolled to the top). */
+export function autosize(el: HTMLTextAreaElement | null) {
   if (!el) return;
-  el.style.height = "auto";
-  el.style.height = `${el.scrollHeight + 2}px`;
+  const scroller = el.closest(".docwrap") as HTMLElement | null;
+  const top = scroller?.scrollTop;
+  const winY = window.scrollY;
+  // Measure with a 0px height, but hold the space with min-height so nothing reflows around it.
+  const was = el.getBoundingClientRect().height;
+  el.style.minHeight = `${was}px`;
+  el.style.height = "0px";
+  const next = el.scrollHeight + 2;
+  el.style.height = `${next}px`;
+  el.style.minHeight = "";
+  if (scroller && top !== undefined && scroller.scrollTop !== top) scroller.scrollTop = top;
+  if (window.scrollY !== winY) window.scrollTo({ top: winY });
 }
 
 function BlockEditor({ text, onChange, onDone }: { text: string; onChange: (t: string) => void; onDone: () => void }) {
@@ -126,13 +233,16 @@ function BlockEditor({ text, onChange, onDone }: { text: string; onChange: (t: s
         }}
       />
       {preview && preview.kind === "fence" ? (
-        <div className="blk-preview" aria-label="Diagram preview">
+        <div className="blk-preview" aria-label="Live preview">
           <Diagram code={preview.body} />
         </div>
       ) : null}
     </div>
   );
 }
+
+/** Renders a decision block from its last valid fields. */
+export type DecisionRenderer = (fields: DecisionFields, opts: { invalid: boolean; active: boolean; setActive: (on: boolean) => void }) => ReactNode;
 
 export function PlanEditor({
   draft,
@@ -141,6 +251,9 @@ export function PlanEditor({
   cite,
   afterTitle,
   openBadge,
+  decision,
+  readOnly,
+  highlight,
 }: {
   draft: PlanDraft;
   mode: EditorMode;
@@ -148,15 +261,22 @@ export function PlanEditor({
   cite: CiteRenderer;
   afterTitle?: ReactNode;
   openBadge?: ReactNode;
+  decision?: DecisionRenderer;
+  /** Waiting for re-asked decisions: the plan shows, but isn't edited. */
+  readOnly?: boolean;
+  /** "Show in plan": highlight this decision's passages for a moment. */
+  highlight?: string | null;
 }) {
   // The block being edited, as a range of the draft. `len` follows the edited text's length.
   const [editing, setEditing] = useState<{ start: number; len: number; text: string } | null>(null);
-  const articleRef = useRef<HTMLElement>(null);
-  const rawRef = useRef<HTMLTextAreaElement>(null);
+  const [active, setActive] = useState<string | null>(null);
+  const articleRef = useRef<HTMLDivElement>(null);
+  // Rich mode shows the last valid version of a decision block that doesn't parse (§5).
+  const lastValid = useRef(new Map<string, DecisionFields>());
   useEffect(() => setEditing(null), [draft.epoch]);
-  useLayoutEffect(() => autosize(rawRef.current), [mode, draft.text]);
+  const problems = useMemo(() => decisionProblems(draft.text), [draft.text]);
 
-  const startEdit = (b: Block) => setEditing({ start: b.start, len: b.end - b.start, text: b.raw });
+  const startEdit = (b: Block) => !readOnly && setEditing({ start: b.start, len: b.end - b.start, text: b.raw });
   const editBlock = (t: string) => {
     if (!editing) return;
     draft.change(splice(draft.text, editing.start, editing.start + editing.len, t));
@@ -172,26 +292,78 @@ export function PlanEditor({
     void draft.flush();
     setMode(m);
   };
+  // ⌘⇧M toggles the view, ⌘S saves now (§6).
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.shiftKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        switchModeRef.current(modeRef.current === "rich" ? "raw" : "rich");
+      } else if (!e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void draft.flush();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [draft]);
+  const switchModeRef = useRef(switchMode);
+  switchModeRef.current = switchMode;
+
+  const renderDecision = (b: FenceBlock, n: number) => {
+    const parsed = parseDecisionBody(b.body);
+    const slot = `${n}`;
+    if (parsed.ok) lastValid.current.set(slot, parsed.fields);
+    const fields = parsed.ok ? parsed.fields : lastValid.current.get(slot);
+    if (!fields || !decision)
+      return (
+        <pre className="dz-raw">
+          <code>{b.body}</code>
+        </pre>
+      );
+    const key = fields.key ?? "";
+    return decision(fields, { invalid: !parsed.ok, active: active === key, setActive: (on) => setActive((cur) => (on ? key : cur === key ? null : cur)) });
+  };
 
   return (
-    <div className="ped" data-mode={mode}>
+    <div className="ped" data-mode={mode} data-readonly={readOnly ? "" : undefined}>
       <div className="ped-bar">
-        <div className="ped-modes" role="group" aria-label="Plan view">
-          <button type="button" className="ped-mode" aria-pressed={mode === "rich"} onClick={() => switchMode("rich")}>
-            Document
-          </button>
-          <button type="button" className="ped-mode" aria-pressed={mode === "raw"} onClick={() => switchMode("raw")}>
-            Markdown
-          </button>
+        <div className="ped-modes" role="radiogroup" aria-label="Plan view">
+          {(["rich", "raw"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="radio"
+              className="ped-mode"
+              aria-checked={mode === m}
+              tabIndex={mode === m ? 0 : -1}
+              onClick={() => switchMode(m)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
+                  e.preventDefault();
+                  const next = m === "rich" ? "raw" : "rich";
+                  switchMode(next);
+                  requestAnimationFrame(() => (e.currentTarget.parentElement?.querySelector(`[aria-checked="true"]`) as HTMLElement | null)?.focus());
+                }
+              }}
+            >
+              {m === "rich" ? "Rich" : "Markdown"}
+            </button>
+          ))}
         </div>
-        <SaveStatus save={draft.save} onRetry={() => void draft.flush()} />
+        {readOnly ? null : <SaveStatus save={draft.save} conflict={!!draft.conflict} onRetry={() => void draft.flush()} />}
       </div>
       {mode === "rich" ? (
-        <article
+        <div
           ref={articleRef}
           className="doc"
           data-testid="plan"
-          aria-label="Plan"
+          role="textbox"
+          aria-multiline="true"
+          aria-readonly={readOnly ? "true" : undefined}
+          aria-label="Plan document"
           tabIndex={-1}
           onKeyDown={(e) => {
             if (e.key === "Escape" && editing) {
@@ -205,7 +377,9 @@ export function PlanEditor({
             cite={cite}
             afterTitle={afterTitle}
             openBadge={openBadge}
-            onBlock={startEdit}
+            onBlock={readOnly ? undefined : startEdit}
+            decision={renderDecision}
+            active={active ?? highlight}
             edit={
               editing
                 ? {
@@ -225,18 +399,18 @@ export function PlanEditor({
                 : undefined
             }
           />
-        </article>
+        </div>
       ) : (
-        <div className="doc">
-          <textarea
-            ref={rawRef}
-            className="ped-raw mono"
-            aria-label="Plan Markdown"
-            data-testid="plan-raw"
-            spellCheck={false}
+        <div className="doc doc-raw">
+          <CodeEditor
+            key={readOnly ? "ro" : "rw"}
             value={draft.text}
-            onChange={(e) => draft.change(e.target.value)}
+            onChange={(t) => !readOnly && draft.change(t)}
             onBlur={() => void draft.flush()}
+            label="plan.md, Markdown source"
+            file="plan.md"
+            errors={problems}
+            testId="plan-raw"
           />
         </div>
       )}

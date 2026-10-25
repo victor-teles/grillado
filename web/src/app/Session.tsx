@@ -14,6 +14,8 @@ export function SessionScreen({ session, app, act, onSwitch }: { session: Sessio
   const banner = session.error && !session.busy ? <ProblemBanner session={session} app={app} act={act} onSwitch={onSwitch} /> : null;
   switch (session.status) {
     case "asking":
+      // A changed decision is being re-asked: the plan stays up, read-only and marked (Q2).
+      if (session.plan?.waiting?.length) return <PlanView session={session} act={act} agentName={agentName(app, session)} banner={banner} />;
       return session.rounds.length === 0 ? <FiringUp session={session} act={act} banner={banner} /> : <WaitingView session={session} act={act} banner={banner} />;
     case "answering":
       return <RoundView session={session} act={act} banner={banner} />;
@@ -22,11 +24,14 @@ export function SessionScreen({ session, app, act, onSwitch }: { session: Sessio
     case "synthesizing":
       return <Plating session={session} act={act} banner={banner} />;
     case "plated":
-      return <PlanView session={session} act={act} />;
+      return <PlanView session={session} act={act} agentName={agentName(app, session)} />;
     default:
       return null;
   }
 }
+
+/** The session's agent as the UI names it (its display name; the id when it's unknown). */
+export const agentName = (app: AppState, s: SessionView) => app.providers.find((p) => p.id === s.provider)?.displayName ?? s.provider;
 
 // ---------------------------------------------------------------- banners
 

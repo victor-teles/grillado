@@ -1,8 +1,9 @@
 import { Fragment, type ReactNode } from "react";
-import { type Block, parseBlocks } from "./editor/blocks";
+import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
 import { Diagram } from "./editor/Diagram";
 
 export type CiteRenderer = (round: number, key: string, n: number) => ReactNode;
+export type FenceBlock = Extract<Block, { kind: "fence" }>;
 
 /**
  * Minimal, safe Markdown → React (no raw HTML): headings, lists, paragraphs, code fences, **bold**, `code`.
@@ -20,6 +21,8 @@ export function Markdown({
   openBadge,
   onBlock,
   edit,
+  decision,
+  active,
 }: {
   source: string;
   cite?: CiteRenderer;
@@ -27,6 +30,10 @@ export function Markdown({
   openBadge?: ReactNode;
   onBlock?: (b: Block) => void;
   edit?: { start: number; end: number; node: ReactNode };
+  /** Renders a ```decision fence (the n-th in the document). */
+  decision?: (b: FenceBlock, n: number) => ReactNode;
+  /** Decision whose context passages are highlighted (`mark.ctx`). */
+  active?: string | null;
 }) {
   const out: ReactNode[] = [];
   let openSection: ReactNode[] | null = null;
@@ -41,6 +48,23 @@ export function Markdown({
     openSection = null;
   };
   const ctx = { cite, n: 0 };
+  let decisions = 0;
+  // A passage (sentence or list item) that cites decisions gets an id, so a decision block can
+  // point at it (aria-describedby), and a mark while its decision is hovered or focused.
+  const passage = (b: Block, i: number, t: string) => {
+    const keys = citedKeys(t);
+    if (!keys.length) return <Fragment key={i}>{inline(t, ctx)}</Fragment>;
+    const on = !!active && keys.includes(active);
+    return on ? (
+      <mark key={i} id={passageId(b.start, i)} className="ctx">
+        {inline(t, ctx)}
+      </mark>
+    ) : (
+      <span key={i} id={passageId(b.start, i)} className="psg">
+        {inline(t, ctx)}
+      </span>
+    );
+  };
   let titled = false;
   let editShown = false;
   const showEdit = () => {
@@ -74,12 +98,18 @@ export function Markdown({
       continue;
     }
     if (edit && b.start >= edit.end) showEdit();
-    if (b.kind === "fence") {
+    if (b.kind === "fence" && b.lang === "decision" && decision) {
+      push(
+        <div key={b.start} className="blk" data-block="decision">
+          {decision(b, decisions++)}
+        </div>,
+      );
+    } else if (b.kind === "fence") {
       push(
         wrap(
           b,
           b.lang === "mermaid" ? (
-            <Diagram code={b.body} />
+            <Diagram code={b.body} onEdit={onBlock ? () => onBlock(b) : undefined} />
           ) : (
             <pre>
               <code>{b.body}</code>
@@ -111,10 +141,10 @@ export function Markdown({
       const Tag = (["h1", "h2", "h3", "h4"] as const)[b.level - 1];
       push(wrap(b, <Tag>{inline(b.text, ctx)}</Tag>));
     } else if (b.kind === "list") {
-      const items = b.items.map((t, n) => <li key={n}>{inline(t, ctx)}</li>);
+      const items = b.items.map((t, n) => <li key={n}>{passage(b, n, t)}</li>);
       push(wrap(b, b.ordered ? <ol start={b.first === 1 ? undefined : b.first}>{items}</ol> : <ul>{items}</ul>));
     } else {
-      push(wrap(b, <p>{inline(b.text, ctx)}</p>));
+      push(wrap(b, <p>{sentences(b.text).map((t, i) => passage(b, i, t))}</p>));
     }
   }
   showEdit();

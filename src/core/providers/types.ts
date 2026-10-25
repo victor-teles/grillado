@@ -4,7 +4,7 @@ export type ProviderId = "claude" | "codex" | "grok" | "pi";
 export const PROVIDER_IDS: ProviderId[] = ["claude", "codex", "grok", "pi"];
 
 export type Detection =
-  | { status: "ready"; version: string; path: string }
+  | { status: "ready"; version: string; path: string; /** Name the binary reports for itself, e.g. "2.1.3 (Claude Code)". */ name?: string }
   | { status: "missing" }
   | { status: "broken" | "outdated"; version?: string; path?: string; reason: string };
 

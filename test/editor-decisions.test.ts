@@ -1,0 +1,333 @@
+// v1.1 editor, phase 1 behaviour: fenced decision blocks (format + validation), changing a
+// decision inline (works like Reopen for its dependents), plan.md reloads after outside edits
+// (auto, or a conflict when both sides changed), and the scroll-safe autosize.
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { GrilladoServer } from "../src/cli/server.ts";
+import { Store } from "../src/cli/store.ts";
+import { decisionProblems, findDecisionBlocks, parseDecisionBody, serializeDecision, updateDecisionBlock } from "../src/core/decision-block.ts";
+import { agentNameFrom } from "../src/core/providers/base.ts";
+import { type Session, OTHER_OPTION, answerOpenDecision, changeDecision, createSession, renderPlanMarkdown } from "../src/core/session.ts";
+import { textHash } from "../src/core/text-hash.ts";
+import { passages, sentences } from "../web/src/app/editor/blocks.ts";
+import { diagramLabel, explainDiagramError } from "../web/src/app/editor/diagram.ts";
+import { reconcile } from "../web/src/app/editor/reconcile.ts";
+import { fmt, monogram } from "../web/src/app/copy.ts";
+
+const BLOCK = `id: R3·1
+key: merge
+question: How should two edits to the same item merge?
+answer: Merge per item
+note: Last edit wins inside an item; different items never clash.
+by: you
+kept_suggestion: false
+at: 2026-10-22T21:14-03:00`;
+
+describe("decision blocks (Q3)", () => {
+  test("the handoff's example parses", () => {
+    const p = parseDecisionBody(BLOCK);
+    expect(p.ok).toBe(true);
+    if (!p.ok) return;
+    expect(p.fields).toMatchObject({ id: "R3·1", key: "merge", answer: "Merge per item", by: "you", kept_suggestion: false });
+  });
+
+  test("open decisions need no answer; settled ones do", () => {
+    expect(parseDecisionBody("id: R5·3\nquestion: Backups?\nstatus: open").ok).toBe(true);
+    const p = parseDecisionBody("id: R5·3\nquestion: Backups?");
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.message).toContain("needs an answer");
+  });
+
+  test.each([
+    ["id: R3·1\nquestion q\nanswer: a", 1, "name, a colon"],
+    ["id: R3·1\nquestion: q\nquestion: again\nanswer: a", 2, "set twice"],
+    ["question: q\nanswer: a", -1, "needs an id"],
+    ["id: three\nquestion: q\nanswer: a", 0, "should look like R3·1"],
+    ["id: R1·1\nanswer: a", -1, "needs a question"],
+    ["id: R1·1\nquestion: q\nanswer: a\nkept_suggestion: yes", 3, "true or false"],
+    ["id: R1·1\nquestion: q\nanswer: a\nby: robot", 3, "you or agent"],
+    ["id: R1·1\nquestion: q\nanswer: a\nat: last tuesday", 3, "date and time"],
+    ["id: R1·1\nquestion: q\nanswer: a\nstatus: maybe", 3, "only be “open”"],
+  ])("invalid: %p", (body, line, message) => {
+    const p = parseDecisionBody(body);
+    expect(p.ok).toBe(false);
+    if (p.ok) return;
+    expect(p.line).toBe(line);
+    expect(p.message).toContain(message);
+  });
+
+  test("problems point at the document line, in plain words", () => {
+    const md = `# Plan\n\nText.\n\n\`\`\`decision\nid: R1·1\nquestion: q\nkept_suggestion: maybe\nanswer: a\n\`\`\`\n`;
+    expect(decisionProblems(md)).toEqual([{ line: 8, message: "This decision block can't be read: “kept_suggestion” must be true or false." }]);
+    expect(decisionProblems(md.replace("maybe", "true"))).toEqual([]);
+  });
+
+  test("updating a block keeps unknown names, comments and order", () => {
+    const md = `Intro\n\n\`\`\`decision\n${BLOCK}\n# a comment\nowner: Ana\n\`\`\`\n\nAfter [R3:merge].\n`;
+    const next = updateDecisionBlock(md, "merge", { answer: "Last write wins", kept_suggestion: true });
+    expect(next).toContain("answer: Last write wins\n");
+    expect(next).toContain("kept_suggestion: true\n");
+    expect(next).toContain("# a comment\nowner: Ana\n```");
+    expect(next.replace("answer: Last write wins", "answer: Merge per item").replace("kept_suggestion: true", "kept_suggestion: false")).toBe(md);
+    expect(updateDecisionBlock(md, "nope", { answer: "x" })).toBe(md);
+    const parsed = findDecisionBlocks(next)[0].parsed;
+    expect(parsed.ok && parsed.entries.map((e) => e.name)).toEqual(["id", "key", "question", "answer", "note", "by", "kept_suggestion", "at", "owner"]);
+  });
+
+  test("serialize → parse round-trips and never breaks a line", () => {
+    const text = serializeDecision({ id: "R1·2", key: "k", question: "Two\nlines?", answer: "Yes", kept_suggestion: true, extra: "kept" });
+    expect(text.split("\n")).toHaveLength(8);
+    const [b] = findDecisionBlocks(text);
+    expect(b.parsed.ok && b.parsed.fields.question).toBe("Two lines?");
+  });
+});
+
+// ---------------------------------------------------------------- session fixtures
+
+const question = (key: string, dependsOn: string[] = []) => ({
+  key,
+  label: key[0].toUpperCase() + key.slice(1),
+  title: `Which ${key}?`,
+  body: "",
+  options: ["a", "b", "c"].map((id) => ({ id, label: `${key} ${id}`, description: "" })),
+  recommendedOptionId: "a",
+  dependsOn,
+});
+
+/** Plated: platform ← storage ← sync (dependents), plus scope (independent). */
+function platedSession(): Session {
+  const s = createSession({ idea: "Recipe app", provider: "claude" });
+  const qs = [question("scope"), question("platform"), question("storage", ["platform"]), question("sync", ["storage"])];
+  s.rounds = [
+    {
+      n: 1,
+      questions: qs,
+      summary: "",
+      askedAt: "2026-10-22T20:00:00.000Z",
+      answeredAt: "2026-10-22T21:14:00.000Z",
+      answers: qs.map((q) => ({ questionId: q.key, optionId: "a", accepted_recommendation: true })),
+    },
+  ];
+  for (const q of qs)
+    s.decisions[q.key] = { key: q.key, round: 1, title: q.title, label: q.label, answer: `${q.key} a`, kind: "option", accepted_recommendation: true, dependsOn: q.dependsOn };
+  const body = "## Shape\nA web app [R1:platform]. Recipes stay on the device [R1:storage].\n\n## Later\n- Sync over the LAN [R1:sync]";
+  const markdown = renderPlanMarkdown(s, { type: "plan", title: "Recipes", markdown: body, decisions: [], openDecisions: [] } as any);
+  s.status = "plated";
+  s.plan = { title: "Recipes", markdown, path: "/tmp/plan.md", openDecisions: [], createdAt: new Date().toISOString() };
+  return s;
+}
+
+describe("plan.md with decision blocks", () => {
+  test("each block follows the section that first cites it; uncited ones go under More decisions", () => {
+    const md = platedSession().plan!.markdown;
+    const shape = md.indexOf("## Shape");
+    const later = md.indexOf("## Later");
+    const more = md.indexOf("## More decisions");
+    const at = (key: string) => md.indexOf(`key: ${key}\n`);
+    expect(at("platform")).toBeGreaterThan(shape);
+    expect(at("platform")).toBeLessThan(later);
+    expect(at("storage")).toBeLessThan(later);
+    expect(at("sync")).toBeGreaterThan(later);
+    expect(at("scope")).toBeGreaterThan(more);
+    expect(md).toContain("id: R1·2\nkey: platform\nquestion: Which platform?\nanswer: platform a\nby: you\nkept_suggestion: true\nat: 2026-10-22T21:14:00.000Z");
+    expect(decisionProblems(md)).toEqual([]);
+  });
+});
+
+describe("changing a decision inline (Q2)", () => {
+  test("with dependents: new answer in the block, dependents re-asked, plan kept and marked", () => {
+    const s = platedSession();
+    const deps = changeDecision(s, "platform", { optionId: "b" });
+    expect(deps.sort()).toEqual(["storage", "sync"]);
+    expect(s.status).toBe("asking");
+    expect(s.decisions.platform.answer).toBe("platform b");
+    expect(s.decisions.platform.accepted_recommendation).toBe(false);
+    expect(s.decisions.storage).toBeUndefined();
+    expect(s.stale?.storage.reason).toBe("Platform changed");
+    expect(s.reopened).toEqual(expect.arrayContaining(["storage", "sync"]));
+    expect(s.plan?.waiting).toEqual(deps);
+    expect(s.plan?.markdown).toContain("key: platform\nquestion: Which platform?\nanswer: platform b\nby: you\nkept_suggestion: false\nat: ");
+    expect(s.plan?.editedAt).toBeTruthy();
+  });
+
+  test("without dependents: updated in place, stays plated", () => {
+    const s = platedSession();
+    expect(changeDecision(s, "scope", { optionId: OTHER_OPTION, text: "Just me" })).toEqual([]);
+    expect(s.status).toBe("plated");
+    expect(s.decisions.scope).toMatchObject({ answer: "Just me", kind: "other" });
+    expect(s.rounds[0].answers!.find((a) => a.questionId === "scope")).toMatchObject({ optionId: OTHER_OPTION, text: "Just me" });
+    expect(s.plan!.markdown).toContain("answer: Just me");
+  });
+
+  test("same answer is a no-op; bad picks and wrong states throw", () => {
+    const s = platedSession();
+    const before = s.plan!.markdown;
+    expect(changeDecision(s, "platform", { optionId: "a" })).toEqual([]);
+    expect(s.plan!.markdown).toBe(before);
+    expect(() => changeDecision(s, "platform", { optionId: "zzz" })).toThrow("Pick one");
+    expect(() => changeDecision(s, "ghost", { optionId: "a" })).toThrow("Unknown");
+    s.status = "asking";
+    expect(() => changeDecision(s, "platform", { optionId: "b" })).toThrow();
+  });
+
+  test("answering an open decision settles it and drops status: open", () => {
+    const s = platedSession();
+    s.rounds.push({ n: 2, questions: [question("backups")], summary: "", askedAt: "2026-10-22T22:00:00.000Z" });
+    s.wrappedUp = true;
+    s.plan!.markdown = renderPlanMarkdown(s, { type: "plan", title: "Recipes", markdown: "## Shape\nWeb [R1:platform].", decisions: [], openDecisions: [] } as any);
+    expect(s.plan!.markdown).toContain("id: R2·1\nkey: backups\nquestion: Which backups?\nstatus: open");
+    answerOpenDecision(s, "backups", { optionId: "a" });
+    expect(s.decisions.backups).toMatchObject({ round: 2, answer: "backups a", accepted_recommendation: true });
+    expect(s.plan!.markdown).not.toContain("status: open");
+    expect(s.plan!.markdown).toContain("key: backups\nquestion: Which backups?\nanswer: backups a");
+    expect(() => answerOpenDecision(s, "backups", { optionId: "a" })).toThrow("already");
+  });
+});
+
+// ---------------------------------------------------------------- server
+
+const servers: GrilladoServer[] = [];
+afterEach(async () => {
+  while (servers.length) await servers.pop()!.close();
+});
+const webDir = () => mkdtempSync(path.join(os.tmpdir(), "grillado-web-"));
+
+async function serve(store: Store) {
+  const server = new GrilladoServer({ adapters: [], store, webDir: webDir(), port: 0, strictPort: true });
+  servers.push(server);
+  await server.listen();
+  const call = (method: string, p: string, body?: unknown) =>
+    new Promise<{ status: number; json: any }>((resolve, reject) => {
+      const req = http.request(
+        { host: "127.0.0.1", port: server.port, method, path: p, headers: { "x-grillado-token": server.token, "content-type": "application/json" } },
+        (res) => {
+          let data = "";
+          res.on("data", (d) => (data += d));
+          res.on("end", () => resolve({ status: res.statusCode!, json: res.headers["content-type"]?.includes("json") ? JSON.parse(data) : data }));
+        },
+      );
+      req.on("error", reject);
+      req.end(body === undefined ? undefined : JSON.stringify(body));
+    });
+  return { server, call };
+}
+
+function storeWithPlan() {
+  const store = new Store(mkdtempSync(path.join(os.tmpdir(), "grillado-home-")));
+  const s = platedSession();
+  const file = store.writePlan(s.id, s.plan!.markdown);
+  s.plan!.path = file;
+  store.save(s);
+  return { store, id: s.id, file, md: s.plan!.markdown };
+}
+
+const until = async (ok: () => boolean | Promise<boolean>, ms = 4000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await ok()) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+};
+
+describe("server: change, conflicts, outside edits", () => {
+  test("change action writes plan.md and starts re-asking the dependents", async () => {
+    const { store, id, file } = storeWithPlan();
+    const { call } = await serve(store);
+    const r = await call("POST", `/api/sessions/${id}/change`, { key: "storage", optionId: "c" });
+    expect(r.status).toBe(200);
+    expect(r.json.plan.waiting).toEqual(["sync"]);
+    expect(readFileSync(file, "utf8")).toContain("answer: storage c");
+    expect(store.load(id)!.status).toBe("asking");
+  });
+
+  test("a save made on top of an older plan.md is refused with the newer text (409)", async () => {
+    const { store, id, file, md } = storeWithPlan();
+    const { call } = await serve(store);
+    await call("GET", `/api/sessions/${id}`);
+    const outside = `${md}\nEdited in another editor.\n`;
+    writeFileSync(file, outside);
+    expect(await until(async () => (await call("GET", `/api/sessions/${id}`)).json.plan.markdown === outside)).toBe(true);
+    const stale = await call("POST", `/api/sessions/${id}/plan`, { markdown: `${md}\nMine.\n`, base: textHash(md) });
+    expect(stale.status).toBe(409);
+    expect(stale.json.markdown).toBe(outside);
+    expect(readFileSync(file, "utf8")).toBe(outside);
+    const fresh = await call("POST", `/api/sessions/${id}/plan`, { markdown: `${outside}Mine.\n`, base: textHash(outside) });
+    expect(fresh.status).toBe(200);
+  });
+
+  test("outside edits are picked up live and marked as a reload", async () => {
+    const { store, id, file, md } = storeWithPlan();
+    const { call } = await serve(store);
+    const first = await call("GET", `/api/sessions/${id}`);
+    expect(first.json.plan.reloadedAt).toBeUndefined();
+    writeFileSync(file, md.replace("A web app", "A web app, offline first"));
+    expect(await until(async () => !!(await call("GET", `/api/sessions/${id}`)).json.plan.reloadedAt)).toBe(true);
+    expect((await call("GET", `/api/sessions/${id}`)).json.plan.markdown).toContain("offline first");
+    // Our own saves don't count as outside edits.
+    const before = (await call("GET", `/api/sessions/${id}`)).json.plan.reloadedAt;
+    await call("POST", `/api/sessions/${id}/plan`, { markdown: "# Mine\n" });
+    await new Promise((r) => setTimeout(r, 1200));
+    expect((await call("GET", `/api/sessions/${id}`)).json.plan.reloadedAt).toBe(before);
+  });
+
+  test("the losing version is kept as plan.conflict.md", async () => {
+    const { store, id } = storeWithPlan();
+    const { call } = await serve(store);
+    const r = await call("POST", `/api/sessions/${id}/plan-conflict`, { markdown: "# the other one\n" });
+    expect(r.status).toBe(200);
+    const kept = path.join(store.sessionDir(id), "plan.conflict.md");
+    expect(existsSync(kept)).toBe(true);
+    expect(readFileSync(kept, "utf8")).toBe("# the other one\n");
+  });
+});
+
+// ---------------------------------------------------------------- browser-side logic
+
+describe("plan.md reload rules (Q5)", () => {
+  const base = { lastSaved: "A", dirty: false, sent: new Set<string>(), text: "A" };
+  test("no local edits: reload", () => expect(reconcile(base, "B")).toBe("adopt"));
+  test("both changed: ask", () => expect(reconcile({ ...base, dirty: true, text: "A+" }, "B")).toBe("conflict"));
+  test("our own save echoing back: ignore", () => expect(reconcile({ ...base, dirty: true, text: "A++", sent: new Set(["A+"]) }, "A+")).toBe("ignore"));
+  test("same text: ignore", () => expect(reconcile({ ...base, dirty: true, text: "B" }, "B")).toBe("ignore"));
+});
+
+describe("context passages and diagrams", () => {
+  test("sentences keep every character and don't split inside cites or code", () => {
+    const t = "Use `a. b` here [R1:x]. Then this! And [R2:y, R3:z] that? End";
+    const parts = sentences(t);
+    expect(parts.join("")).toBe(t);
+    expect(parts).toEqual(["Use `a. b` here [R1:x]. ", "Then this! ", "And [R2:y, R3:z] that? ", "End"]);
+  });
+
+  test("passages are the sentences and list items citing a decision", () => {
+    const md = "# T\n\nOne [R1:a]. Two. Three [R1:a, R1:b].\n\n- item [R1:b]\n- plain\n";
+    const ps = passages(md);
+    expect(ps.map((p) => p.keys)).toEqual([["a"], ["a", "b"], ["b"]]);
+    expect(new Set(ps.map((p) => p.id)).size).toBe(3);
+  });
+
+  test("diagram errors point at the line where the shape opened", () => {
+    const code = "flowchart LR\n  A[Start] --> B{Ok?\n  B --> C[Done]";
+    expect(explainDiagramError(code, "Parse error on line 3:\n...")).toEqual({ line: 2, message: "Line 2: a shape isn't closed. Add the missing } at the end of the label." });
+    expect(explainDiagramError("flowchart LR\n  A --> ", "Parse error on line 2")).toEqual({ line: 2, message: "Line 2: Mermaid can't read this line." });
+    expect(diagramLabel(code, '<g class="node default"></g><g class="node"></g>')).toBe("flowchart diagram, 2 nodes");
+  });
+});
+
+describe("agent name (§5b)", () => {
+  test("taken from the binary's own version output when it names itself", () => {
+    expect(agentNameFrom("2.1.3 (Claude Code)")).toBe("Claude Code");
+    expect(agentNameFrom("claude 9.9.9-fake")).toBeUndefined();
+  });
+  test("monogram and templates", () => {
+    expect(monogram("Claude Code")).toBe("CC");
+    expect(monogram("Codex")).toBe("CO");
+    expect(monogram("pi")).toBe("PI");
+    expect(fmt("Question for {agent}", { agent: "Grok" })).toBe("Question for Grok");
+    expect(fmt("{n} edits from {agent}", { n: 3 })).toBe("3 edits from {agent}");
+  });
+});
