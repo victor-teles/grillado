@@ -1,0 +1,537 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createReadStream, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { nextRound, synthesize } from "../core/engine.ts";
+import { redact } from "../core/filter.ts";
+import { killAllChildren } from "../core/providers/process.ts";
+import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
+import {
+  type Answer,
+  type Session,
+  acceptStreak,
+  createSession,
+  dismissNudge,
+  keepGoing,
+  reopen,
+  setError,
+  shouldNudge,
+  startSynthesis,
+  submitAnswers,
+  userText,
+  wrapUp,
+} from "../core/session.ts";
+import { buildTree } from "../core/tree.ts";
+import type { Store } from "./store.ts";
+
+export const LOOPBACK = "127.0.0.1";
+
+export interface ServerOptions {
+  adapters: ProviderAdapter[];
+  store: Store;
+  webDir: string;
+  host?: string;
+  port: number;
+  strictPort: boolean;
+  provider?: ProviderId;
+  model?: string;
+  timeoutMs?: number;
+  onQuit?: () => void;
+}
+
+export interface ProviderInfo {
+  id: ProviderId;
+  displayName: string;
+  installHint: string;
+  loginHint: string;
+  detection: Detection;
+}
+
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".json": "application/json; charset=utf-8",
+  ".woff2": "font/woff2",
+};
+
+/** Grillado listens on 127.0.0.1 only (AC10). Anything else is refused before we touch the network. */
+export function assertLoopback(host: string) {
+  if (host !== LOOPBACK) throw new Error(`Refusing to listen on ${host}: Grillado only listens on ${LOOPBACK}.`);
+}
+
+export class GrilladoServer {
+  readonly token = randomBytes(24).toString("base64url");
+  private server: http.Server;
+  private providers: ProviderInfo[] = [];
+  private selected: ProviderId | null = null;
+  private sessions = new Map<string, Session>();
+  private inflight = new Map<string, AbortController>();
+  private progress = new Map<string, string>();
+  private clients = new Set<http.ServerResponse>();
+  private agentDirs = new Map<string, string>();
+  port = 0;
+
+  constructor(private opts: ServerOptions) {
+    this.server = http.createServer((req, res) => {
+      this.handle(req, res).catch((err) => {
+        if (!res.headersSent) this.json(res, 500, { error: "Internal error" });
+        console.error(err);
+      });
+    });
+  }
+
+  get url() {
+    return `http://${LOOPBACK}:${this.port}/?t=${this.token}`;
+  }
+
+  get providerList() {
+    return this.providers;
+  }
+
+  async detect() {
+    this.providers = await Promise.all(
+      this.opts.adapters.map(async (a) => ({
+        id: a.id,
+        displayName: a.displayName,
+        installHint: a.installHint,
+        loginHint: a.loginHint,
+        detection: await a.detect(),
+      })),
+    );
+    const ready = this.providers.filter((p) => p.detection.status === "ready").map((p) => p.id);
+    const remembered = this.opts.store.readConfig().defaultProvider;
+    if (this.opts.provider) this.selected = ready.includes(this.opts.provider) ? this.opts.provider : null;
+    else if (this.selected && ready.includes(this.selected)) {
+      // keep
+    } else if (remembered && ready.includes(remembered)) this.selected = remembered;
+    else if (ready.length === 1) this.selected = ready[0];
+    else this.selected = null;
+    return this.providers;
+  }
+
+  async listen(): Promise<number> {
+    const host = this.opts.host ?? LOOPBACK;
+    assertLoopback(host);
+    let port = this.opts.port;
+    const last = this.opts.strictPort ? port : port + 20;
+    for (;;) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (err: Error) => {
+            this.server.off("listening", onListening);
+            reject(err);
+          };
+          const onListening = () => {
+            this.server.off("error", onError);
+            resolve();
+          };
+          this.server.once("error", onError);
+          this.server.once("listening", onListening);
+          this.server.listen({ host, port, exclusive: true });
+        });
+        const addr = this.server.address();
+        if (!addr || typeof addr === "string" || addr.address !== LOOPBACK) throw new Error("Bound to an unexpected address");
+        this.port = addr.port;
+        return this.port;
+      } catch (err: any) {
+        if (err?.code === "EADDRINUSE" && port < last) {
+          port++;
+          continue;
+        }
+        if (err?.code === "EADDRINUSE") throw new Error(`Port ${port} is already in use.`);
+        throw err;
+      }
+    }
+  }
+
+  address() {
+    return this.server.address();
+  }
+
+  /** Graceful stop (AC13): kill agent runs, flush sessions, close sockets. */
+  async close() {
+    for (const c of this.inflight.values()) c.abort();
+    killAllChildren();
+    for (const s of this.sessions.values()) this.opts.store.save(s);
+    for (const res of this.clients) res.end();
+    for (const dir of this.agentDirs.values()) rmSync(dir, { recursive: true, force: true });
+    this.server.closeAllConnections();
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  // ---------------------------------------------------------------- security
+
+  private hostAllowed(req: http.IncomingMessage) {
+    const host = req.headers.host ?? "";
+    return host === `${LOOPBACK}:${this.port}` || host === `localhost:${this.port}`;
+  }
+
+  private originAllowed(req: http.IncomingMessage) {
+    const origin = req.headers.origin;
+    if (!origin) return true;
+    return origin === `http://${LOOPBACK}:${this.port}` || origin === `http://localhost:${this.port}`;
+  }
+
+  private get cookieName() {
+    return `grillado_${this.port}`;
+  }
+
+  private tokenOk(req: http.IncomingMessage) {
+    const header = req.headers["x-grillado-token"];
+    const cookie = (req.headers.cookie ?? "")
+      .split(";")
+      .map((c) => c.trim().split("="))
+      .find(([k]) => k === this.cookieName)?.[1];
+    const given = typeof header === "string" ? header : cookie;
+    if (!given) return false;
+    const a = Buffer.from(given);
+    const b = Buffer.from(this.token);
+    return a.length === b.length && timingSafeEqual(a, b);
+  }
+
+  // ---------------------------------------------------------------- http
+
+  private async handle(req: http.IncomingMessage, res: http.ServerResponse) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    if (!this.hostAllowed(req)) return this.json(res, 403, { error: "Host not allowed" });
+    if (!this.originAllowed(req)) return this.json(res, 403, { error: "Origin not allowed" });
+    const url = new URL(req.url ?? "/", `http://${LOOPBACK}:${this.port}`);
+
+    if (!url.pathname.startsWith("/api/")) return this.serveStatic(req, res, url);
+
+    if (!this.tokenOk(req)) return this.json(res, 401, { error: "Open the link printed in your terminal." });
+    if (req.method === "POST" && !(req.headers["content-type"] ?? "").startsWith("application/json"))
+      return this.json(res, 415, { error: "Expected JSON" });
+
+    const parts = url.pathname.split("/").filter(Boolean).slice(1); // drop "api"
+    try {
+      const body = req.method === "POST" ? await readJson(req) : {};
+      if (req.method === "GET" && parts[0] === "state") return this.json(res, 200, this.appState());
+      if (req.method === "GET" && parts[0] === "events") return this.events(req, res);
+      if (req.method === "POST" && parts[0] === "rescan") {
+        await this.detect();
+        this.broadcast({ type: "app" });
+        return this.json(res, 200, this.appState());
+      }
+      if (req.method === "POST" && parts[0] === "provider") return this.selectProvider(res, body);
+      if (req.method === "POST" && parts[0] === "quit") {
+        this.json(res, 200, { ok: true });
+        setTimeout(() => this.opts.onQuit?.(), 50);
+        return;
+      }
+      if (parts[0] === "sessions") return await this.sessionRoutes(req, res, parts.slice(1), body);
+      return this.json(res, 404, { error: "Not found" });
+    } catch (err: any) {
+      return this.json(res, 400, { error: err?.message ?? "Bad request" });
+    }
+  }
+
+  private serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
+    if (req.method !== "GET" && req.method !== "HEAD") return this.json(res, 405, { error: "Method not allowed" });
+    // The opened URL carries the per-run token once; trade it for a cookie and drop it from the address bar.
+    const t = url.searchParams.get("t");
+    if (t !== null) {
+      if (t === this.token) {
+        res.setHeader("Set-Cookie", `${this.cookieName}=${this.token}; Path=/; HttpOnly; SameSite=Strict`);
+      }
+      res.writeHead(302, { Location: "/" });
+      return res.end();
+    }
+    const root = path.resolve(this.opts.webDir);
+    let file = path.resolve(root, `.${decodeURIComponent(url.pathname)}`);
+    if (!file.startsWith(root + path.sep) && file !== root) return this.json(res, 404, { error: "Not found" });
+    if (!existsSync(file) || statSync(file).isDirectory()) file = path.join(root, "index.html");
+    if (!existsSync(file)) return this.json(res, 500, { error: "Web UI not built" });
+    const ext = path.extname(file);
+    res.writeHead(200, {
+      "Content-Type": MIME[ext] ?? "application/octet-stream",
+      "Cache-Control": ext === ".html" ? "no-store" : "public, max-age=31536000, immutable",
+      ...(ext === ".html"
+        ? {
+            "Content-Security-Policy":
+              "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+          }
+        : {}),
+    });
+    if (req.method === "HEAD") return res.end();
+    createReadStream(file).pipe(res);
+  }
+
+  private json(res: http.ServerResponse, status: number, data: unknown) {
+    const body = JSON.stringify(data);
+    res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(body);
+  }
+
+  private events(req: http.IncomingMessage, res: http.ServerResponse) {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
+    res.write(": connected\n\n");
+    this.clients.add(res);
+    const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
+    req.on("close", () => {
+      clearInterval(ping);
+      this.clients.delete(res);
+    });
+  }
+
+  private broadcast(event: unknown) {
+    const line = `data: ${JSON.stringify(event)}\n\n`;
+    for (const c of this.clients) c.write(line);
+  }
+
+  private changed(s: Session) {
+    this.opts.store.save(s);
+    this.broadcast({ type: "session", session: this.view(s) });
+  }
+
+  // ---------------------------------------------------------------- views
+
+  private appState() {
+    const ready = this.providers.filter((p) => p.detection.status === "ready");
+    return {
+      providers: this.providers.map((p) => ({
+        id: p.id,
+        displayName: p.displayName,
+        installHint: p.installHint,
+        loginHint: p.loginHint,
+        status: p.detection.status,
+        version: "version" in p.detection ? p.detection.version : undefined,
+        reason: "reason" in p.detection ? p.detection.reason : undefined,
+      })),
+      selected: this.selected,
+      needsPicker: !this.selected && ready.length > 1,
+      remembered: this.opts.store.readConfig().defaultProvider ?? null,
+      sessions: this.opts.store.list().slice(0, 20).map((s) => ({
+        id: s.id,
+        idea: s.idea.slice(0, 140),
+        status: s.status,
+        rounds: s.rounds.length,
+        decisions: Object.keys(s.decisions).length,
+        open: s.plan?.openDecisions.length ?? 0,
+        updatedAt: s.updatedAt,
+      })),
+      dataDir: this.opts.store.dir,
+    };
+  }
+
+  /** What the browser sees of a session. Error text from CLIs is scrubbed (AC17). */
+  private view(s: Session) {
+    return {
+      ...s,
+      error: s.error ? { ...s.error, message: redact(s.error.message, userText(s)) } : undefined,
+      busy: this.inflight.has(s.id),
+      progress: this.progress.get(s.id),
+      planPath: s.plan?.path,
+      tree: buildTree(s),
+      acceptStreak: acceptStreak(s),
+      nudge: shouldNudge(s),
+    };
+  }
+
+  // ---------------------------------------------------------------- sessions
+
+  private getSession(id: string): Session {
+    let s = this.sessions.get(id);
+    if (!s) {
+      const loaded = this.opts.store.load(id);
+      if (!loaded) throw new Error("Session not found");
+      s = loaded;
+      // A run that was cut off by a restart can't resume on its own (AC14): offer Retry.
+      if ((s.status === "asking" || s.status === "synthesizing") && !s.error) {
+        setError(s, "unknown", "Interrupted. Retry to continue.");
+      }
+      this.sessions.set(id, s);
+    }
+    return s;
+  }
+
+  private adapterFor(s: Session) {
+    const a = this.opts.adapters.find((x) => x.id === s.provider);
+    if (!a) throw new Error("Unknown provider");
+    return a;
+  }
+
+  private agentCwd(s: Session) {
+    let dir = this.agentDirs.get(s.id);
+    if (!dir || !existsSync(dir)) {
+      dir = mkdtempSync(path.join(os.tmpdir(), "grillado-agent-"));
+      this.agentDirs.set(s.id, dir);
+    }
+    return dir;
+  }
+
+  private runOptions(s: Session, controller: AbortController) {
+    return {
+      cwd: this.agentCwd(s),
+      timeoutMs: this.opts.timeoutMs ?? 180_000,
+      model: this.opts.model,
+      signal: controller.signal,
+      onProgress: (label: string) => {
+        this.progress.set(s.id, label);
+        this.broadcast({ type: "progress", sessionId: s.id, label });
+      },
+    };
+  }
+
+  private run(s: Session, work: (controller: AbortController) => Promise<void>) {
+    if (this.inflight.has(s.id)) return;
+    const controller = new AbortController();
+    this.inflight.set(s.id, controller);
+    s.error = undefined;
+    this.changed(s);
+    work(controller)
+      .catch((err) => setError(s, "unknown", String(err?.message ?? err)))
+      .finally(() => {
+        if (this.inflight.get(s.id) === controller) this.inflight.delete(s.id);
+        this.progress.delete(s.id);
+        this.changed(s);
+      });
+  }
+
+  private startRound(s: Session) {
+    this.run(s, async (c) => {
+      await nextRound(s, this.adapterFor(s), this.runOptions(s, c));
+    });
+  }
+
+  private startPlan(s: Session) {
+    this.run(s, async (c) => {
+      const out = await synthesize(s, this.adapterFor(s), this.runOptions(s, c));
+      if (!out.ok) return;
+      const file = this.opts.store.writePlan(s.id, out.markdown);
+      s.plan = { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions, createdAt: new Date().toISOString() };
+      s.status = "plated";
+    });
+  }
+
+  private abort(s: Session) {
+    this.inflight.get(s.id)?.abort();
+    this.inflight.delete(s.id);
+  }
+
+  private selectProvider(res: http.ServerResponse, body: any) {
+    const id = body?.id as ProviderId;
+    const p = this.providers.find((x) => x.id === id);
+    if (!p || p.detection.status !== "ready") return this.json(res, 400, { error: "That agent isn't available." });
+    this.selected = id;
+    if (body?.remember) this.opts.store.writeConfig({ ...this.opts.store.readConfig(), defaultProvider: id });
+    this.broadcast({ type: "app" });
+    return this.json(res, 200, this.appState());
+  }
+
+  private async sessionRoutes(req: http.IncomingMessage, res: http.ServerResponse, parts: string[], body: any) {
+    if (req.method === "POST" && parts.length === 0) {
+      const idea = String(body?.idea ?? "").trim();
+      if (!idea) throw new Error("Tell me the idea first.");
+      if (!this.selected) throw new Error("Pick an agent first.");
+      const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), provider: this.selected });
+      this.sessions.set(s.id, s);
+      this.opts.store.save(s);
+      this.startRound(s);
+      return this.json(res, 201, this.view(s));
+    }
+    const s = this.getSession(parts[0] ?? "");
+    const action = parts[1];
+    if (req.method === "GET" && !action) return this.json(res, 200, this.view(s));
+    if (req.method === "GET" && action === "plan.md") {
+      const md = this.opts.store.readPlan(s.id);
+      if (!md) return this.json(res, 404, { error: "No plan yet" });
+      res.writeHead(200, {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Content-Disposition": `attachment; filename="grillado-plan-${s.id}.md"`,
+      });
+      return res.end(md);
+    }
+    if (req.method !== "POST") return this.json(res, 404, { error: "Not found" });
+    const busy = this.inflight.has(s.id);
+    switch (action) {
+      case "answers": {
+        if (busy) throw new Error("The agent is still working.");
+        submitAnswers(s, Number(body?.round), (body?.answers ?? []) as Answer[]);
+        this.startRound(s);
+        break;
+      }
+      case "retry": {
+        if (busy) break;
+        if (s.status === "asking") this.startRound(s);
+        else if (s.status === "synthesizing") this.startPlan(s);
+        break;
+      }
+      case "provider": {
+        const id = body?.id as ProviderId;
+        if (!PROVIDER_IDS.includes(id) || this.providers.find((p) => p.id === id)?.detection.status !== "ready")
+          throw new Error("That agent isn't available.");
+        this.abort(s);
+        s.provider = id;
+        this.selected = id;
+        s.error = undefined;
+        this.changed(s);
+        break;
+      }
+      case "stop": {
+        this.abort(s);
+        setError(s, "unknown", "Stopped. Retry when you're ready.");
+        this.changed(s);
+        break;
+      }
+      case "wrap": {
+        this.abort(s);
+        wrapUp(s);
+        this.changed(s);
+        break;
+      }
+      case "nudge": {
+        dismissNudge(s);
+        this.changed(s);
+        break;
+      }
+      case "keep-going": {
+        keepGoing(s);
+        this.startRound(s);
+        break;
+      }
+      case "confirm": {
+        startSynthesis(s);
+        this.startPlan(s);
+        break;
+      }
+      case "reopen": {
+        if (busy) throw new Error("The agent is still working.");
+        reopen(s, String(body?.key ?? ""));
+        this.startRound(s);
+        break;
+      }
+      default:
+        return this.json(res, 404, { error: "Not found" });
+    }
+    return this.json(res, 200, this.view(s));
+  }
+}
+
+function readJson(req: http.IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.setEncoding("utf8");
+    req.on("data", (d) => {
+      data += d;
+      if (data.length > 1_000_000) {
+        reject(new Error("Body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch {
+        reject(new Error("Invalid JSON"));
+      }
+    });
+    req.on("error", reject);
+  });
+}

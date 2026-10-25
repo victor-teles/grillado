@@ -1,0 +1,477 @@
+// Round view (Direction A): stacked questions, bottom bar, side panel, nudge, waiting and firing up.
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  AgentQuestion,
+  type AgentQuestionAnswers,
+  AgentQuestionDescription,
+  AgentQuestionFooter,
+  AgentQuestionHeader,
+  AgentQuestionItem,
+  AgentQuestionOption,
+  AgentQuestionOptions,
+  AgentQuestionOther,
+  AgentQuestionStack,
+  AgentQuestionTitle,
+  agentQuestionOtherKey,
+} from "@/components/ui/uai/agent-question";
+import { clock, useMobile, useSince } from "./chrome";
+import { ICheck, IFlame, ISpark, ISq } from "./icons";
+import { Heat, MobileStrip, SidePanel } from "./Tree";
+import { type Answer, type DecisionNode, OTHER_OPTION, type Question, type Round, type SessionView, UNKNOWN_OPTION } from "./types";
+
+type Act = (action: string, body?: unknown) => Promise<void>;
+/** The value Uai's AgentQuestionOther records. */
+const OTHER_VALUE = "other";
+export const SEND_FAILED = "The agent didn't get your answers. They're still here.";
+
+/** Layout shared by every in-session screen: main column + side panel, mobile strip + sheet. */
+export function SessionBody({
+  session,
+  main,
+  sideSub,
+  onNode,
+  compact,
+  previewStale,
+  highlight,
+  showHeat,
+  showLegend,
+  dim,
+  split,
+}: {
+  session: SessionView;
+  main: React.ReactNode;
+  sideSub: string;
+  onNode?: (n: DecisionNode) => void;
+  compact?: boolean;
+  previewStale?: Set<string>;
+  highlight?: string;
+  showHeat?: boolean;
+  showLegend?: boolean;
+  dim?: boolean;
+  split?: boolean;
+}) {
+  const [sheet, setSheet] = useState(false);
+  const mobile = useMobile();
+  useEffect(() => {
+    if (!mobile) setSheet(false);
+  }, [mobile]);
+  return (
+    <div className={split ? "split" : "body"}>
+      <MobileSheetContext.Provider value={{ open: sheet, toggle: () => setSheet((v) => !v) }}>{main}</MobileSheetContext.Provider>
+      <SidePanel
+        tree={session.tree}
+        sub={sideSub}
+        sheetOpen={sheet}
+        onCloseSheet={() => setSheet(false)}
+        onNode={(n) => {
+          setSheet(false);
+          onNode?.(n);
+        }}
+        compact={compact}
+        previewStale={previewStale}
+        highlight={highlight}
+        showHeat={showHeat}
+        showLegend={showLegend}
+        dim={dim}
+      />
+    </div>
+  );
+}
+const MobileSheetContext = createContext<{ open: boolean; toggle: () => void }>({ open: false, toggle: () => {} });
+export function Strip({ session }: { session: SessionView }) {
+  const s = useContext(MobileSheetContext);
+  return <MobileStrip tree={session.tree} open={s.open} onToggle={s.toggle} />;
+}
+
+function focusCard(questionIndex: number | undefined) {
+  if (questionIndex === undefined) return;
+  const el = document.querySelectorAll<HTMLElement>("[data-slot=agent-question-item] [data-slot=agent-question-title]")[questionIndex];
+  el?.focus();
+  el?.scrollIntoView({ block: "nearest" });
+}
+
+function Stats({ session }: { session: SessionView }) {
+  const elapsed = useSince(session.createdAt);
+  return (
+    <dl className="stats">
+      <div className="stat">
+        <dd>{session.tree.counts.settled}</dd>
+        <dt>settled</dt>
+      </div>
+      <div className="stat">
+        <dd>{session.tree.counts.open}</dd>
+        <dt>open</dt>
+      </div>
+      <div className="stat el">
+        <dd>{clock(elapsed)}</dd>
+        <dt>elapsed</dt>
+      </div>
+    </dl>
+  );
+}
+
+// ---------------------------------------------------------------- answering
+
+export function RoundView({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
+  const round = session.rounds.at(-1)!;
+  return (
+    <SessionBody
+      session={session}
+      sideSub={`${session.tree.counts.settled + session.tree.counts.open} so far`}
+      onNode={(n) => n.status === "frontier" && focusCard(n.questionIndex)}
+      main={<RoundForm key={`${session.id}-${round.n}`} session={session} round={round} act={act} banner={banner} />}
+    />
+  );
+}
+
+function RoundForm({ session, round, act, banner }: { session: SessionView; round: Round; act: Act; banner?: React.ReactNode }) {
+  const [status, setStatus] = useState<"asking" | "submitting">("asking");
+  const [error, setError] = useState<string>();
+  const [nudgeHidden, setNudgeHidden] = useState(false);
+  const n = round.questions.length;
+  const labelOf = useMemo(() => new Map(session.tree.nodes.map((x) => [x.id, x.label])), [session.tree]);
+  const parentOf = useMemo(() => new Map(session.tree.nodes.map((x) => [x.id, x.parentId])), [session.tree]);
+
+  // Keys typed while nothing is focused go to the active card (input works from the first frame).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const a = document.activeElement;
+      if (a && a !== document.body) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || !/^([1-9]|Enter|ArrowUp|ArrowDown|j|k|J|K|Home|End)$/.test(e.key)) return;
+      const form = document;
+      const legend =
+        form.querySelector<HTMLElement>("[data-slot=agent-question-item][data-active] [data-slot=agent-question-title]") ??
+        form.querySelector<HTMLElement>("[data-slot=agent-question-title]");
+      if (!legend) return;
+      e.preventDefault();
+      legend.focus({ preventScroll: true });
+      legend.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true, cancelable: true }));
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const [values, setValues] = useState<AgentQuestionAnswers>({});
+  const submit = async (v: AgentQuestionAnswers, untouched: string[]) => {
+    const answers: Answer[] = round.questions.map((q) => {
+      const raw = v[q.key];
+      const picked = typeof raw === "string" ? raw : q.recommendedOptionId;
+      if (picked === OTHER_VALUE) return { questionId: q.key, optionId: OTHER_OPTION, text: String(v[agentQuestionOtherKey(q.key)] ?? "").trim(), accepted_recommendation: false };
+      return { questionId: q.key, optionId: picked, accepted_recommendation: untouched.includes(q.key) || picked === q.recommendedOptionId };
+    });
+    setStatus("submitting");
+    setError(undefined);
+    try {
+      await act("answers", { round: round.n, answers });
+    } catch {
+      setError(SEND_FAILED);
+      setStatus("asking");
+    }
+  };
+
+  const first = round.n === 1;
+  return (
+    <AgentQuestion
+      className="main"
+      layout="stacked"
+      variant="card"
+      status={status}
+      preselectRecommended
+      error={error}
+      value={values}
+      onValueChange={setValues}
+      onSubmit={(v, meta) => void submit(v, meta.untouched)}
+      submitLabel="Send round"
+    >
+      <div className="scroll">
+        <div className="col">
+          <Strip session={session} />
+          {banner}
+          {/* Names the form (role=form, aria-labelledby) and keeps the progress for screen readers;
+              the visible intro below is Grillado's. */}
+          <AgentQuestionHeader className="sr-only">{null}</AgentQuestionHeader>
+          <div className="intro">
+            <div className="eb">
+              <span className="live">
+                <i aria-hidden="true" />
+                Your turn
+              </span>
+              {n} of {Math.max(n, session.tree.counts.open)} open decisions
+            </div>
+            <h1>{n === 1 ? "1 decision is ready" : `${n} decisions are ready`}</h1>
+            <p>
+              {first ? "The first calls on your idea." : "Each one opened up from something you settled."} Suggested picks are preselected, so change anything you disagree with.
+            </p>
+          </div>
+          {session.nudge && !nudgeHidden ? (
+            <Nudge
+              onReview={() => focusCard(0)}
+              onDismiss={() => {
+                setNudgeHidden(true);
+                void act("nudge").catch(() => {});
+              }}
+            />
+          ) : null}
+          <AgentQuestionStack className="cards">
+            {round.questions.map((q, i) => {
+              const parent = parentOf.get(q.key);
+              const openedBy = parent && parent !== session.tree.rootId ? labelOf.get(parent) : q.dependsOn[0] ? labelOf.get(q.dependsOn[0]) : undefined;
+              const v = values[q.key];
+              const yours = typeof v === "string" && v !== q.recommendedOptionId;
+              return <QuestionCard key={q.key} q={q} index={i} openedBy={openedBy} yours={yours} />;
+            })}
+          </AgentQuestionStack>
+        </div>
+      </div>
+      <AgentQuestionFooter className="bar">
+        <Stats session={session} />
+        <span className="spacer" />
+        <button type="button" className="pill secondary wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})} disabled={status === "submitting"}>
+          Wrap it up
+        </button>
+      </AgentQuestionFooter>
+    </AgentQuestion>
+  );
+}
+
+function CardHead({ q, index, openedBy, yours }: { q: Question; index: number; openedBy?: string; yours: boolean }) {
+  return (
+    <div className="q-h">
+      <span className="q-idx" aria-hidden="true">
+        <span className="bg2" />
+        <span className="n">{index + 1}</span>
+        <span className="ck">
+          <ICheck s={12} />
+        </span>
+      </span>
+      <span className="q-topic">{q.label || "Decision"}</span>
+      {openedBy ? (
+        <span className="q-dep">
+          Opened by <b>{openedBy}</b>
+        </span>
+      ) : null}
+      {yours ? (
+        <span className="q-yours">
+          <ISpark s={12} />
+          Your call
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function QuestionCard({ q, index, openedBy, yours }: { q: Question; index: number; openedBy?: string; yours: boolean }) {
+  return (
+    <AgentQuestionItem id={q.key} label={q.label || undefined} required className="q" data-testid="question" data-yours={yours || undefined}>
+      <AgentQuestionTitle className="q-t">{q.title}</AgentQuestionTitle>
+      <span className="qring" aria-hidden="true" />
+      <span className="edge" aria-hidden="true" />
+      <CardHead q={q} index={index} openedBy={openedBy} yours={yours} />
+      {q.body ? <AgentQuestionDescription className="q-d">{q.body}</AgentQuestionDescription> : null}
+      <AgentQuestionOptions>
+        {q.options.map((o) => (
+          <AgentQuestionOption key={o.id} value={o.id} label={o.label} description={o.description || undefined} recommended={o.id === q.recommendedOptionId} />
+        ))}
+        <AgentQuestionOther className="mini" description="" />
+        <AgentQuestionOption value={UNKNOWN_OPTION} label="I don't know" description="The agent picks one and marks it as a risk" className="mini unk" />
+      </AgentQuestionOptions>
+    </AgentQuestionItem>
+  );
+}
+
+function Nudge({ onReview, onDismiss }: { onReview: () => void; onDismiss: () => void }) {
+  return (
+    <div className="nudge" role="status" data-testid="nudge">
+      <span className="ic" aria-hidden="true">
+        <IFlame s={14} />
+      </span>
+      <span className="tx">
+        You've kept every suggestion for 4 rounds. <span>Anything you'd push back on?</span>
+      </span>
+      <button type="button" className="pill secondary" onClick={onReview}>
+        Review my picks
+      </button>
+      <button type="button" className="pill quiet" onClick={onDismiss}>
+        Looks right
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- waiting for the agent
+
+export function waitLabel(session: SessionView, elapsed: number, base: string) {
+  if (session.progress === "Taking another pass") return elapsed >= 60 ? "Still cooking. This one is taking a while" : "Taking another pass…";
+  if (elapsed >= 60) return "Still cooking. This one is taking a while";
+  if (elapsed >= 15) return "Still cooking…";
+  return base;
+}
+
+export function SkeletonCard({ wide }: { wide?: boolean }) {
+  return (
+    <div className="skc" aria-hidden="true">
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <span className="sk" style={{ width: 20, height: 20, borderRadius: "50%" }} />
+        <span className="sk" style={{ width: 120 }} />
+      </div>
+      <span className="sk" style={{ width: wide ? "78%" : "64%", height: 14 }} />
+      <span className="sk" style={{ width: "46%" }} />
+      {[0, 1, 2].map((i) => (
+        <span key={i} className="sk" style={{ height: 40, borderRadius: 10 }} />
+      ))}
+    </div>
+  );
+}
+
+/** Between rounds: status pill with live dots, skeleton cards, the bar confirms what was saved. */
+export function WaitingView({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
+  const last = session.rounds.at(-1);
+  const next = (session.rounds.length || 0) + 1;
+  const busy = session.busy;
+  const since = busy ? (last?.answeredAt ?? session.updatedAt) : undefined;
+  const elapsed = useSince(since, busy);
+  const saved = last?.answers?.length ?? 0;
+  const label = waitLabel(session, elapsed, `Preparing round ${next}…`);
+  return (
+    <SessionBody
+      session={session}
+      sideSub={`${session.tree.counts.settled + session.tree.counts.open} so far`}
+      main={
+        <div className="main">
+          <div className="scroll">
+            <div className="col">
+              <Strip session={session} />
+              {banner}
+              <div className="intro">
+                <div className="eb">
+                  <span className="live plain">Round {next}</span>
+                  {session.tree.counts.open ? `${session.tree.counts.open} open decisions` : "working out what's next"}
+                </div>
+                <h1>{session.idea.split("\n")[0]}</h1>
+              </div>
+              {busy ? (
+                <div className="waiting" role="status" aria-live="polite">
+                  <div className="row">
+                    <span className="rs">
+                      <span className="dots" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      <span className="shimmer">{label}</span>
+                      <span className="det">{elapsed < 15 ? "Reading your answers" : clock(elapsed)}</span>
+                    </span>
+                    {elapsed >= 60 ? (
+                      <button type="button" className="pill secondary sm" onClick={() => void act("stop").catch(() => {})}>
+                        <ISq s={12} />
+                        Stop
+                      </button>
+                    ) : null}
+                  </div>
+                  <SkeletonCard wide />
+                  <SkeletonCard />
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div className="bar">
+            <div className="in">
+              {saved && busy ? (
+                <span className="fb" role="status">
+                  <ICheck s={14} />
+                  {saved === 1 ? "1 decision saved" : `${saved} decisions saved`}
+                </span>
+              ) : (
+                <Stats session={session} />
+              )}
+              <span className="spacer" />
+              <button type="button" className="pill secondary wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})}>
+                Wrap it up
+              </button>
+              <button type="button" className="pill primary" disabled>
+                Send round <kbd aria-hidden="true">↵</kbd>
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------- 2 firing up
+
+export function FiringUp({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
+  const busy = session.busy;
+  const elapsed = useSince(session.createdAt, busy);
+  const base = elapsed < 6 ? "Sizing up your idea…" : "Finding the first decisions…";
+  const label = waitLabel(session, elapsed, base);
+  const mobile = useMobile();
+  const idea = session.idea.split("\n")[0];
+  return (
+    <div className="split">
+      <div className="main" style={{ gridTemplateRows: "minmax(0,1fr)" }}>
+        <div className="scroll">
+          <div className="col" style={{ maxWidth: 640, gap: 14 }}>
+            {banner}
+            <div className="intro" style={{ gap: 6 }}>
+              <div className="eb">
+                <span className="live plain">Round 1</span>first questions are on the way
+              </div>
+              <h1>{idea}</h1>
+            </div>
+            {busy ? (
+              <div className="waiting" role="status" aria-live="polite">
+                <div className="row">
+                  <span className="thinking">
+                    <span className="fl" aria-hidden="true">
+                      <IFlame s={18} />
+                    </span>
+                    <span className="shimmer">{label}</span>
+                  </span>
+                  {elapsed >= 15 ? <span className="sub mono" style={{ fontSize: 11.5 }}>{clock(elapsed)}</span> : null}
+                  {elapsed >= 60 ? (
+                    <button type="button" className="pill secondary sm" onClick={() => void act("stop").catch(() => {})}>
+                      <ISq s={12} />
+                      Stop
+                    </button>
+                  ) : null}
+                </div>
+                <SkeletonCard wide />
+                {mobile ? null : <SkeletonCard />}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      <aside className="side2" aria-labelledby="fu-side" style={{ gridTemplateRows: "auto auto minmax(0,1fr)" }}>
+        <div className="side-h">
+          <h2 id="fu-side">Decisions</h2>
+          <span className="sub mono">none yet</span>
+        </div>
+        <Heat tree={session.tree} />
+        <div style={{ padding: "6px 16px" }}>
+          <ul className="tz" aria-label="Decision tree">
+            <li>
+              <span className="nd2 idea" aria-hidden="true" />
+              <div style={{ minWidth: 0 }}>
+                <div className="l" style={{ fontWeight: 600 }}>
+                  {idea}
+                </div>
+                <div className="a">Your idea</div>
+              </div>
+            </li>
+            {[70, 55, 62].map((w, i) => (
+              <li key={i} style={{ marginLeft: 14 }} aria-hidden="true">
+                <span className="nd2 sk" />
+                <div>
+                  <span className="sk" style={{ display: "block", width: `${w}%`, marginTop: 3 }} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+    </div>
+  );
+}
