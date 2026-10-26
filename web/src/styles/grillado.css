@@ -824,7 +824,12 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .acc4 .sp{flex:1}
 /* mobile diagram editing: Source | Preview in the accessory row (item 5 §11). Source keeps the preview
    laid out (0 high, hidden) so it measures and keeps checking; Preview hides the source and its hint. */
-.acc4 .mseg button{height:36px;padding:0 14px}
+.acc4 .mseg button{height:40px;padding:0 14px}
+/* 44px+ hit areas inside the 48px row, same look (MF-SP2) */
+.acc4 .btn,.acc4 .mseg button{position:relative}
+.acc4 .btn::before,.acc4 .mseg button::before{content:"";position:absolute;inset:-4px 0}
+/* Preview can always bring the block to the top, even at the end of the plan */
+.doc:has([data-view=preview])::after{content:"";display:block;height:calc(100dvh - 104px)}
 [data-view=source]>.blk-preview{height:0;padding:0;margin:0;overflow:hidden;visibility:hidden}
 [data-view=preview]>.blk-ed,[data-view=preview]>textarea,[data-view=preview]>.blk-hint{display:none}
 [data-view]{scroll-margin-top:56px}

@@ -1,4 +1,22 @@
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { IAlert } from "../icons";
+
+export type MermaidErr = { line?: number; message: string; raw: string };
+
+/** The editor's error bar (§9): the message, Details, announced. Outside the preview, so it shows in Source and Preview. */
+export function MermaidError({ id, err }: { id: string; err: MermaidErr }) {
+  const [det, setDet] = useState(false);
+  return (
+    <div className="merr" id={id} role="status" onMouseDown={(e) => e.preventDefault()}>
+      <IAlert s={16} />
+      <span>{err.message}</span>
+      <button type="button" className="btn quiet sm" aria-expanded={det} onClick={() => setDet(!det)}>
+        Details
+      </button>
+      {det ? <pre className="mmd-det">{err.raw}</pre> : null}
+    </div>
+  );
+}
 
 /**
  * Mobile diagram editing (item 5 §11): a Source | Preview switch in the accessory row instead of the

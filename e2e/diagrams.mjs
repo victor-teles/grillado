@@ -95,7 +95,18 @@ async function mobileSwitch(pg, root, theme, what, shot) {
   await ta.waitFor();
   check(`${theme} mobile ${what}: Source | Preview switch and Done in the accessory row`, (await sw.count()) === 1 && (await pg.locator(".acc4").getByRole("button", { name: "Done" }).count()) === 1 && (await pg.locator(".acc4").getByRole("button", { name: "Block" }).count()) === 0);
   check(`${theme} mobile ${what}: opens on Source, the preview isn't under it`, (await src.getAttribute("aria-checked")) === "true" && (await shown(ta)) && !(await shown(root.locator(".lp5"))) && (await ta.evaluate((e) => e === document.activeElement)));
-  check(`${theme} mobile ${what}: switch buttons are at least 36px high`, await sw.locator("button").first().evaluate((b) => b.getBoundingClientRect().height >= 36));
+  {
+    // MF-SP2: Source, Preview and Done keep their look but take taps over at least 44px of the 48px row.
+    const hits = await pg.locator(".acc4 .mseg button, .acc4 .btn").evaluateAll((bs) =>
+      bs.map((b) => {
+        const r = b.getBoundingClientRect(), x = r.left + r.width / 2, bf = getComputedStyle(b, "::before");
+        const hit = r.height - (parseFloat(bf.top) || 0) - (parseFloat(bf.bottom) || 0);
+        const top = r.top + r.height / 2 - hit / 2 + 1, bot = r.top + r.height / 2 + hit / 2 - 1;
+        return { t: b.textContent.trim(), hit, reach: b.contains(document.elementFromPoint(x, top)) && b.contains(document.elementFromPoint(x, bot)) };
+      }),
+    );
+    check(`${theme} mobile ${what}: Source, Preview and Done take taps over at least 44px`, hits.length >= 3 && hits.every((h) => h.hit >= 44 && h.reach), JSON.stringify(hits));
+  }
   check(`${theme} mobile ${what}: nothing else sits on the accessory row`, await pg.evaluate(() => { const a = document.querySelector(".acc4").getBoundingClientRect(); return [...document.querySelectorAll(".mbar, .toast")].every((e) => { const r = e.getBoundingClientRect(); return r.height === 0 || r.bottom <= a.top || r.top >= a.bottom; }); }));
   await root.evaluate((e) => e.scrollIntoView({ block: "start" }));
   if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-source-m-${theme}.png`) });
@@ -105,6 +116,7 @@ async function mobileSwitch(pg, root, theme, what, shot) {
   await pg.waitForTimeout(150);
   check(`${theme} mobile ${what}: Preview hides the source and shows the drawing`, (await root.locator("[data-view=preview]").count()) + (await root.evaluate((e) => (e.matches("[data-view=preview]") ? 1 : 0))) === 1 && !(await shown(ta)) && (await shown(root.locator(".lp5 svg"))));
   check(`${theme} mobile ${what}: Preview is checked and focused; the edit stays open`, (await pv.getAttribute("aria-checked")) === "true" && (await pv.evaluate((e) => e === document.activeElement)) && (await ta.count()) === 1);
+  check(`${theme} mobile ${what}: Preview brings the block to the top`, (await root.evaluate((e) => e.getBoundingClientRect().top - e.closest(".docwrap").getBoundingClientRect().top)) <= 64, String(await root.evaluate((e) => e.getBoundingClientRect().top - e.closest(".docwrap").getBoundingClientRect().top)));
   check(`${theme} mobile ${what}: the preview fits the width, on screen above the row`, await root.locator(".lp5").evaluate((e) => { const r = e.getBoundingClientRect(), a = document.querySelector(".acc4").getBoundingClientRect(); return r.right <= innerWidth && r.top >= 0 && r.top < a.top && e.querySelector("svg").getBoundingClientRect().width <= r.width; }));
   if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-preview-m-${theme}.png`) });
   await axe(pg, `${theme} mobile ${what}: Preview`);
@@ -121,6 +133,33 @@ async function mobileSwitch(pg, root, theme, what, shot) {
   await pg.locator(".acc4").getByRole("button", { name: "Done" }).tap();
   await pg.waitForTimeout(200);
   check(`${theme} mobile ${what}: Done from Preview finishes the edit`, (await pg.locator(".acc4").count()) === 0 && (await ta.count()) === 0);
+}
+// MF-SP1: a broken source shows the error bar (message, Details, announced) in Source and in Preview.
+async function mobileError(pg, root, theme, what, shot) {
+  const ta = root.locator("textarea");
+  const sw = pg.locator(".acc4").getByRole("radiogroup", { name: "Show" });
+  await ta.waitFor();
+  const orig = await ta.inputValue();
+  const bad = /\n```\s*$/.test(orig) ? orig.replace(/\n```\s*$/, '\n  N9{"Same item?"\n```') : `${orig}\n  N9{"Same item?"`;
+  await ta.fill(bad);
+  const bar = root.locator(".merr");
+  await bar.waitFor({ timeout: 5000 });
+  const ok = async () => (await shown(bar)) && /Line \d+: a shape isn't closed/.test(await txt(bar)) && (await bar.getAttribute("role")) === "status" && (await bar.getByRole("button", { name: "Details" }).count()) === 1;
+  check(`${theme} mobile ${what}: error bar in Source (message, Details, announced)`, (await ok()) && (await ta.getAttribute("aria-invalid")) === "true" && (await ta.getAttribute("aria-describedby"))?.includes(await bar.getAttribute("id")), await txt(bar));
+  await root.evaluate((e) => e.scrollIntoView({ block: "start" }));
+  if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-error-source-m-${theme}.png`) });
+  await axe(pg, `${theme} mobile ${what}: error in Source`);
+  await sw.getByRole("radio", { name: "Preview" }).tap();
+  await pg.waitForTimeout(200);
+  check(`${theme} mobile ${what}: error bar stays in Preview, over the dimmed last good version`, (await ok()) && (await root.locator(".lp5.dim").count()) === 1 && /Last version that worked/.test(await txt(root.locator(".lp5 .lbl"))));
+  if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-error-preview-m-${theme}.png`) });
+  await axe(pg, `${theme} mobile ${what}: error in Preview`);
+  await sw.getByRole("radio", { name: "Source" }).tap();
+  await ta.fill(orig);
+  await pg.waitForTimeout(1300);
+  check(`${theme} mobile ${what}: fixing the source clears the bar`, (await bar.count()) === 0);
+  await pg.locator(".acc4").getByRole("button", { name: "Done" }).tap();
+  await pg.waitForTimeout(200);
 }
 const txt = async (loc) => ((await loc.first().textContent({ timeout: 5000 }).catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
 async function openAsk(pg, mobile = false) {
@@ -530,6 +569,9 @@ try {
       await sg.locator(".hd").getByRole("button", { name: "Edit diagram source" }).tap();
       await mobileSwitch(mp, sg.locator(".ned5"), theme, "suggestion edit", "i5-msugg");
       check(`${theme} mobile: the suggestion is still there to review`, (await mp.getByTestId("diagram-suggestion").count()) === 1);
+      await sg.locator(".hd").getByRole("button", { name: "Edit diagram source" }).tap();
+      await mobileError(mp, sg.locator(".ned5"), theme, "suggestion edit", "i5-msugg");
+      check(`${theme} mobile: an unchanged suggestion is still there after the error round trip`, (await mp.getByTestId("diagram-suggestion").count()) === 1);
     }
     await mp.locator(".mbar").getByRole("button", { name: /^Accept/ }).tap();
     const mfig = mp.locator(".doc figure.mm5").first();
@@ -554,6 +596,12 @@ try {
       await mobileSwitch(mp, mp.locator(".blk[data-editing]"), theme, "plan diagram", "i5-medit");
       await mp.waitForTimeout(400);
       check(`${theme} mobile: finishing from Preview leaves the plan as it was`, (await planMd(mp)) === before);
+      await mp.locator(".doc figure.mm5 .mmw svg").first().waitFor({ timeout: 8000 });
+      await mp.locator(".doc figure.mm5").first().focus();
+      await mp.keyboard.press("Enter");
+      await mobileError(mp, mp.locator(".blk[data-editing]"), theme, "plan diagram", "i5-medit");
+      await mp.waitForTimeout(400);
+      check(`${theme} mobile: the error round trip leaves the plan as it was`, (await planMd(mp)) === before);
       await mp.locator(".doc figure.mm5 .mmw svg").first().waitFor({ timeout: 8000 });
       // Tapping out of Preview finishes too (here on the title, which opens that block instead).
       await mp.locator(".doc figure.mm5").first().focus();
