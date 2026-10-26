@@ -64,10 +64,11 @@ async function server(extra = {}) {
   };
 }
 
-async function toPlan(pg, url) {
+async function toPlan(pg, url, home) {
   await pg.goto(url);
   await pg.getByRole("radio", { name: /Claude Code/ }).click();
   await pg.getByRole("button", { name: /Continue/ }).click();
+  if (home) await home();
   await pg.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
   await pg.keyboard.press("Enter");
   await pg.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
@@ -94,6 +95,37 @@ const selectText = (pg, text) =>
     }
     return false;
   }, text);
+/** Fix-up of #4, MF1: the comment popover's rules (.cpop) must never restyle Home's idea box (form.composer). */
+async function homeComposer(pg, label) {
+  await pg.getByRole("textbox", { name: "What are you planning?" }).waitFor();
+  const g = await pg.evaluate(() => {
+    const f = document.querySelector("form.composer");
+    const cs = getComputedStyle(f);
+    const r = f.getBoundingClientRect();
+    const lede = document.querySelector(".hero .lede").getBoundingClientRect();
+    const probe = document.createElement("span");
+    probe.style.background = "var(--sel)";
+    document.body.append(probe);
+    const sel = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { pos: cs.position, radius: cs.borderRadius, bg: cs.backgroundColor === sel, top: r.top, ledeBottom: lede.bottom, left: r.left, right: r.right, vw: innerWidth, w: r.width, pad: getComputedStyle(f.querySelector("textarea")).padding };
+  });
+  check(`MF1 ${label}: Home's idea box is in the page flow, not a popover`, g.pos !== "fixed" && g.pos !== "absolute" && g.radius === "20px" && g.bg && g.pad === "0px", JSON.stringify(g));
+  check(`MF1 ${label}: Home's idea box sits below the lede and inside the screen`, g.top >= g.ledeBottom && g.left >= 0 && g.right <= g.vw && g.w > 300, JSON.stringify(g));
+}
+/** Computed transition of the first match (fix-up of #4, MF2). */
+const motion = (pg, sel) => pg.$eval(sel, (e) => ({ dur: getComputedStyle(e).transitionDuration, prop: getComputedStyle(e).transitionProperty, op: getComputedStyle(e).opacity }));
+/** The last input was a pointer (main.tsx drops html[data-kbd] on pointerdown). */
+const pointer = (pg) => pg.evaluate(() => dispatchEvent(new PointerEvent("pointerdown")));
+const railColour = (pg) =>
+  pg.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.background = "var(--rail)";
+    document.querySelector(".planv").append(probe);
+    const c = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return c;
+  });
 const planMd = (pg) => pg.evaluate(async () => (await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan.md`)).text());
 const bg = (loc) => loc.evaluate((el) => getComputedStyle(el).backgroundColor);
 /** Visible buttons painted in the primary blue. */
@@ -125,19 +157,52 @@ try {
     const pg = await ctx.newPage();
     const snap = async (name) => {
       if (!SHOTS) return;
-      if (!(await pg.locator(".seltb, .composer").count())) await pg.mouse.move(600, 880);
+      if (!(await pg.locator(".seltb, .cpop").count())) await pg.mouse.move(600, 880);
       await pg.waitForTimeout(200);
       await pg.screenshot({ path: path.join(SHOTS, `${name}-d-${theme}.png`) });
     };
-    await toPlan(pg, s.url);
-    const before = await planMd(pg);
     const one = theme === "dark";
+    await toPlan(pg, s.url, async () => {
+      await homeComposer(pg, `desktop ${theme}`);
+      await snap("fx4-home");
+    });
+    const before = await planMd(pg);
     if (one) await axe(pg, "plan, no comments yet");
+
+    if (one) {
+      // Fix-up of #4, MF2: with full motion, pointer-opened UI keeps its entrance; key-opened UI appears at once.
+      await pg.emulateMedia({ reducedMotion: "no-preference" });
+      await pointer(pg);
+      await selectText(pg, "Shared shopping list");
+      await pg.locator(".seltb").waitFor();
+      const tbIn = await motion(pg, ".seltb");
+      check("MF2: the selection toolbar enters over 160ms (opacity, scale)", tbIn.dur === "0.16s, 0.16s" && tbIn.prop === "opacity, scale", JSON.stringify(tbIn));
+      await pg.locator(".seltb").getByRole("button", { name: /^Comment/ }).click();
+      await pg.locator(".cpop").waitFor();
+      const popIn = await motion(pg, ".cpop");
+      check("MF2: a pointer-opened .cpop rises in over 160ms (opacity, translate)", popIn.dur === "0.16s, 0.16s" && popIn.prop === "opacity, translate", JSON.stringify(popIn));
+      await pg.locator(".cpop").getByRole("textbox").press("Escape");
+      await pg.locator(".cpop").waitFor({ state: "detached" });
+      await selectText(pg, "Shared shopping list");
+      await pg.locator(".seltb").waitFor();
+      await pg.keyboard.press("Control+Alt+KeyM");
+      await pg.locator(".cpop").waitFor();
+      const popKey = await motion(pg, ".cpop");
+      check("MF2: ⌘⌥M opens .cpop at once (html[data-kbd]): no transition, opaque", popKey.dur === "0s" && popKey.op === "1", JSON.stringify(popKey));
+      await pg.locator(".cpop").getByRole("textbox").press("Escape");
+      await pg.locator(".cpop").waitFor({ state: "detached" });
+      await pg.emulateMedia({ reducedMotion: "reduce" });
+      await pointer(pg);
+    }
 
     // Selection toolbar: Comment ⌘⌥M · Edit and nothing else (#27).
     await selectText(pg, "Shared shopping list");
     const tb = pg.getByRole("toolbar", { name: "Selection" });
     await tb.waitFor();
+    if (one) {
+      const red = await motion(pg, ".seltb");
+      check("MF2 reduced motion: the selection toolbar only fades", !/scale|translate|transform/.test(red.prop) && /0\.16s/.test(red.dur), JSON.stringify(red));
+    }
     const names = await tb.getByRole("button").allTextContents();
     if (one) check("toolbar has Comment and Edit only (#27)", names.length === 2 && /^Comment/.test(names[0]) && names[1] === "Edit", names.join(" | "));
     await snap("i3-toolbar");
@@ -162,8 +227,8 @@ try {
     // Follow-up gets its own answer (N2).
     await rail.getByRole("textbox", { name: "Reply" }).fill("And who changes it?");
     await rail.getByRole("textbox", { name: "Reply" }).press("Enter");
-    await rail.getByText(/^Sure, that works too\./).waitFor({ timeout: 10000 });
-    if (one) check("the agent answers the follow-up", true);
+    await rail.getByText(/^Anyone in the household\. Everyone who shares the list can add/).waitFor({ timeout: 10000 });
+    if (one) check("the agent answers the follow-up (who changes it), not the first reply again", (await rail.getByText(/^Good catch\./).count()) === 1);
     await snap("i3-replied");
 
     // Apply feedback: the plan stays editable while it runs (no lock, no caret).
@@ -216,6 +281,10 @@ try {
     await pg.waitForFunction(() => !document.body.textContent.includes("1 rejected"));
     await review.getByRole("button", { name: /Accept all/ }).click();
     await pg.getByRole("status").filter({ hasText: /suggestions accepted/ }).first().waitFor();
+    if (one) {
+      const t = await motion(pg, ".toast");
+      check("MF2 reduced motion: the toast only fades (220ms)", !/scale|translate|transform/.test(t.prop) && /0\.22s/.test(t.dur), JSON.stringify(t));
+    }
     await snap("i3-accepted");
     const after = await planMd(pg);
     if (one) check("accept all writes every suggestion to plan.md", after.includes("shared by everyone at home") && (await pg.locator("ins.sg").count()) === 0);
@@ -272,6 +341,13 @@ try {
       check("⌘⌥M in Markdown says switch to Rich", await pg.getByText("Switch to Rich to comment").first().isVisible().catch(() => false) || (await pg.locator("[role=status]").allTextContents()).some((t) => t.includes("Switch to Rich")));
       await pg.keyboard.press("Control+Shift+KeyM");
       await axe(pg, "after review, resolved");
+      // Fix-up of #4, MF3: the rail and item 6's sticky group header sit on --rail.
+      const railC = await railColour(pg);
+      check("MF3: .crail is on --rail", (await bg(pg.locator(".crail"))) === railC, `${await bg(pg.locator(".crail"))} vs ${railC}`);
+      await rail.getByRole("tab", { name: /Activity/ }).click();
+      await pg.locator(".gh6").first().waitFor();
+      check("MF3: Activity's sticky group header is on --rail", (await bg(pg.locator(".gh6").first())) === railC, await bg(pg.locator(".gh6").first()));
+      await rail.getByRole("tab", { name: /Comments/ }).click();
     }
     await ctx.close();
     if (video) {
@@ -304,11 +380,43 @@ try {
       await ta.getByRole("button", { name: "Apply feedback" }).click();
       await ta.getByText("Claude Code is writing suggestions").waitFor();
       const other = tb2.locator(".apply");
+      // Fix-up of #4, MF2: watch .planv[data-landing] and the tints' transition while this run lands.
+      await p3.emulateMedia({ reducedMotion: "no-preference" });
+      await p3.evaluate(() => {
+        window.__land = [];
+        const note = () => {
+          const sg = document.querySelector("ins.sg");
+          if (sg) window.__land.push({ on: document.querySelector(".planv").hasAttribute("data-landing"), dur: getComputedStyle(sg).transitionDuration });
+        };
+        new MutationObserver(note).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-landing"] });
+      });
       check("while Apply runs, the other thread's Apply is disabled", await other.isDisabled());
       check("…and labelled Applying…", (await other.textContent()).trim() === "Applying…", await other.textContent());
       await ta.getByText(/suggestions? ready/).waitFor({ timeout: 15000 });
       await p3.waitForFunction(() => [...document.querySelectorAll("[data-thread] .apply")].some((b) => !b.disabled && b.textContent.trim() === "Apply feedback"));
       check("Apply comes back once the run is done", await tb2.getByRole("button", { name: "Apply feedback" }).isEnabled());
+      {
+        await p3.waitForTimeout(400);
+        const land = await p3.evaluate(() => window.__land);
+        check("MF2: the tints fade in (220ms) while .planv[data-landing] is set", land.length > 0 && land[0].on && land[0].dur === "0.22s", JSON.stringify(land.slice(0, 3)));
+        check("MF2: data-landing clears ~250ms after the run lands", !(await p3.locator(".planv[data-landing]").count()));
+        const rv = await motion(p3, ".review");
+        check("MF2: the review bar rises in over 220ms (opacity, translate)", rv.dur === "0.22s, 0.22s" && rv.prop === "opacity, translate", JSON.stringify(rv));
+        const ap = await motion(p3, ".th .apply");
+        check("MF2: Apply feedback fades in over 160ms", /^opacity/.test(ap.prop) && /^0\.16s/.test(ap.dur), JSON.stringify(ap));
+        const th = await motion(p3, ".th");
+        check("MF2: threads and anchors change background over 160ms", th.dur === "0.16s, 0.16s" && /background-color/.test(th.prop) && (await motion(p3, "mark.cmk")).dur === "0.16s, 0.16s", JSON.stringify(th));
+        await p3.locator("[data-testid=plan]").focus();
+        await p3.keyboard.press("Alt+ArrowDown");
+        await p3.locator(".ipill").waitFor();
+        const sg = await motion(p3, "ins.sg");
+        check("MF2: ⌥↓ doesn't replay the tint fade", sg.dur === "0s" && !(await p3.locator(".planv[data-landing]").count()), JSON.stringify(sg));
+        const kb = await Promise.all([".review", ".th", "mark.cmk", ".th .apply"].map((x) => motion(p3, x)));
+        check("MF2: with the keys (html[data-kbd]) bars, threads and anchors don't move", kb.every((m) => m.dur === "0s"), JSON.stringify(kb.map((m) => m.dur)));
+        await p3.keyboard.press("Escape");
+        await p3.emulateMedia({ reducedMotion: "reduce" });
+        await pointer(p3);
+      }
       // Editing one block hides only that block's suggestions (item 3 §4.7, PO call).
       const total = await p3.locator("ins.sg").count();
       // Edit the list block: its suggestion hides, the one in the Problem paragraph stays.
@@ -338,7 +446,10 @@ try {
       await mp.waitForTimeout(200);
       await mp.screenshot({ path: path.join(SHOTS, `${name}-m-${theme}.png`) });
     };
-    await toPlan(mp, s2.url);
+    await toPlan(mp, s2.url, async () => {
+      await homeComposer(mp, `390 ${theme}`);
+      await msnap("fx4-home");
+    });
     const mbefore = await planMd(mp);
     await selectText(mp, "Shared shopping list");
     const mtb = mp.getByRole("toolbar", { name: "Selection" });
@@ -349,18 +460,55 @@ try {
     const sheet = mp.getByRole("dialog", { name: "New comment" });
     await sheet.getByRole("textbox").fill("Say who shares it");
     await msnap("i3-composer");
+    if (one) {
+      await mp.emulateMedia({ reducedMotion: "no-preference" });
+      const sc = await motion(mp, ".cscrim");
+      check("MF2: the mobile composer's scrim fades over 300ms", sc.dur === "0.3s" && sc.prop === "opacity", JSON.stringify(sc));
+      await mp.emulateMedia({ reducedMotion: "reduce" });
+    }
     await sheet.getByRole("button", { name: /^Comment/ }).click();
     await mp.getByRole("button", { name: "Plan actions" }).click();
     await mp.getByRole("menuitem", { name: /Comments/ }).click();
     const msheet = mp.getByRole("dialog", { name: "Comments" });
     await msheet.getByText(/^Good catch\./).waitFor({ timeout: 10000 });
     await msnap("i3-thread");
+    if (one) {
+      // Fix-up of #4, MF4: 44px targets, a 16px reply field and a full-width Apply feedback in the thread sheet.
+      const g = await mp.evaluate(() => {
+        const th = document.querySelector(".csheet .th");
+        const reply = th.querySelector(".reply");
+        const apply = th.querySelector(".acts .apply");
+        // Stop only shows while a reply runs, so measure one built from the same classes.
+        const who = th.querySelector(".msg .who");
+        const stop = document.createElement("button");
+        stop.className = "btn stop";
+        stop.textContent = "Stop";
+        who.append(stop);
+        const sh = stop.getBoundingClientRect().height;
+        stop.remove();
+        const cs = getComputedStyle(th);
+        return { reply: reply.getBoundingClientRect().height, font: getComputedStyle(reply).fontSize, stop: sh, apply: apply.getBoundingClientRect().width, inner: th.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), crail: getComputedStyle(document.querySelector(".csheet .crail")).backgroundColor };
+      });
+      check("MF4: the mobile reply field is at least 44px at 16px (no iOS zoom)", g.reply >= 44 && g.font === "16px", JSON.stringify(g));
+      check("MF4: Stop in the mobile message head is 44px", g.stop >= 44, JSON.stringify(g));
+      check("MF4: Apply feedback is full width in the sheet", Math.abs(g.apply - g.inner) <= 1, JSON.stringify(g));
+      check("MF3: the sheet's rail stays transparent (on the sheet)", g.crail === "rgba(0, 0, 0, 0)", g.crail);
+      await mp.emulateMedia({ reducedMotion: "no-preference" });
+      await pointer(mp);
+      const sm = await motion(mp, ".csheet");
+      check("MF2: the mobile sheet slides (300ms translate)", sm.dur === "0.3s" && sm.prop === "translate", JSON.stringify(sm));
+      await mp.emulateMedia({ reducedMotion: "reduce" });
+      const sr = await motion(mp, ".csheet");
+      check("MF2 reduced motion: the mobile sheet only fades", sr.prop === "opacity" || !/translate|transform/.test(sr.prop), JSON.stringify(sr));
+    }
     await msheet.getByRole("button", { name: "Apply feedback" }).click();
     await msheet.getByText(/suggestions? ready/).waitFor({ timeout: 10000 });
     await msheet.getByRole("button", { name: "Close comments" }).click();
     const mbar = mp.getByRole("toolbar", { name: "Review suggestions" });
     await mbar.waitFor();
     if (one) {
+      const mb = await motion(mp, ".mbar");
+      check("MF2 reduced motion: the mobile bar only fades (220ms)", !/translate|transform|scale/.test(mb.prop) && /0\.22s/.test(mb.dur), JSON.stringify(mb));
       const acc = mbar.getByRole("button", { name: /^Accept suggestion/ });
       check("mobile: Accept for the focused suggestion is blue (#30)", (await blues(mp)).length === 1 && (await acc.getAttribute("class")).includes("primary"), (await blues(mp)).join(" | "));
       check("mobile: Accept all is not on the bar (#30)", (await mbar.getByRole("button", { name: "Accept all" }).count()) === 0);

@@ -589,6 +589,25 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
     .dialog{opacity:0;transform:scale(.98)}
     .rail[data-sheet]{transform:translateY(100%)}
   }
+  /* Fix-up of #4, MF2: item 3's enter states. translate/scale, not transform: .review and .toast
+     already use transform to centre. Tints fade only while .planv[data-landing] is set. */
+  .seltb{transition:opacity var(--d-quick) var(--ease-out),scale var(--d-quick) var(--ease-out)}
+  .cpop{transition:opacity var(--d-quick) var(--ease-out),translate var(--d-quick) var(--ease-out)}
+  .review,.toast,.mbar{transition:opacity var(--d-base) var(--ease-out),translate var(--d-base) var(--ease-out)}
+  .th .apply{transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-quick) var(--ease-out)}
+  .th,mark.cmk{transition:background-color var(--d-quick) var(--ease-out),text-decoration-color var(--d-quick) var(--ease-out)}
+  .csheet{transition:translate var(--d-sheet) var(--ease-out)}
+  .cscrim{transition:opacity var(--d-sheet) var(--ease-out)}
+  .planv[data-landing] :is(ins.sg,del.sg){transition:background-color var(--d-base) var(--ease-out)}
+  @starting-style{
+    .seltb{opacity:0;scale:.97}
+    .cpop{opacity:0;translate:0 4px}
+    .review,.toast,.mbar{opacity:0;translate:0 8px}
+    .th .apply{opacity:0}
+    .csheet{translate:0 100%}
+    .cscrim{opacity:0}
+    .planv[data-landing] :is(ins.sg,del.sg){background-color:transparent}
+  }
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-property:opacity,background-color,color!important;animation:none!important}
@@ -598,6 +617,10 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   }
   /* Sheets fade in 160ms instead of sliding (item 6 §18 F). */
   .rail[data-sheet],.csheet{transition:opacity var(--d-quick) var(--ease-out)}
+  /* Fix-up of #4, MF2: item 3's bars and popovers fade only. */
+  .seltb,.cpop,.th .apply{transition:opacity var(--d-quick) var(--ease-out)}
+  .review,.toast,.mbar{transition:opacity var(--d-base) var(--ease-out)}
+  @starting-style{.seltb,.cpop,.review,.toast,.mbar,.th .apply{opacity:0}}
 }
 
 /* v1.2 review: rings only after keyboard use (see main.tsx); text fields keep their focus look. */
@@ -617,7 +640,7 @@ html:not([data-kbd]) .q [data-slot=agent-question-option]:has(:focus-visible){ou
 .check input{accent-color:var(--primary)}
 
 /* ---------- v1.1 item 3: comments, Apply feedback, suggestions ----------
-   No decorative motion: suggestions and bars appear and go without moving. */
+   Enter motion lives in the motion block above (fix-up of #4, MF2); nothing animates on exit. */
 :root,.light{--rail-w:368px;--anchor-a:7%;--anchor-on-a:12%;--sg-a:16%;--sg-f-a:24%;--del-a:8%}
 .dark{--anchor-a:8%;--anchor-on-a:14%;--sg-a:18%;--sg-f-a:28%;--del-a:10%}
 .planv>.pvrow{flex:1 1 auto;min-height:0;display:flex}
@@ -628,17 +651,17 @@ html:not([data-kbd]) .q [data-slot=agent-question-option]:has(:focus-visible){ou
 .railbtn[aria-pressed=true]{background:var(--muted);color:var(--foreground)}
 .kb{font:500 var(--t-meta)/1 var(--sans);color:var(--muted-foreground);letter-spacing:.02em}
 .btn.primary .kb{color:var(--primary-foreground);font-weight:400}
-/* selection toolbar + composer */
+/* selection toolbar + comment popover (.cpop; Home owns .composer) */
 .seltb,.mtb{position:fixed;z-index:40;display:flex;align-items:center;gap:2px;padding:3px;border-radius:11px;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 8px 24px -8px rgb(0 0 0/.5)}
 .seltb .btn{height:30px;padding:0 10px;gap:6px;color:var(--foreground)}
 .seltb .btn svg{color:var(--muted-foreground)}
 .seltb .sep{width:1px;height:18px;background:var(--hair);margin:0 2px}
 .mtb .btn{height:40px;padding:0 14px;color:var(--foreground)}
-.composer{position:fixed;z-index:40;width:372px;padding:12px;border-radius:14px;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 16px 40px -16px rgb(0 0 0/.6)}
-.composer textarea{display:block;width:100%;min-height:64px;resize:none;border:0;background:transparent;color:var(--foreground);font:400 var(--t-body)/20px var(--sans);padding:2px 2px 8px;outline:none}
-.composer textarea::placeholder,.csheet textarea::placeholder,.th .reply::placeholder{color:var(--subtle-foreground)}
-.composer .cf{display:flex;align-items:center;gap:6px}
-.composer .cf .hint{flex:1}
+.cpop{position:fixed;z-index:40;width:372px;padding:12px;border-radius:14px;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 16px 40px -16px rgb(0 0 0/.6)}
+.cpop textarea{display:block;width:100%;min-height:64px;resize:none;border:0;background:transparent;color:var(--foreground);font:400 var(--t-body)/20px var(--sans);padding:2px 2px 8px;outline:none}
+.cpop textarea::placeholder,.csheet textarea::placeholder,.th .reply::placeholder{color:var(--subtle-foreground)}
+.cpop .cf{display:flex;align-items:center;gap:6px}
+.cpop .cf .hint{flex:1}
 /* anchors */
 mark.cmk{color:inherit;background:color-mix(in oklab,var(--foreground) var(--anchor-a),transparent);border-radius:3px;box-decoration-break:clone;-webkit-box-decoration-break:clone;text-decoration:underline;text-decoration-color:var(--muted-foreground);text-decoration-thickness:1px;text-underline-offset:3px;cursor:pointer}
 mark.cmk.on{background:color-mix(in oklab,var(--foreground) var(--anchor-on-a),transparent);text-decoration-color:var(--foreground);text-decoration-thickness:2px}
@@ -653,7 +676,7 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .ipill .ix{font-size:var(--t-meta);color:var(--muted-foreground);padding:0 6px}
 .ipill .btn{height:24px;padding:0 8px;gap:4px;font-size:var(--t-meta);color:var(--foreground)}
 /* rail */
-.crail{flex:none;width:var(--rail-w);min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--hair);background:var(--background)}
+.crail{flex:none;width:var(--rail-w);min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--hair);background:var(--rail)}
 .rtabs{display:flex;gap:4px;padding:0 12px;height:44px;align-items:center;border-bottom:1px solid var(--hair);flex:none}
 .rtabs button{height:32px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--muted-foreground);font:500 var(--t-body)/1 var(--sans)}
 .rtabs button[aria-selected=true]{background:var(--muted);color:var(--foreground)}
@@ -712,6 +735,10 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .csheet .rtabs{padding-right:52px}
 .csheet .crail{width:auto;border-left:0;min-height:0;flex:1;background:transparent}
 .csheet .btn{height:44px;border-radius:12px}
+/* Fix-up of #4, MF4: 44px targets in the mobile thread; a 16px reply field so iOS doesn't zoom; full-width Apply feedback (§9). */
+.csheet .th .reply{min-height:44px;font-size:16px;line-height:22px;padding:10px 12px}
+.csheet .th .msg .who .stop{height:44px}
+.csheet .th .acts .apply{width:100%}
 .csheet .composer2{padding:4px 16px 16px;display:grid;gap:10px}
 .csheet .composer2 blockquote{margin:0;color:var(--muted-foreground)}
 .csheet .composer2 textarea{width:100%;min-height:88px;border-radius:12px;border:0;background:var(--background);color:var(--foreground);font:400 16px/22px var(--sans);padding:12px;resize:none}
@@ -982,8 +1009,6 @@ body:has(.acc4) .mbar{display:none}
 .bad5 .fi{display:grid;color:var(--destructive-ink)}
 .mbar.run5{display:flex;align-items:center;gap:10px;padding:6px 8px 6px 14px;min-height:56px}
 .mbar.run5 .r1{flex:1;padding-left:0;gap:10px}
-.review{animation:rv5in var(--d-base) var(--ease-out)}
-@keyframes rv5in{from{opacity:0;translate:0 8px}}
 /* full screen (§7) */
 .scrim.fsx{position:fixed;inset:0;z-index:60;background:rgb(0 0 0/var(--scrim-a))}
 .fs5{position:fixed;inset:var(--fs-inset);z-index:61;display:grid;grid-template-rows:auto 1fr auto;border-radius:16px;background:var(--background);color:var(--foreground);box-shadow:0 0 0 1px var(--hair),0 24px 64px -12px rgb(0 0 0/.5);overflow:hidden;outline:0;transition:opacity var(--d-base) var(--ease-out),transform var(--d-base) var(--ease-out)}
@@ -1023,7 +1048,6 @@ body:has(.acc4) .mbar{display:none}
 .tapz{position:absolute;right:10px;top:10px;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;border:0;background:var(--background);font:inherit;font-size:var(--t-meta);color:var(--foreground);box-shadow:0 0 0 1px var(--hair)}
 @media (prefers-reduced-motion:reduce){
   .pop5,.fs5{transform:none!important}
-  .review{animation:none}
 }
 /* Flat nodes (§6.2): look "classic" draws no shadow; this also beats any inline filter Mermaid adds. */
 .mmw svg,.mmw svg *{filter:none!important}
@@ -1032,6 +1056,10 @@ body:has(.acc4) .mbar{display:none}
    appear at once (§10). html[data-kbd] is set while the last input was a key press. */
 html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{transition:none}
 @starting-style{html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{opacity:1;transform:none}}
+/* Fix-up of #4, MF2: the same for item 3. Toolbars, the popover, bars, Apply feedback and sheets
+   opened or moved from the keys appear at once; ⌥↓ moves the thread highlight without a fade. */
+html[data-kbd] :is(.seltb,.cpop,.review,.toast,.mbar,.th,.th .apply,mark.cmk,.csheet,.cscrim),html[data-kbd] .planv[data-landing] :is(ins.sg,del.sg){transition:none}
+@starting-style{html[data-kbd] :is(.seltb,.cpop,.review,.toast,.mbar,.th .apply,.cscrim){opacity:1;scale:none;translate:none}html[data-kbd] .csheet{translate:none}}
 .planv:has(.toast) .doc{padding-bottom:180px}
 .sgb5 .hd .icon-btn.e44{width:44px;height:44px;margin:-8px -8px -8px 0}
 .sgb5 .hd .sgt{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1041,7 +1069,7 @@ html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{transition:no
 .act6{position:relative;padding-bottom:16px}
 .act6 .m{color:var(--muted-foreground);font-size:var(--t-meta)}
 .grp6{display:block}
-.gh6{position:sticky;top:0;z-index:2;height:36px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--background);border-bottom:1px solid var(--hair);font-size:var(--t-meta)}
+.gh6{position:sticky;top:0;z-index:2;height:36px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--rail);border-bottom:1px solid var(--hair);font-size:var(--t-meta)}
 .csheet .gh6{background:var(--popover)}
 .gh6 b{font-weight:500}
 .gh6 button{display:flex;align-items:center;gap:8px;width:100%;height:32px;margin:0 -4px;padding:0 4px;border:0;border-radius:7px;background:none;color:inherit;font:inherit;text-align:left}

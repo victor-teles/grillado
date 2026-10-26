@@ -212,9 +212,12 @@ function commentReply() {
   const words = quote.replace(/\[R\d+:[^\]]*\]/g, "").trim();
   if (isComment) {
     if (process.env.FAKE_COMMENT === "leak-once" && once("comment-leak")) return { type: "reply", text: "Per the grilling method, yes." };
-    const n = (state.messages ?? []).filter((m) => m.by === "user").length;
-    const lead = n > 1 ? "Sure, that works too." : "Good catch.";
-    return { type: "reply", text: `${lead} I can say that under ${state.section ?? "this section"} and spell out "${words.slice(0, 40)}".` };
+    const asked = (state.messages ?? []).filter((m) => m.by === "user");
+    const where = state.section ?? "this section";
+    if (asked.length <= 1) return { type: "reply", text: `Good catch. I can say that under ${where} and spell out "${words.slice(0, 40)}".` };
+    // A follow-up gets an answer to what it asks, not the first reply again.
+    if (/\bwho\b/i.test(String(asked.at(-1)?.text ?? ""))) return { type: "reply", text: `Anyone in the household. Everyone who shares the list can add, tick off or remove items, and I'll say so under ${where}.` };
+    return { type: "reply", text: `Sure, that works too. I'll fold it into ${where} when you apply feedback.` };
   }
   if (process.env.FAKE_COMMENT === "bad-edit-once" && once("bad-edit")) return { type: "edits", summary: "x", edits: [{ before: "text that is not in the plan", after: "y" }] };
   // A comment on a decision block: answers change through the decision itself, so no edits.
