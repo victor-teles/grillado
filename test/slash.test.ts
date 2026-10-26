@@ -1,6 +1,8 @@
 // Item 4's slash menu without a DOM: ranking (handoff §3), the trigger, templates and fields.
 import { describe, expect, test } from "bun:test";
 import { fillUserDecisions, findDecisionBlocks } from "../src/core/decision-block.ts";
+import { buildRoundPrompt } from "../src/core/engine.ts";
+import { type Session, createSession, validateRound } from "../src/core/session.ts";
 import { commands, editFields, expand, insertion, rank, slashQuery, tabStops } from "../web/src/app/editor/slash.ts";
 
 const cmds = commands("Codex", true);
@@ -103,5 +105,42 @@ describe("decisions you add (U ids)", () => {
     const out = fillUserDecisions(md, now);
     expect(out.startsWith("```decision\nid: R1·1\nkey: scope\nquestion: Q\nanswer: A\n```")).toBe(true);
     expect(findDecisionBlocks(out)[2].parsed).toMatchObject({ ok: true, fields: { id: "U4" } });
+  });
+});
+
+// PO answer on #5: a U question is asked word for word; an answer you gave first is final.
+describe("your own questions in the next round", () => {
+  const plan = [
+    "# Plan",
+    "```decision\nid: U1\nkey: u1\nquestion: Which browsers do we support?\nanswer:\nby: you\nstatus: open\n```",
+    "```decision\nid: U2\nkey: u2\nquestion: Keep data local first?\nanswer: Yes, offline first\nby: you\nstatus: open\n```",
+  ].join("\n\n");
+  const session = () => {
+    const s = createSession({ idea: "an app", provider: "claude" });
+    s.plan = { title: "Plan", markdown: plan } as Session["plan"];
+    return s;
+  };
+  const ask = (key: string, title: string) => ({
+    type: "ask_round" as const,
+    summary: "s",
+    upcoming: [] as never[],
+    questions: [{ key, label: "Browsers", title, body: "Context.", options: [{ id: "a", label: "A", description: "" }], recommendedOptionId: "a", dependsOn: [] as string[] }],
+  });
+  test("the prompt lists the open one to ask verbatim and the answered one as final", () => {
+    const p = buildRoundPrompt(session());
+    const state = JSON.parse(/<state>(.*)<\/state>/.exec(p)![1]);
+    expect(state.userQuestions).toEqual([{ key: "u1", question: "Which browsers do we support?" }]);
+    expect(state.userDecisions).toEqual([{ key: "u2", question: "Keep data local first?", answer: "Yes, offline first" }]);
+    expect(p).toContain("word for word");
+    expect(p).toContain("never ask them again");
+    expect(p).toContain("offer to change it");
+  });
+  test("a reworded U question is sent back; the exact words pass", () => {
+    const s = session();
+    expect(validateRound(s, ask("u1", "What browsers should we support?"))).toContain("word for word");
+    expect(validateRound(s, ask("u1", "Which browsers do we support?"))).toBeNull();
+  });
+  test("a U question you already answered is never asked", () => {
+    expect(validateRound(session(), ask("u2", "Keep data local first?"))).toContain("answer is final");
   });
 });

@@ -3,7 +3,7 @@ import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
 import type { CommentState } from "./comments.ts";
-import { type AnswerEdit, answerEdits, blockKey, findDecisionBlocks, serializeDecision, updateDecisionBlock } from "./decision-block.ts";
+import { type AnswerEdit, answerEdits, blockKey, findDecisionBlocks, serializeDecision, updateDecisionBlock, userBlocks } from "./decision-block.ts";
 
 export type SessionStatus =
   | "asking" // waiting for the agent's next round
@@ -144,10 +144,15 @@ export function validateRound(s: Session, reply: RoundReply): string | null {
   }
   if (!reply.questions.length) return 'An "ask_round" reply needs at least one question.';
   const keys = new Set<string>();
+  // Questions the user added (U ids): open ones are asked word for word; answered ones are final.
+  const user = userBlocks(s.plan?.markdown ?? "", s.decisions);
   for (const q of reply.questions) {
     if (keys.has(q.key)) return `Question key "${q.key}" is used twice in this round.`;
     keys.add(q.key);
     if (s.decisions[q.key]) return `Question key "${q.key}" is already settled. Do not re-ask settled decisions.`;
+    if (user.answered.some((u) => u.key === q.key)) return `Question key "${q.key}" was answered by the user in the plan. Their answer is final; do not ask it.`;
+    const mine = user.asked.find((u) => u.key === q.key);
+    if (mine && q.title.trim() !== mine.question.trim()) return `Question "${q.key}" is the user's own question: use it word for word as the title: "${mine.question}".`;
     const optionIds = new Set(q.options.map((o) => o.id));
     if (optionIds.size !== q.options.length) return `Question "${q.key}" has duplicate option ids.`;
     if (optionIds.has(UNKNOWN_OPTION) || optionIds.has(OTHER_OPTION)) return `Question "${q.key}" uses a reserved option id.`;

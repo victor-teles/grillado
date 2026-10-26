@@ -281,3 +281,22 @@ export function fillUserDecisions(md: string, now: string): string {
   }
   return out;
 }
+
+/**
+ * Decisions and Questions you added to the plan yourself (U ids, item 4 #34), not yet settled in
+ * the interview. `asked`: open, the next round asks them word for word. `answered`: you answered
+ * them in the plan, so the answer is final and they are never asked (PO, #5).
+ */
+export function userBlocks(md: string, settled: Record<string, unknown> = {}) {
+  const asked: { key: string; question: string }[] = [];
+  const answered: { key: string; question: string; answer: string }[] = [];
+  for (const b of findDecisionBlocks(md)) {
+    if (!b.parsed.ok || !/^U\d+$/.test(b.parsed.fields.id)) continue;
+    const key = blockKey(b.parsed);
+    if (!key || settled[key]) continue;
+    const f = b.parsed.fields;
+    if (f.answer) answered.push({ key, question: f.question, answer: f.answer });
+    else if (f.status === "open") asked.push({ key, question: f.question });
+  }
+  return { asked, answered };
+}
