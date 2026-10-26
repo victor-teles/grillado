@@ -492,7 +492,7 @@ try {
   await page.locator(".mmd").nth(1).scrollIntoViewIfNeeded(); // diagrams draw when they come near the viewport
   await page.locator(".mmd[data-state=ok] .mmw > svg").nth(1).waitFor({ timeout: 15_000 });
   check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] .mmw > svg").count()) === 2);
-  check("diagram SVG is an image named by type and node count", /^flowchart diagram, 2 nodes$/.test((await page.locator(".mmd[data-state=ok] [role=img]").first().getAttribute("aria-label")) ?? ""));
+  check("diagram figure is named by type and node count, its SVG hidden", /^flowchart diagram, 2 nodes$/.test((await page.locator(".mmd[data-state=ok]").first().getAttribute("aria-label")) ?? "") && (await page.locator(".mmd[data-state=ok] svg").first().getAttribute("aria-hidden")) === "true");
   await page.locator(".mmd[data-state=error]").waitFor({ timeout: 5000 });
   check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .err5").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] .src5").textContent()).includes("A -->"));
   // Recording bug 3: breaking a diagram while editing autosaves the raw text (plan.md is the source of truth);

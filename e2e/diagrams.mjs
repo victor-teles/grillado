@@ -92,6 +92,26 @@ async function openAsk(pg, mobile = false) {
   await pg.getByTestId("add-diagrams").waitFor();
   await pg.waitForTimeout(100);
 }
+/** Every element of every drawn diagram has no filter, and node shapes keep a 1px border (MF1). */
+const flatNodes = (pg) =>
+  pg.evaluate(() => {
+    const svgs = [...document.querySelectorAll(".doc .mmw svg")];
+    const filtered = svgs.flatMap((s) => [s, ...s.querySelectorAll("*")]).filter((e) => getComputedStyle(e).filter !== "none").length;
+    const shapes = svgs.flatMap((s) => [...s.querySelectorAll(".node rect, .node polygon, .node path.basic, .node .label-container")]).filter((e) => !e.classList.contains("background"));
+    const edged = shapes.filter((e) => parseFloat(getComputedStyle(e).strokeWidth) >= 1 && getComputedStyle(e).stroke !== "none").length;
+    return { svgs: svgs.length, filtered, shapes: shapes.length, edged };
+  });
+/** Counts any "Loading diagram…" placeholder that appears in the plan from now on (MF3). */
+const watchPlaceholders = (pg) =>
+  pg.evaluate(() => {
+    window.__ph = 0;
+    window.__phObs?.disconnect();
+    window.__phObs = new MutationObserver(() => document.querySelector(".doc .ph5") && window.__ph++);
+    window.__phObs.observe(document.body, { subtree: true, childList: true });
+  });
+const placeholders = (pg) => pg.evaluate(() => (window.__phObs?.disconnect(), window.__ph));
+/** The entrance right after an open: no transition and fully opaque when opened from the keyboard (MF5). */
+const entrance = (pg, sel) => pg.$eval(sel, (e) => ({ dur: getComputedStyle(e).transitionDuration, op: getComputedStyle(e).opacity }));
 const waitRunEnd = (pg) => pg.waitForFunction(() => !document.querySelector("[data-testid=diagram-run]"), null, { timeout: 20000 });
 
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome", headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
@@ -134,6 +154,20 @@ try {
       await pg.keyboard.press("Escape");
       await pg.waitForTimeout(150);
       check("Esc closes and returns focus to ⋯", (await pg.getByTestId("add-diagrams").count()) === 0 && (await pg.evaluate(() => document.activeElement?.getAttribute("aria-label"))) === "Plan actions");
+      // MF5: with full motion, a pointer open keeps its entrance; ⌘K (a key press) appears at once.
+      await pg.emulateMedia({ reducedMotion: "no-preference" });
+      await openAsk(pg);
+      const viaPointer = await entrance(pg, ".pop5");
+      check("pointer-opened popover keeps its 160ms entrance", /0\.16s/.test(viaPointer.dur), JSON.stringify(viaPointer));
+      await pg.keyboard.press("Escape");
+      await pg.waitForTimeout(150);
+      await pg.keyboard.press("Control+k");
+      await pg.getByTestId("add-diagrams").waitFor();
+      const viaKey = await entrance(pg, ".pop5");
+      check("⌘K opens the popover at once: no transition, fully opaque (MF5)", viaKey.dur === "0s" && viaKey.op === "1", JSON.stringify(viaKey));
+      await pg.keyboard.press("Escape");
+      await pg.waitForTimeout(150);
+      await pg.emulateMedia({ reducedMotion: "reduce" });
       await openAsk(pg);
     }
     await ask.locator(".in5").fill("what happens offline");
@@ -156,13 +190,13 @@ try {
     await axe(pg, `${theme} desktop: run bar`);
     await waitRunEnd(pg);
     const sg = pg.getByTestId("diagram-suggestion");
-    await sg.first().locator("svg[role=img]").waitFor({ timeout: 15000 });
+    await sg.first().locator(".mmw svg").waitFor({ timeout: 15000 });
     if (one) {
       const bar = await txt(pg.locator(".review"));
       check("review bar: 1 suggestion, 1 skipped, duration as “4.2 s” (§18 B)", /1 suggestion from Claude Code\s*1 section skipped · \d+\.\d s/.test(bar), bar);
       check("suggestion header", /\+?\s*Suggested flowchart · Claude Code/.test(await txt(sg.locator(".sgt"))), await txt(sg.locator(".sgt")));
       check("suggestion is a labelled group", (await sg.getAttribute("aria-label")) === "Suggested flowchart from Claude Code: Implementation decisions flow");
-      check("SVG labelled with kind and accTitle", (await sg.locator("svg[role=img]").getAttribute("aria-label")) === "Flowchart: Implementation decisions flow");
+      check("the SVG is hidden; the group carries the name (read once)", (await sg.locator(".mmw svg").getAttribute("aria-hidden")) === "true" && /Implementation decisions flow$/.test((await sg.getAttribute("aria-label")) ?? ""));
       check("not in plan.md yet", !(await planMd(pg)).includes("```mermaid"));
       check("Accept is soft, Accept all owns the blue", (await sg.getByRole("button", { name: /^Accept/ }).getAttribute("class")).includes("soft") && (await pg.locator(".review .btn.primary").count()) === 1);
     }
@@ -181,15 +215,24 @@ try {
       await ed.fill(v.replace("|then|", "|next|"));
       await pg.waitForTimeout(500);
       await snap("i5-sgedit");
+      await watchPlaceholders(pg);
       await pg.keyboard.press("Escape");
-      await pg.locator(".doc figure.mm5 svg[role=img]").waitFor({ timeout: 8000 });
+      await pg.locator(".doc figure.mm5 .mmw svg").waitFor({ timeout: 8000 });
       await pg.waitForTimeout(500);
       const md = await planMd(pg);
       check("Edit + finish accepts with your changes", md.includes("```mermaid\nflowchart TD") && md.includes("|next|") && !md.includes("|then|"), md.slice(md.indexOf("```mermaid"), md.indexOf("```mermaid") + 120));
       check("the suggestion is gone", (await sg.count()) === 0);
+      check("finishing an edit draws the figure from the SVG it had: no “Loading diagram…” (MF3)", (await placeholders(pg)) === 0);
     } else {
+      await watchPlaceholders(pg);
       await sg.getByRole("button", { name: /^Accept/ }).click();
-      await pg.locator(".doc figure.mm5 svg[role=img]").waitFor({ timeout: 8000 });
+      await pg.locator(".doc figure.mm5 .mmw svg").waitFor({ timeout: 8000 });
+      await pg.waitForTimeout(300);
+      check(`${theme}: Accept turns the block into a figure with no “Loading diagram…” flash (MF3)`, (await placeholders(pg)) === 0);
+    }
+    {
+      const f = await flatNodes(pg);
+      check(`${theme}: flat nodes, no drop shadow, 1px border (MF1)`, f.svgs > 0 && f.filtered === 0 && f.shapes > 0 && f.edged === f.shapes, JSON.stringify(f));
     }
 
     // 4. The figure: a tab stop, caption, F → full screen, zoom, Text view, Esc back.
@@ -203,10 +246,16 @@ try {
     await fig.hover();
     await snap("i5-figure");
     await fig.focus();
+    if (one) await pg.emulateMedia({ reducedMotion: "no-preference" });
     await pg.keyboard.press("f");
     const fs = pg.locator(".fs5");
     await fs.waitFor();
     if (one) {
+      const viaF = await entrance(pg, ".fs5");
+      check("F opens full screen at once: no transition, fully opaque (MF5)", viaF.dur === "0s" && viaF.op === "1", JSON.stringify(viaF));
+      await pg.emulateMedia({ reducedMotion: "reduce" });
+      await pg.waitForTimeout(150);
+      check("full screen opens at 150% for a small diagram (MF2)", (await txt(fs.locator(".zv"))) === "150%", await txt(fs.locator(".zv")));
       check("full screen: dialog with caption", (await fs.getAttribute("role")) === "dialog" && /Implementation decisions flow/.test(await txt(fs.locator(".fh b"))));
       const z0 = await txt(fs.locator(".zv"));
       await pg.keyboard.press("+");
@@ -214,8 +263,13 @@ try {
       check("zoom steps (+)", z0 !== z1 && /%$/.test(z1), `${z0} → ${z1}`);
       await pg.keyboard.press("-");
       await pg.keyboard.press("0");
-      check("0 fits", /%$/.test(await txt(fs.locator(".zv"))));
+      const zf = await txt(fs.locator(".zv"));
+      check("0 fits, never past 300% (MF2)", /%$/.test(zf) && parseInt(zf) <= 300, zf);
+      await pg.keyboard.press("-");
+      const zd = parseInt(await txt(fs.locator(".zv")));
+      check("− from Fit snaps to the step below (MF2)", [50, 75, 100, 150, 200, 300].includes(zd) && zd < parseInt(zf), `${zf} → ${zd}`);
       check("hint bar", /Drag to pan\s*⌘\s*scroll or pinch to zoom\s*0\s*fit\s*Esc\s*close/.test(await txt(fs.locator(".fhint"))), await txt(fs.locator(".fhint")));
+      if (zd > 150) await pg.keyboard.press("-"); // shoot at the 150% it opens at
     }
     await snap("i5-full");
     await axe(pg, `${theme} desktop: full screen`);
@@ -312,6 +366,7 @@ try {
       check("error message names the line and the missing }", /Line \d+: a shape isn't closed\. Add the missing } after “Same item\?”\./.test(await txt(pg.locator(".merr"))), await txt(pg.locator(".merr")));
       check("textarea aria-invalid", (await pg.locator(TA).getAttribute("aria-invalid")) === "true");
       check("last good version dimmed with its label", (await pg.locator(".lp5.dim").count()) === 1 && /Last version that worked/.test(await txt(pg.locator(".lp5 .lbl"))));
+      await pg.locator(".blk[data-editing] .lp5").evaluate((e) => e.scrollIntoView({ block: "center" }));
       await snap("i5-editerr");
       await axe(pg, "dark desktop: editor error");
       await pg.keyboard.press("Escape");
@@ -320,6 +375,41 @@ try {
       await snap("i5-errfig");
       await axe(pg, "dark desktop: error figure");
     }
+    // 8. Wide and state diagrams: break-out to 820, the floor then crop with its bar, curved state edges.
+    {
+      const md = await planMd(pg);
+      const chain = (n, long) => Array.from({ length: n }, (_, i) => `  S${i}["${long ? `Step ${i + 1} of the flow` : `Step ${i + 1}`}"]${i < n - 1 ? ` -->|then| S${i + 1}` : ""}`).join("\n");
+      const extra = [
+        "\n## Wide flow\nA longer flow.\n\n```mermaid\nflowchart LR\n  accTitle: Checkout flow\n  accDescr: Four steps from the list to the receipt.\n" + chain(4) + "\n```\n",
+        "\n## Long flow\nAn even longer one.\n\n```mermaid\nflowchart LR\n  accTitle: Every step of a sync\n  accDescr: Fourteen steps in a row.\n" + chain(14, true) + "\n```\n",
+        "\n## List states\nHow a list changes.\n\n```mermaid\nstateDiagram-v2\n  direction LR\n  accTitle: List states\n  accDescr: A list goes from draft to shared to archived, and back.\n  [*] --> Draft\n  Draft --> Shared: share\n  Shared --> Draft: unshare\n  Shared --> Archived: archive\n  Archived --> Shared: restore\n  Archived --> [*]\n```\n",
+      ].join("");
+      await pg.evaluate(async (m) => {
+        const r = await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ markdown: m }) });
+        if (!r.ok) throw new Error(await r.text());
+      }, md + extra);
+      await pg.getByText("How a list changes.").waitFor({ timeout: 8000 });
+      const figs = pg.locator(".doc figure.mm5");
+      const [wide, crop, state] = [figs.nth(-3), figs.nth(-2), figs.nth(-1)];
+      for (const f of [wide, crop, state]) {
+        await f.scrollIntoViewIfNeeded();
+        await f.locator(".mmw svg").waitFor({ timeout: 10000 });
+      }
+      if (one) {
+        check("a wide diagram breaks out of the column, uncropped", /\bbrk\b/.test(await wide.getAttribute("class")) && !/\bcrop\b/.test(await wide.getAttribute("class")), await wide.getAttribute("class"));
+        check("a very wide diagram crops with “Showing part of this diagram”", (await crop.getAttribute("class")).includes("crop") && (await crop.locator(".ovb").isVisible()), await crop.getAttribute("class"));
+      }
+      const f = await flatNodes(pg);
+      check(`${theme}: flat nodes on flowcharts and state diagrams (MF1)`, f.filtered === 0 && f.edged === f.shapes, JSON.stringify(f));
+      await wide.evaluate((e) => e.scrollIntoView({ block: "center" }));
+      await snap("i5-wide");
+      await crop.evaluate((e) => e.scrollIntoView({ block: "center" }));
+      await snap("i5-crop");
+      await state.evaluate((e) => e.scrollIntoView({ block: "center" }));
+      await snap("i5-state");
+      await axe(pg, `${theme} desktop: wide, cropped and state diagrams`);
+    }
+
     const clip = video ? await pg.video()?.path() : null;
     await ctx.close();
     if (clip) renameSync(clip, path.join(SHOTS, "i5-desktop.webm"));
@@ -363,17 +453,25 @@ try {
     await waitRunEnd(mp);
     await mp.getByTestId("diagram-suggestion").locator("svg").first().waitFor({ timeout: 15000 });
     await mp.getByTestId("diagram-suggestion").scrollIntoViewIfNeeded();
+    {
+      const hd = mp.getByTestId("diagram-suggestion").locator(".hd");
+      check(`${theme} mobile: suggestion header is the title, Edit as a 44px icon (MF4)`, (await hd.getByRole("button", { name: /^(Accept|Reject)/ }).count()) === 0 && (await hd.getByRole("button", { name: "Edit diagram source" }).evaluate((b) => b.getBoundingClientRect().width >= 44)));
+      check(`${theme} mobile: the title stays on one line (MF4)`, await hd.locator(".sgt").evaluate((e) => e.getBoundingClientRect().height <= 24), String(await hd.locator(".sgt").evaluate((e) => e.getBoundingClientRect().height)));
+      check(`${theme} mobile: the bar reads “Suggestion 1 of 1” (MF4)`, /Suggestion 1 of 1/.test(await txt(mp.locator(".mbar .r1 b"))), await txt(mp.locator(".mbar .r1 b")));
+    }
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i5-suggestion-m-${theme}.png`) });
     await axe(mp, `${theme} mobile: suggestion`);
     await mp.locator(".mbar").getByRole("button", { name: /^Accept/ }).tap();
     const mfig = mp.locator(".doc figure.mm5").first();
-    await mfig.locator("svg[role=img]").waitFor({ timeout: 8000 });
+    await mfig.locator(".mmw svg").waitFor({ timeout: 8000 });
     await mfig.scrollIntoViewIfNeeded();
     if (one) check("mobile: figure fits with “Tap to zoom”", /Tap to zoom/.test(await txt(mfig.locator(".tapz"))) && (await mfig.evaluate((f) => f.querySelector("svg").getBoundingClientRect().width <= f.getBoundingClientRect().width)));
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i5-figure-m-${theme}.png`) });
     await mfig.locator(".tapz").tap();
     await mp.locator(".fs5").waitFor();
     if (one) check("mobile: full screen at 100%", (await txt(mp.locator(".fs5 .zv"))) === "100%");
+    await mp.waitForTimeout(300); // the fade is over before the shot
+    check(`${theme} mobile: full screen Close is on screen, 44px`, await mp.getByRole("button", { name: "Close full screen" }).evaluate((b) => { const r = b.getBoundingClientRect(); return r.right <= innerWidth && r.width >= 44; }));
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i5-full-m-${theme}.png`) });
     await axe(mp, `${theme} mobile: full screen`);
     await mctx.close();

@@ -7,7 +7,7 @@ import { type DiagramKind, DIAGRAM_KINDS, planSections, suggestedCode } from "..
 import { api } from "../api";
 import type { PlanDraft } from "../editor/PlanEditor";
 import type { MermaidLike } from "../editor/diagram";
-import { IAlert, ICheck, IShape, IX } from "../icons";
+import { IAlert, ICheck, IShape, ISq, IX } from "../icons";
 import type { SessionView } from "../types";
 
 const MOD = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? "") ? "⌘" : "Ctrl+";
@@ -177,6 +177,7 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
           <b>{A(DCOPY.running)}</b>
           <span className="dt">{count}</span>
           <button type="button" className="btn quiet" onClick={() => void post({ op: "stop" })}>
+            <ISq s={14} />
             Stop
           </button>
         </div>
@@ -187,6 +188,7 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
         <span className="lb5">{A(DCOPY.running)}</span>
         <span className="dt">{count}</span>
         <button type="button" className="btn quiet" onClick={() => void post({ op: "stop" })}>
+          <ISq s={14} />
           Stop
         </button>
       </div>

@@ -13,7 +13,7 @@ import { promptFragments } from "../src/core/prompts.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
 import { createSession } from "../src/core/session.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
-import { fitDiagram, zoomStep } from "../web/src/app/editor/diagram.ts";
+import { fitDiagram, fitPercent, mermaidConfig, zoomStep } from "../web/src/app/editor/diagram.ts";
 
 const FLOW = `flowchart TD
   accTitle: Sync flow
@@ -268,5 +268,21 @@ describe("diagram sizing and zoom (§6.3, §7)", () => {
     expect(zoomStep(87, -1)).toBe(75);
     expect(zoomStep(300, 1)).toBe(300);
     expect(zoomStep(50, -1)).toBe(50);
+    // Off-step values (a Fit of 237%) snap to the step on that side (review #6, MF2).
+    expect(zoomStep(237, 1)).toBe(300);
+    expect(zoomStep(237, -1)).toBe(200);
+  });
+  test("Fit never goes past 300%, and waits for a body with a size (review #6, MF2)", () => {
+    expect(fitPercent({ w: 1200, h: 800 }, { w: 120, h: 80 })).toBe(300);
+    expect(fitPercent({ w: 1048, h: 548 }, { w: 400, h: 200 })).toBe(250);
+    expect(fitPercent({ w: 0, h: 0 }, { w: 400, h: 200 })).toBeNull();
+    expect(fitPercent({ w: 1000, h: 600 }, { w: 0, h: 0 })).toBeNull();
+  });
+  test("nodes are flat: classic look, no drop shadow, and diagrams can't switch it back (review #6, MF1)", () => {
+    const c = mermaidConfig({ primaryColor: "#000000" }) as any;
+    expect(c.look).toBe("classic");
+    expect(c.themeVariables.dropShadow).toBe("none");
+    expect(c.themeVariables.nodeShadow).toBe(false);
+    expect(c.secure).toContain("look");
   });
 });

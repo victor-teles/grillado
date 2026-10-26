@@ -194,7 +194,9 @@ export function useComments(o: Opts) {
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 5000);
-    return () => clearTimeout(t);
+    const drop = () => setToast(null);
+    addEventListener("grillado:editor-open", drop);
+    return () => (clearTimeout(t), removeEventListener("grillado:editor-open", drop));
   }, [toast]);
   useEffect(() => {
     if (!bar) return;
@@ -411,7 +413,7 @@ export function useComments(o: Opts) {
                 <button type="button" className="icon-btn" aria-label="Previous suggestion" aria-keyshortcuts="Alt+ArrowUp" onClick={() => go(-1)}>
                   <IUp s={16} />
                 </button>
-                <span className="ix">{index >= 0 ? `${index + 1} of ${placed.length}` : `– of ${placed.length}`}</span>
+                {index >= 0 || placed.length === 1 ? <span className="ix">{`${Math.max(index, 0) + 1} of ${placed.length}`}</span> : null}
                 <button type="button" className="icon-btn" aria-label="Next suggestion" aria-keyshortcuts="Alt+ArrowDown" onClick={() => go(1)}>
                   <IDown s={16} />
                 </button>
@@ -907,7 +909,7 @@ function MobileBar({ placed, index, go, review, agentName }: { placed: Placed[];
     <div className="mbar" role="toolbar" aria-label="Review suggestions">
       <div className="r1">
         <b>
-          {i + 1} of {placed.length} suggestions
+          Suggestion {i + 1} of {placed.length}
         </b>
         <button type="button" className="icon-btn" aria-label="Previous suggestion" onClick={() => go(-1)}>
           <IUp s={18} />

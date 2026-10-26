@@ -3,7 +3,7 @@ import { IAlert, IEdit, IMax, IMinus, IPlus, IX } from "../icons";
 import { useMobile } from "../chrome";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { describeDiagram } from "../../../../src/core/diagrams.ts";
-import { type DiagramResult, type MermaidLike, type ThemeVars, THEME_TOKENS, ZOOMS, accOf, diagramLabel, explainDiagramError, fitDiagram, kindName, renderDiagram, zoomStep } from "./diagram";
+import { type DiagramResult, type MermaidLike, type ThemeVars, THEME_TOKENS, ZOOMS, accOf, diagramLabel, explainDiagramError, fitDiagram, fitPercent, kindName, renderDiagram, zoomStep } from "./diagram";
 
 // Mermaid is ~1 MB of JS, so it's only fetched when a diagram is near the viewport (§6.4).
 let mermaid: Promise<MermaidLike> | null = null;
@@ -67,13 +67,33 @@ function useNear(ref: React.RefObject<HTMLElement | null>) {
   return near;
 }
 
+/**
+ * Drawn diagrams by theme + source. A block that becomes a figure (Accept, the end of an edit)
+ * mounts with the SVG it already had: the placeholder only shows on a first lazy draw (§5.2).
+ */
+const drawn = new Map<string, DiagramResult>();
+const drawnKey = (code: string, theme: { dark: boolean; vars: ThemeVars }) => `${theme.dark ? "d" : "l"}${JSON.stringify(theme.vars)}\n${code}`;
+function remember(key: string, r: DiagramResult) {
+  drawn.delete(key);
+  drawn.set(key, r);
+  if (drawn.size > 64) drawn.delete(drawn.keys().next().value!);
+}
+
 /** Renders `code` (debounced by `delay`), keeping the last version that worked. `now` bumps force a draw. */
 function useRender(code: string, o: { active: boolean; delay: number; now?: number }) {
   const theme = useTheme();
-  const [res, setRes] = useState<DiagramResult | null>(null);
+  const key = drawnKey(code, theme);
+  const [res, setRes] = useState<DiagramResult | null>(() => drawn.get(key) ?? null);
   const last = useRef<{ svg: string; code: string } | null>(null);
   const nowSeen = useRef(o.now);
   useEffect(() => {
+    const hit = drawn.get(key);
+    if (hit) {
+      nowSeen.current = o.now;
+      if (hit.ok) last.current = { svg: hit.svg, code };
+      setRes(hit);
+      return;
+    }
     if (!o.active) return;
     let live = true;
     const forced = o.now !== nowSeen.current;
@@ -83,6 +103,7 @@ function useRender(code: string, o: { active: boolean; delay: number; now?: numb
         renderDiagram(code, { dark: theme.dark, theme: theme.vars, load: loadMermaid }).then((r) => {
           // Mermaid leaves a scratch node behind when a render fails.
           document.getElementById(`d${r.id}`)?.remove();
+          remember(key, r.ok ? { ok: true, svg: r.svg } : { ok: false, error: r.error });
           if (!live) return;
           if (r.ok) last.current = { svg: r.svg, code };
           setRes(r);
@@ -94,7 +115,7 @@ function useRender(code: string, o: { active: boolean; delay: number; now?: numb
       live = false;
       clearTimeout(t);
     };
-  }, [code, theme, o.active, o.now]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, o.active, o.now]); // eslint-disable-line react-hooks/exhaustive-deps
   return { res, last: res?.ok ? { svg: res.svg, code } : last.current };
 }
 
@@ -103,8 +124,13 @@ function mountSvg(host: HTMLElement, svg: string, code: string) {
   host.innerHTML = svg; // Mermaid output is sanitized (securityLevel: "strict").
   const s = host.querySelector("svg");
   if (!s) return { w: 0, h: 0, s: null };
-  s.setAttribute("role", "img");
-  s.setAttribute("aria-label", diagramLabel(code, svg));
+  // The figure (or the suggestion group) carries the name: the SVG inside isn't read twice.
+  s.setAttribute("aria-hidden", "true");
+  s.removeAttribute("role");
+  s.removeAttribute("aria-roledescription");
+  s.removeAttribute("aria-labelledby");
+  s.removeAttribute("aria-describedby");
+  s.dataset.label = diagramLabel(code, svg);
   s.removeAttribute("style");
   const vb = s.viewBox?.baseVal;
   return { w: vb?.width || s.getBoundingClientRect().width, h: vb?.height || s.getBoundingClientRect().height, s };
@@ -165,7 +191,7 @@ function Source({ code, bad }: { code: string; bad?: number }) {
   const from = bad && bad > 8 ? Math.min(bad - 4, lines.length - 8) : 0;
   return (
     <div className="src5 ro">
-      {from > 0 ? <div className="more5">{from} lines above</div> : null}
+      {from > 0 ? <div className="more5">{from} {from === 1 ? "line" : "lines"} above</div> : null}
       {lines.slice(from, from + 8).map((l, j) => {
         const n = from + j + 1;
         return (
@@ -175,7 +201,7 @@ function Source({ code, bad }: { code: string; bad?: number }) {
           </div>
         );
       })}
-      {lines.length > from + 8 ? <div className="more5">{lines.length - from - 8} more lines</div> : null}
+      {lines.length > from + 8 ? <div className="more5">{lines.length - from - 8} more {lines.length - from - 8 === 1 ? "line" : "lines"}</div> : null}
     </div>
   );
 }
@@ -251,8 +277,9 @@ export function Diagram({ code, onEdit, bare = false }: { code: string; onEdit?:
       data-testid="diagram"
       tabIndex={ok ? 0 : undefined}
       aria-roledescription={ok ? "diagram" : undefined}
-      aria-label={ok ? `${kindName(code)}${title ? `: ${title}` : ""}` : undefined}
+      aria-label={ok ? diagramLabel(code, ok) : undefined}
       aria-describedby={ok ? hint : undefined}
+      aria-keyshortcuts={ok ? (onEdit ? "Enter F" : "F") : undefined}
       aria-busy={res === null || undefined}
       onClick={
         mobile && ok
@@ -338,11 +365,10 @@ export function FullScreen({ code, svg, mobile, onEdit, onClose }: { code: strin
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const fitZoom = () => {
     const b = body.current;
-    const { w, h } = nat.current;
-    if (!b || !w) return 100;
-    return Math.max(10, Math.floor(Math.min((b.clientWidth - 48) / w, (b.clientHeight - 48) / h) * 100));
+    return (b && fitPercent({ w: b.clientWidth, h: b.clientHeight }, nat.current)) ?? 100;
   };
-  // Opens at 150% on desktop, or Fit when Fit is smaller; 100% on phones.
+  // Opens at 150% on desktop, or Fit when Fit is smaller; 100% on phones. The dialog body has no
+  // size in the first layout pass, so measure once it has one (a ResizeObserver on .fsb).
   useLayoutEffect(() => {
     const host = document.createElement("div");
     host.style.cssText = "position:absolute;visibility:hidden";
@@ -350,7 +376,20 @@ export function FullScreen({ code, svg, mobile, onEdit, onClose }: { code: strin
     const { w, h } = mountSvg(host, svg, code);
     host.remove();
     nat.current = { w, h };
-    if (!mobile) setZoom((z) => Math.min(z, fitZoom()));
+    if (mobile) return;
+    let done = false;
+    const settle = () => {
+      const b = body.current;
+      const f = b && fitPercent({ w: b.clientWidth, h: b.clientHeight }, nat.current);
+      if (done || !f) return;
+      done = true;
+      setZoom(Math.min(150, f));
+    };
+    settle();
+    if (done || !body.current || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(settle);
+    ro.observe(body.current);
+    return () => ro.disconnect();
   }, [svg]); // eslint-disable-line react-hooks/exhaustive-deps
   const step = (d: 1 | -1) => setZoom((z) => zoomStep(z, d));
   const fit = () => {

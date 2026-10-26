@@ -17,7 +17,10 @@ export function mermaidConfig(theme?: ThemeVars, dark = true): Record<string, un
     startOnLoad: false,
     securityLevel: "strict", // mermaid sanitizes labels and drops scripts/links
     theme: theme ? "base" : dark ? "dark" : "default",
-    themeVariables: theme,
+    // Flat nodes (§6.2): Mermaid 12's default "neo" look puts a blurred drop shadow on every node,
+    // from its own stylesheet inside the SVG, which page CSS can't beat. Classic draws none.
+    look: "classic",
+    themeVariables: theme ? { ...theme, dropShadow: "none", nodeShadow: false } : theme,
     fontFamily: '"Inter Variable", Inter, sans-serif',
     htmlLabels: false,
     flowchart: { htmlLabels: false, curve: "basis", padding: 8, nodeSpacing: 22, rankSpacing: 28, useMaxWidth: false, diagramPadding: 4 },
@@ -25,7 +28,7 @@ export function mermaidConfig(theme?: ThemeVars, dark = true): Record<string, un
     // THIRD_PARTY_NOTICES.md). Use dagre everywhere and don't let a diagram switch it back.
     layout: "dagre",
     state: { layout: "dagre", useMaxWidth: false, padding: 6 },
-    secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "maxEdges", "layout", "theme", "themeVariables", "htmlLabels"],
+    secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "maxEdges", "layout", "look", "theme", "themeVariables", "htmlLabels"],
   };
 }
 
@@ -143,7 +146,12 @@ export function explainDiagramError(code: string, raw: string): { line?: number;
 
 /** Zoom steps in full screen (§7). */
 export const ZOOMS = [50, 75, 100, 150, 200, 300];
+/** The next step up or down; an off-step value (Fit's 237%) snaps to the step on that side. */
 export const zoomStep = (z: number, d: 1 | -1) => (d > 0 ? ZOOMS.find((s) => s > z) ?? ZOOMS.at(-1)! : [...ZOOMS].reverse().find((s) => s < z) ?? ZOOMS[0]);
+
+/** Fit: the whole diagram in the body, never past the last step (300%). */
+export const fitPercent = (body: { w: number; h: number }, nat: { w: number; h: number }, pad = 48) =>
+  !nat.w || !nat.h || body.w <= pad || body.h <= pad ? null : Math.max(10, Math.min(ZOOMS.at(-1)!, Math.floor(Math.min((body.w - pad) / nat.w, (body.h - pad) / nat.h) * 100)));
 
 /**
  * The sizing rule (§6.3): natural size if it fits the column; else break out to 820; else scale

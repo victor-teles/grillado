@@ -922,7 +922,7 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .sgb5 .ned5 .blk-preview{margin-top:8px}
 .rmb{margin:14px 0 0;border-radius:12px 12px 0 0;padding:12px 18px 14px;background:color-mix(in oklab,var(--destructive) var(--rm-a),var(--sel))}
 .sgb5.rep{margin-top:2px;border-radius:0 0 12px 12px}
-.drw{display:flex;align-items:center;margin:14px 0 4px;min-height:44px;padding:0 14px;border-radius:12px;background:var(--sel);font-size:var(--t-body);color:var(--muted-foreground)}
+.drw{display:flex;align-items:center;margin:14px 0 4px;min-height:44px;padding:0;font-size:var(--t-body);color:var(--muted-foreground)}
 /* the ⋯ entry and the popover (§3); blue goes to the open task's primary (§18 C) */
 .icon-btn.on5{background:var(--muted);color:var(--foreground)}
 .planv:has(.pop5,.ask5,.run5 .btn.primary) .copy-md{background:var(--muted);color:var(--foreground)}
@@ -1010,4 +1010,14 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
   .pop5,.fs5{transform:none!important}
   .review{animation:none}
 }
-.mmw svg .node,.mmw svg .node *{filter:none}
+/* Flat nodes (§6.2): look "classic" draws no shadow; this also beats any inline filter Mermaid adds. */
+.mmw svg,.mmw svg *{filter:none!important}
+
+/* Item 5 review (#6): opened from the keyboard (⌘K, Enter on ⋯, F), the popover and full screen
+   appear at once (§10). html[data-kbd] is set while the last input was a key press. */
+html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{transition:none}
+@starting-style{html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{opacity:1;transform:none}}
+.planv:has(.toast) .doc{padding-bottom:180px}
+.sgb5 .hd .icon-btn.e44{width:44px;height:44px;margin:-8px -8px -8px 0}
+.sgb5 .hd .sgt{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fs5{grid-template-columns:minmax(0,1fr)}.fs5 .fh b{min-width:0;flex:0 1 auto}.fs5 .fh .seg2,.fs5 .fh .icon-btn{flex:none}

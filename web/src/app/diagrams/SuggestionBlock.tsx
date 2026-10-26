@@ -6,6 +6,7 @@ import { suggestedCode } from "../../../../src/core/diagrams.ts";
 import type { Placed } from "../comments/model";
 import { Diagram, LivePreview } from "../editor/Diagram";
 import { accOf, kindName } from "../editor/diagram";
+import { useMobile } from "../chrome";
 import { ICheck, IEdit, IMinus, IPlus, IX } from "../icons";
 
 const MOD = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? "") ? "⌘" : "Ctrl+";
@@ -21,6 +22,7 @@ export function SuggestionBlock(p: {
   onFocus: () => void;
 }) {
   const { s } = p.placed;
+  const mobile = useMobile();
   const code = suggestedCode(s);
   const kind = kindName(code);
   const { title } = accOf(code);
@@ -47,12 +49,17 @@ export function SuggestionBlock(p: {
           Suggested {kind.toLowerCase()} · {p.agentName}
         </span>
         <span className="sp" />
-        {p.focused ? (
+        {p.focused && !mobile ? (
           <span className="pos">
             {p.index + 1} of {p.total}
           </span>
         ) : null}
-        {editing === null ? (
+        {editing === null && mobile ? (
+          // Phones (§11): the header is the title; Reject and Accept live in the bottom bar.
+          <button type="button" className="icon-btn e44" aria-label="Edit diagram source" onClick={() => setEditing(code)}>
+            <IEdit s={18} />
+          </button>
+        ) : editing === null ? (
           <>
             <button type="button" className="btn quiet sm" onClick={() => setEditing(code)}>
               <IEdit s={14} />
@@ -108,7 +115,11 @@ function SourceEditor({ initial, onDone }: { initial: string; onDone: (t: string
   const [now, setNow] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
   const ended = useRef(false);
-  useEffect(() => ref.current?.focus(), []);
+  useEffect(() => {
+    ref.current?.focus();
+    // An open editor drops the Undo toast, so it never sits on the hint row.
+    dispatchEvent(new Event("grillado:editor-open"));
+  }, []);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
