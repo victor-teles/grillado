@@ -241,7 +241,8 @@ export function SaveStatus({
     }
   }, [save.state, conflict, answerChange]);
   const state = answerChange ? "held" : conflict ? "pending" : save.state === "saving" && !slow ? "pending" : save.state;
-  const fresh = state === "idle" && !edited;
+  // With open decisions the status reads "Saved · n open" from the start (v1.2 §3).
+  const fresh = state === "idle" && !edited && !open;
   const label = answerChange
     ? "Answer changed · not saved"
     : fresh
@@ -307,13 +308,14 @@ export function autosize(el: HTMLTextAreaElement | null) {
   const scroller = el.closest(".docwrap") as HTMLElement | null;
   const top = scroller?.scrollTop;
   const winY = window.scrollY;
-  // Measure with a 0px height, but hold the space with min-height so nothing reflows around it.
-  const was = el.getBoundingClientRect().height;
-  el.style.minHeight = `${was}px`;
+  // Measure with a 0px height, but hold the space on the parent so nothing reflows around it.
+  // (Holding it on the textarea itself made scrollHeight never shrink: an extra empty row.)
+  const holder = el.parentElement;
+  if (holder) holder.style.minHeight = `${holder.getBoundingClientRect().height}px`;
   el.style.height = "0px";
-  const next = el.scrollHeight + 2;
+  const next = el.scrollHeight;
   el.style.height = `${next}px`;
-  el.style.minHeight = "";
+  if (holder) holder.style.minHeight = "";
   if (scroller && top !== undefined && scroller.scrollTop !== top) scroller.scrollTop = top;
   if (window.scrollY !== winY) window.scrollTo({ top: winY });
 }
@@ -336,6 +338,7 @@ function BlockEditor({ text, kind, onChange, onDone }: { text: string; kind: Blo
         ref={ref}
         // Prose is edited in Inter at its own size so nothing jumps; only fences are mono (#17).
         className={kind === "fence" ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`}
+        rows={1}
         aria-label="Edit block as Markdown. Escape to finish."
         aria-describedby={hint}
         spellCheck

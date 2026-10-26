@@ -415,29 +415,35 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply): string {
     if (sec) sec.blocks.push(block);
     else rest.push(block);
   }
-  const lines = [`# ${plan.title}`, ""];
-  for (const sec of sections) {
-    const part = body.slice(sec.a, sec.b);
-    while (part.length && !part.at(-1)!.trim()) part.pop();
-    if (!part.length && !sec.blocks.length) continue;
-    lines.push(...part, "");
-    for (const b of sec.blocks) lines.push(b, "");
-  }
-  if (rest.length) {
-    lines.push("## More decisions", "");
-    for (const b of rest) lines.push(b, "");
-  }
+  // Open decisions lead the document: after any intro, before the first section (v1.2 §5 e-early).
   const round = currentRound(s);
   const openQs = openQuestions(s);
   const openTitles = new Set(openQs.map((q) => q.title));
   const other = [...new Set(plan.openDecisions)].filter((o) => !openTitles.has(o));
-  if (openQs.length || other.length) {
+  const lines = [`# ${plan.title}`, ""];
+  let opened = false;
+  const pushOpen = () => {
+    opened = true;
+    if (!openQs.length && !other.length) return;
     lines.push("## Open decisions", "");
     openQs.forEach((q, i) => {
       lines.push(serializeDecision({ id: `R${round!.n}·${i + 1}`, key: q.key, question: q.title, status: "open" }), "");
     });
     for (const o of other) lines.push(`- ${o}`);
     if (other.length) lines.push("");
+  };
+  for (const sec of sections) {
+    if (!opened && /^##\s/.test(body[sec.a] ?? "")) pushOpen();
+    const part = body.slice(sec.a, sec.b);
+    while (part.length && !part.at(-1)!.trim()) part.pop();
+    if (!part.length && !sec.blocks.length) continue;
+    lines.push(...part, "");
+    for (const b of sec.blocks) lines.push(b, "");
+  }
+  if (!opened) pushOpen();
+  if (rest.length) {
+    lines.push("## More decisions", "");
+    for (const b of rest) lines.push(b, "");
   }
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
   lines.push("");

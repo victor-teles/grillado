@@ -46,7 +46,8 @@ export function DecisionCard({
   const uid = useId();
   const options = question?.options ?? [];
   const currentId = state === "open" ? undefined : options.find((o) => o.label === fields.answer)?.id ?? (fields.answer ? OTHER_OPTION : undefined);
-  const [expanded, setExpanded] = useState(state === "open" && !readOnly);
+  // Open decisions start collapsed with a quiet "Answer" so Copy Markdown keeps the only blue (v1.2 review).
+  const [expanded, setExpanded] = useState(false);
   const [pick, setPick] = useState<string | undefined>(currentId ?? question?.recommendedOptionId);
   const [other, setOther] = useState(currentId === OTHER_OPTION ? fields.answer ?? "" : "");
   const [busy, setBusy] = useState(false);

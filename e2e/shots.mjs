@@ -64,8 +64,8 @@ async function page(theme, vp) {
   const ctx = await browser.newContext({ viewport: vp === "d" ? { width: 1440, height: 900 } : { width: 390, height: 844 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
   await ctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
   const pg = await ctx.newPage();
-  const snap = async (name) => {
-    await pg.mouse.move(0, 0); // no stray hover outline from the last click
+  const snap = async (name, { hover = false } = {}) => {
+    if (!hover) await pg.mouse.move(0, 0); // no stray hover outline from the last click
     await pg.waitForTimeout(250);
     const file = path.join(OUT, `${name}-${vp}-${theme}.png`);
     await pg.screenshot({ path: file });
@@ -148,8 +148,14 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
       await pg.keyboard.press("Escape");
       // Change on a decision card
       const dz = pg.locator(".dz").first();
+      // A pointer user: drop keyboard focus so the shot shows hover, not a focus ring (v1.2 review).
+      await pg.waitForTimeout(100);
+      await pg.evaluate(() => {
+        document.activeElement instanceof HTMLElement && document.activeElement.blur();
+        document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      });
       await dz.hover();
-      await snap("e-hover");
+      await snap("e-hover", { hover: true });
       await dz.getByRole("button", { name: /^Change/ }).click();
       await snap("e-change");
       await dz.getByRole("button", { name: "Cancel" }).click();
@@ -192,7 +198,7 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
       await pg.getByTestId("nudge").waitFor({ timeout: 15000 });
       await snap("s-nudge");
       await pg.locator(".bar").getByRole("button", { name: "Wrap it up" }).click();
-      await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15000 });
+      await pg.getByRole("heading", { name: /^Wrap up with \d+ still open\?$/ }).waitFor({ timeout: 15000 });
       await snap("s-early");
       await pg.getByRole("button", { name: /Yes, plate it/ }).click();
       await pg.getByTestId("plan").waitFor({ timeout: 15000 });

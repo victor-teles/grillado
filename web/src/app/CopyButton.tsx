@@ -15,7 +15,8 @@ export async function copy(text: string) {
 }
 
 /**
- * Copy buttons (v1.2): `icon` (32px icon button), `cmd` (a copyable shell command), or a text
+ * Copy buttons (v1.2): `icon` (32px icon button, 14px icon), `inline` (a 14px icon that sits in a
+ * sentence, after inline code), `cmd` (a copyable shell command), or a text
  * button in `tone` primary / soft / quiet. The label is always the accessible name.
  */
 export function CopyButton({
@@ -29,7 +30,7 @@ export function CopyButton({
 }: {
   text: string;
   label?: string;
-  kind?: "pill" | "icon" | "cmd";
+  kind?: "pill" | "icon" | "inline" | "cmd";
   tone?: "primary" | "soft" | "quiet";
   className?: string;
   /** A longer accessible name that starts with the visible label ("Copy" → "Copy Markdown"). */
@@ -53,10 +54,10 @@ export function CopyButton({
         </span>
       </button>
     );
-  if (kind === "icon")
+  if (kind === "icon" || kind === "inline")
     return (
-      <button type="button" className={cls(`icon-btn${done ? " ok" : ""}`)} aria-label={done ? "Copied" : label} onClick={run}>
-        {done ? <ICheck s={16} /> : <ICopy s={16} />}
+      <button type="button" className={cls(`${kind === "icon" ? "icon-btn" : "copy-inl"}${done ? " ok" : ""}`)} aria-label={done ? "Copied" : label} onClick={run}>
+        {done ? <ICheck s={14} /> : <ICopy s={14} />}
       </button>
     );
   return (

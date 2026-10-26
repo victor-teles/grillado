@@ -18,7 +18,7 @@ export function NoAgent({ state, onRescan }: { state: AppState; onRescan: () => 
           {state.providers.map((p) => (
             <li key={p.id} className="cmdrow">
               <span className="nm">{p.displayName}</span>
-              <code>{p.installHint}</code>
+              <code title={p.installHint}>{p.installHint}</code>
               <CopyButton kind="icon" text={p.installHint} label={`Copy ${p.displayName} install command`} onCopied={() => setCopied(true)} />
               {p.status === "broken" || p.status === "outdated" ? <span className="why">Found, but not working: {p.reason}</span> : null}
             </li>

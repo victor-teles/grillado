@@ -36,11 +36,18 @@ export const agentName = (app: AppState, s: SessionView) => app.providers.find((
 // ---------------------------------------------------------------- banners
 
 function Cmds({ text }: { text: string }) {
-  // "Run `codex login` in a terminal" → copyable command chips.
+  // "Run `codex login` in a terminal" → inline code with a 14px copy button, still one sentence (v1.2 review).
   return (
     <>
       {text.split(/(`[^`]+`)/g).map((part, i) =>
-        part.startsWith("`") ? <CopyButton key={i} kind="cmd" text={part.slice(1, -1)} label={`Copy ${part.slice(1, -1)}`} /> : <span key={i}>{part}</span>,
+        part.startsWith("`") ? (
+          <span key={i} className="inl-cmd">
+            <code>{part.slice(1, -1)}</code>
+            <CopyButton kind="inline" text={part.slice(1, -1)} label={`Copy ${part.slice(1, -1)}`} />
+          </span>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
       )}
     </>
   );
@@ -266,7 +273,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
           ↵
         </span>
       </button>
-      <button type="button" className="btn quiet" onClick={() => quiet(act("keep-going"))}>
+      <button type="button" className="btn quiet" aria-label="Keep going on a branch" onClick={() => quiet(act("keep-going"))}>
         {mobile ? "Keep going" : "Keep going on a branch"}
       </button>
     </>
@@ -282,8 +289,8 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
             <Strip session={session} />
             <section className="col appr" aria-labelledby="confirm-title">
               <div className="intro">
-                <p className="sub">{early ? "Wrapping up early" : "Nothing left open"} · after {session.rounds.length} {session.rounds.length === 1 ? "round" : "rounds"}</p>
-                <h1 id="confirm-title">Is it done?</h1>
+                {/* Victor, v1.2 review: an early wrap asks the real question; no kicker above the title (C6). */}
+                <h1 id="confirm-title">{early ? `Wrap up with ${open.length} still open?` : "Is it done?"}</h1>
                 <p>
                   {n} {n === 1 ? "decision" : "decisions"} settled,{" "}
                   {early ? `${open.length} still open. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : "nothing open."} Read them over before the plan gets written.
@@ -359,7 +366,7 @@ function Plating({ session, act, banner }: { session: SessionView; act: Act; ban
                 {groups.map((g) => (
                   <section key={g.title}>
                     <h2>{g.title}</h2>
-                    <p>{g.items.map((d) => `${nameOf(d)}: ${d.answer}.`).join(" ")}</p>
+                    <p>{g.items.map((d) => (nameOf(d) === g.title ? `${d.answer}.` : `${nameOf(d)}: ${d.answer}.`)).join(" ")}</p>
                   </section>
                 ))}
                 {busy ? (

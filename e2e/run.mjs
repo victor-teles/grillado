@@ -215,6 +215,13 @@ try {
   check("picker shows each CLI's --version", (await page.getByRole("radiogroup").textContent()).includes("9.9.9-fake"));
   const axePicker = await new AxeBuilder({ page }).analyze();
   check("axe: picker", axePicker.violations.length === 0, axePicker.violations.map((v) => v.id).join(","));
+  check(
+    "no focus ring at load before any key press (v1.2 review)",
+    await page.evaluate(() => {
+      const a = document.activeElement;
+      return !document.documentElement.hasAttribute("data-kbd") && (!a || a === document.body || getComputedStyle(a).outlineStyle === "none");
+    }),
+  );
   await page.getByLabel("Remember my choice").check();
   await page.getByRole("radio", { name: /Claude Code/ }).click();
   await page.getByRole("button", { name: /Continue/ }).click();
@@ -223,6 +230,8 @@ try {
   await ideaBox.waitFor();
   const axeHome = await new AxeBuilder({ page }).analyze();
   check("axe: home", axeHome.violations.length === 0, axeHome.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
+  const foot = (await page.locator(".note.empty").textContent()) ?? "";
+  check("home footnote shows the data dir under ~/ (v1.2 review)", foot.includes("~/.grillado") && !foot.includes("/tmp"), foot);
   const config = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "config.json"), "utf8"));
   check("remembered default provider", config.defaultProvider === "claude");
   // v1.2: no agent in the header before a session; the composer carries it.
@@ -752,6 +761,11 @@ try {
     check("auth error shown as 'Log in to …' (AC8)", (await banner.getAttribute("data-code")) === "auth" && /Log in to Claude Code/.test(await banner.textContent()));
     await shot(pg, "auth-error");
     check("auth banner offers retry", (await pg.getByRole("button", { name: "I've logged in, retry" }).count()) === 1);
+    const authBody = banner.locator("p").nth(1);
+    check("auth banner is one sentence with the agent's command as inline code (v1.2 review)", ((await authBody.textContent()) ?? "").replace(/\s+/g, " ").trim() === "Run claude in a terminal and use /login, then come back. Your answers are saved." && (await authBody.locator("code").textContent()) === "claude", await authBody.textContent());
+    const inlCopy = authBody.getByRole("button", { name: "Copy claude" });
+    const icon = await inlCopy.locator("svg").boundingBox();
+    check("the inline copy button has a 14px icon", icon && Math.round(icon.width) === 14, JSON.stringify(icon));
     const axeErr = await new AxeBuilder({ page: pg }).analyze();
     check("axe: error state", axeErr.violations.length === 0, axeErr.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
     await ctx.close();
@@ -780,6 +794,8 @@ try {
       if (i === 4) {
         await shot(pg, "nudge");
         check("nudge copy", (await pg.getByTestId("nudge").textContent()).includes("You've kept every suggestion for 4 rounds"));
+        const nm = await pg.getByTestId("nudge").evaluate((el) => [getComputedStyle(el).marginTop, getComputedStyle(el).marginBottom].join(" "));
+        check("nudge spacing 20px above, 24px below (v1.2 review)", nm === "20px 24px", nm);
         const axeN = await new AxeBuilder({ page: pg }).analyze();
         check("axe: nudge", axeN.violations.length === 0, axeN.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
         await pg.getByRole("button", { name: "Review my picks" }).click();
@@ -819,11 +835,40 @@ try {
     const [wb, sb] = [await wrapBtn.boundingBox(), await pg.getByRole("button", { name: "Send round" }).boundingBox()];
     check("mobile Wrap it up sits left of Send", wb && sb && wb.x + wb.width <= sb.x);
     await wrapBtn.click();
-    await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
-    check("early confirm says Wrapping up early", (await pg.getByText("Wrapping up early").count()) === 1);
+    const earlyTitle = pg.getByRole("heading", { level: 1, name: /^Wrap up with \d+ still open\?$/ });
+    await earlyTitle.waitFor({ timeout: 15_000 });
+    check("early confirm title is 'Wrap up with n still open?' (Victor, v1.2 review)", /^Wrap up with \d+ still open\?$/.test(((await earlyTitle.textContent()) ?? "").trim()), await earlyTitle.textContent());
+    check("early confirm has no kicker above the title (C6)", (await pg.getByText(/Wrapping up early|Nothing left open/).count()) === 0);
     check("early confirm lists Still open first", (await pg.locator(".dl h2").first().textContent()) === "Still open", await pg.locator(".dl h2").allTextContents().then((t) => t.join(",")));
     const axeM = await new AxeBuilder({ page: pg }).analyze();
     check("axe: early confirm (mobile)", axeM.violations.length === 0, axeM.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
+    // Plated with open decisions (v1.2 §5 e-early): they lead the document, Answer is quiet, Copy stays the one blue.
+    await pg.setViewportSize({ width: 1280, height: 800 });
+    await pg.getByRole("button", { name: /Yes, plate it/ }).click();
+    await pg.getByTestId("plan").waitFor({ timeout: 15_000 });
+    const firstH2 = await pg.locator("[data-testid=plan] h2").first().textContent();
+    check("plan with open decisions: 'Open decisions' is the first section", (firstH2 ?? "").startsWith("Open decisions"), firstH2);
+    const firstCard = pg.locator("[data-testid=plan] .dz").first();
+    check("plan with open decisions: the first card in the document is an open one", (await firstCard.getAttribute("data-state")) === "open");
+    const answerBtn = firstCard.getByRole("button", { name: "Answer" });
+    check("open decisions start collapsed with a quiet 'Answer' button", (await answerBtn.count()) === 1 && !(await answerBtn.evaluate((b) => b.classList.contains("primary"))) && (await pg.locator(".planv .btn.primary:not(.copy-md)").count()) === 0);
+    const blue = await pg.locator(".copy-md").evaluate((b) => getComputedStyle(b).backgroundColor);
+    const primaryBg = await pg.evaluate(() => {
+      const el = document.createElement("span");
+      el.style.background = "var(--primary)";
+      document.body.append(el);
+      const c = getComputedStyle(el).backgroundColor;
+      el.remove();
+      return c;
+    });
+    check("Copy Markdown stays blue while open decisions show", blue === primaryBg, `${blue} vs ${primaryBg}`);
+    const openN = await pg.locator("[data-testid=plan] .dz[data-state=open]").count();
+    const status = ((await pg.getByTestId("save-status").textContent()) ?? "").trim();
+    check("save status reads 'Saved · n open'", status === `Saved · ${openN} open`, status);
+    const axeE = await new AxeBuilder({ page: pg }).analyze();
+    check("axe: plan with open decisions (light)", axeE.violations.length === 0, axeE.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
+    await answerBtn.click();
+    check("Answer opens the options in place", (await firstCard.getByRole("radiogroup").count()) === 1);
     await ctx.close();
     await stop(s6, "SIGINT");
   }

@@ -242,6 +242,22 @@ describe("interview loop", () => {
     expect(s.status as string).toBe("asking");
   });
 
+  test("open decisions lead plan.md: after the intro, before the first section (v1.2 §5)", async () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    const a = scripted([round(q("one")), round(q("two"))]);
+    await nextRound(s, a, opts());
+    submitAnswers(s, 1, acceptAll(s));
+    await nextRound(s, a, opts());
+    wrapUp(s);
+    startSynthesis(s);
+    const plan = { type: "plan", title: "t", markdown: "Intro line.\n\n## Scope\n\nCites [R1:one].\n\n## Later\n\nMore.", decisions: [], openDecisions: [] };
+    const md = ((await synthesize(s, scripted([plan]), opts())) as any).markdown as string;
+    const heads = md.split("\n").filter((l) => /^#{1,2} /.test(l));
+    expect(heads).toEqual(["# t", "## Open decisions", "## Scope", "## Later"]);
+    expect(md.indexOf("Intro line.")).toBeLessThan(md.indexOf("## Open decisions"));
+    expect(md.indexOf("status: open")).toBeLessThan(md.indexOf("key: one"));
+  });
+
   test("answers must cover every question in the round", async () => {
     const s = createSession({ idea: "x", provider: "claude" });
     await nextRound(s, scripted([round(q("one"), q("two"))]), opts());

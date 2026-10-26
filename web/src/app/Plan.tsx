@@ -278,7 +278,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
             highlight={flash}
             afterTitle={
               <p className="sub">
-                {decisions.length} decisions{plan.editedAt ? " · edited" : ""}
+                {decisions.length} decisions{openCount ? ` · ${openCount} open` : ""}{plan.editedAt ? " · edited" : ""}
               </p>
             }
             openBadge={openCount ? <span className="ct">{openCount}</span> : null}
@@ -366,7 +366,8 @@ function DecisionsTab({
                     <span className="drow-id">{label(d)}</span>
                     <span className="drow-t">{nameOf(d)}</span>
                     <span className="drow-a">{d.answer}</span>
-                    <span className={d.accepted_recommendation ? "drow-by" : "drow-by yc"}>{d.accepted_recommendation ? "Kept the suggestion" : "Your call"}</span>
+                    {/* Only the rows where the user overrode the suggestion are marked (v1.2 review). */}
+                    <span className={d.accepted_recommendation ? "drow-by" : "drow-by yc"}>{d.accepted_recommendation ? null : "Your call"}</span>
                     <button type="button" className="btn quiet sm" aria-label={`Show in plan: ${nameOf(d)}`} onClick={() => onShow(d.key)}>
                       Show in plan
                     </button>

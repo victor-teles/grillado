@@ -349,7 +349,7 @@ export class GrilladoServer {
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
       })),
-      dataDir: this.opts.store.dir,
+      dataDir: tildify(this.opts.store.dir),
     };
   }
 
@@ -630,4 +630,11 @@ function readJson(req: http.IncomingMessage): Promise<any> {
     });
     req.on("error", reject);
   });
+}
+
+/** Show the data dir relative to the user's home ("~/.grillado"), never as an absolute path (v1.2 review). */
+function tildify(dir: string): string {
+  const home = os.homedir();
+  if (home && (dir === home || dir.startsWith(home + path.sep))) return "~" + dir.slice(home.length);
+  return dir;
 }
