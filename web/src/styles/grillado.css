@@ -708,9 +708,8 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .cscrim{position:fixed;inset:0;z-index:45;background:oklch(0 0 0/.4)}
 .csheet{position:fixed;left:0;right:0;bottom:0;z-index:46;max-height:85dvh;background:var(--popover);border-radius:16px 16px 0 0;box-shadow:0 -1px 0 var(--hair);display:flex;flex-direction:column}
 .csheet .grab{width:36px;height:4px;border-radius:2px;background:var(--border-strong);margin:8px auto 4px;flex:none}
-.csheet .sh{display:flex;align-items:center;gap:8px;padding:4px 8px 4px 20px;min-height:44px;flex:none}
-.csheet .sh b,.csheet .sh>span:empty{flex:1;font-weight:600}
-.csheet .sh .icon-btn{width:44px;height:44px}
+.csheet>.shx{position:absolute;top:16px;right:4px;z-index:1;width:44px;height:44px}
+.csheet .rtabs{padding-right:52px}
 .csheet .crail{width:auto;border-left:0;min-height:0;flex:1;background:transparent}
 .csheet .btn{height:44px;border-radius:12px}
 .csheet .composer2{padding:4px 16px 16px;display:grid;gap:10px}

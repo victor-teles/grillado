@@ -312,9 +312,16 @@ try {
       await pg.waitForTimeout(250);
       const j = await pg.evaluate((k) => ({ tab: document.querySelector("#ptab-decisions")?.getAttribute("aria-selected"), fl: document.querySelector(`.drow[data-key="${k}"]`)?.hasAttribute("data-fl"), focus: document.activeElement?.getAttribute("data-key") }), key);
       check(`${theme}: Asked chip → Decisions tab on that row, flashed and focused`, j.tab === "true" && j.fl === true && j.focus === key, JSON.stringify(j));
+      if (SHOTS && one) {
+        await pg.waitForTimeout(150);
+        await pg.screenshot({ path: path.join(SHOTS, "i6-asked-jump-d-dark.png") });
+      }
       await axe(pg, `${theme} desktop: Decisions after an Asked chip`);
       await pg.locator("#ptab-doc").click();
       await act(pg).waitFor({ timeout: 5000 }).catch(() => {});
+      await pg.waitForTimeout(150);
+      const back = await pg.evaluate(() => ({ chip: document.activeElement?.classList.contains("chip6"), key: document.activeElement?.getAttribute("data-key") }));
+      check(`${theme} desktop: back on Document, focus returns to the Asked chip`, back.chip === true && back.key === key, JSON.stringify(back));
     }
 
     // 5. A failure: soft Try again, the retry row says it started again (#58).
@@ -388,6 +395,20 @@ try {
       await mp.waitForTimeout(250);
       await mp.screenshot({ path: path.join(SHOTS, `i6-sheet-m-${theme}.png`) });
     }
+    {
+      // The tabs are the header: Close sits on their row, with no empty row above (re-review, nice-to-have 10).
+      const g = await sheet.evaluate((s) => {
+        const r = (q) => s.querySelector(q)?.getBoundingClientRect();
+        const t = r(".rtabs"), c = r(".shx"), gr = r(".grab"), tabs = [...s.querySelectorAll(".rtabs [role=tab]")].map((e) => e.getBoundingClientRect());
+        return { sh: !!s.querySelector(".sh"), gap: t.top - gr.bottom, mid: Math.abs(c.top + c.height / 2 - (t.top + t.height / 2)), c44: c.width >= 44 && c.height >= 44, clear: tabs.every((b) => b.right <= c.left), right: innerWidth - c.right };
+      });
+      check(`${theme} mobile: Close sits on the tabs row; no row of its own above the tabs`, !g.sh && g.gap <= 6 && g.mid <= 1 && g.c44 && g.clear && g.right <= 8, JSON.stringify(g));
+      await mp.getByRole("tab", { name: /^Comments/ }).click();
+      const c2 = await sheet.evaluate((s) => { const t = s.querySelector(".rtabs").getBoundingClientRect(), c = s.querySelector(".shx").getBoundingClientRect(); return Math.abs(c.top + c.height / 2 - (t.top + t.height / 2)) <= 1 && !s.querySelector(".sh"); });
+      check(`${theme} mobile: same on the Comments tab`, c2 && (await sheet.getByRole("button", { name: "Close comments" }).count()) === 1);
+      await mp.getByRole("tab", { name: /^Activity/ }).click();
+      await act(mp).waitFor({ timeout: 5000 });
+    }
     await axe(mp, `${theme} mobile: Activity sheet`);
     await act(mp).locator(".chips6[data-k=Wrote] .chip6").first().click();
     await mp.waitForTimeout(250);
@@ -416,6 +437,12 @@ try {
       const j = await mp.evaluate((k) => ({ sheet: !!document.querySelector(".csheet"), tab: document.querySelector("#ptab-decisions")?.getAttribute("aria-selected"), fl: document.querySelector(`.drow[data-key="${k}"]`)?.hasAttribute("data-fl"), focus: document.activeElement?.getAttribute("data-key") }), key);
       check(`${theme} mobile: Asked chip → sheet closes, Decisions on that row`, !j.sheet && j.tab === "true" && j.fl === true && j.focus === key, JSON.stringify(j));
       await axe(mp, `${theme} mobile: Decisions after an Asked chip`);
+      await mp.getByRole("button", { name: "Back to Activity" }).click();
+      await act(mp).waitFor({ timeout: 5000 });
+      await mp.waitForTimeout(150);
+      const back = await mp.evaluate(() => ({ chip: document.activeElement?.classList.contains("chip6"), key: document.activeElement?.getAttribute("data-key") }));
+      check(`${theme} mobile: Back to Activity returns focus to the Asked chip`, back.chip === true && back.key === key, JSON.stringify(back));
+      await mp.getByRole("button", { name: "Close activity" }).click();
       await mp.locator("#ptab-doc").click();
     }
     // The ⋯ menu's Activity item shows the live dot while a run is going.

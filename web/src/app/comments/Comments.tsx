@@ -398,6 +398,21 @@ export function useComments(o: Opts) {
   const headingAt = (section: string) =>
     [...(o.docRef.current?.querySelectorAll<HTMLElement>(".blk[data-block='heading']") ?? [])].find((b) => (b.querySelector("h1,h2,h3,h4,h5,h6")?.textContent ?? "").trim() === section.trim()) ?? null;
   const hasHeading = (section: string) => draft.text.split("\n").some((l) => /^#{1,6}\s/.test(l) && l.replace(/^#{1,6}\s+/, "").trim() === section.trim());
+  // After an Asked chip jump, coming back to Activity puts focus back on that chip (#85).
+  const askedFrom = useRef<string | null>(null);
+  const activityShown = railOpen && railTab === "activity" && (mobile || o.tab === "doc");
+  useEffect(() => {
+    const key = askedFrom.current;
+    if (!activityShown || !key) return;
+    askedFrom.current = null;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const chip = document.querySelector<HTMLElement>(`.act6 .chip6[data-key="${CSS.escape(key)}"]`);
+        chip?.scrollIntoView({ block: "nearest" });
+        chip?.focus({ preventScroll: true });
+      }),
+    );
+  }, [activityShown]); // eslint-disable-line react-hooks/exhaustive-deps
   const leaveSheet = () => {
     if (!mobile) return;
     setRail(false);
@@ -437,6 +452,7 @@ export function useComments(o: Opts) {
         }}
         decision={(key) => o.decisionInfo?.(key) ?? null}
         onDecision={(key) => {
+          askedFrom.current = key;
           leaveSheet();
           o.onDecisionRow?.(key);
         }}
@@ -475,13 +491,10 @@ export function useComments(o: Opts) {
         <div className="cscrim" onClick={() => setRail(false)} />
         <div className="csheet" role="dialog" aria-label={railTab === "activity" ? "Activity" : "Comments"} aria-modal="true">
           <div className="grab" />
-          <div className="sh">
-            {/* On Activity the tabs are the header (#83). */}
-            {railTab === "activity" ? <span /> : <b>Comments</b>}
-            <button type="button" className="icon-btn" aria-label={railTab === "activity" ? "Close activity" : "Close comments"} onClick={() => setRail(false)}>
-              <IX s={18} />
-            </button>
-          </div>
+          {/* The tabs are the header (#83): Close sits on their row, no row of its own. */}
+          <button type="button" className="icon-btn shx" aria-label={railTab === "activity" ? "Close activity" : "Close comments"} onClick={() => setRail(false)}>
+            <IX s={18} />
+          </button>
           {railBody}
         </div>
       </>
