@@ -4,16 +4,18 @@
 //
 // Styling hooks: .planv[data-waiting] .dtb .ptabs[role=tablist] .ptab[aria-selected] .ptab-ct
 //   .pbanner[data-tone] .dtab .dgrp .drow .acc .acc-h[aria-expanded] .copy-md
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { useMobile } from "./chrome";
 import { COPY, fmt } from "./copy";
 import { CopyButton, copy } from "./CopyButton";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { DecisionCard } from "./editor/DecisionCard";
+import { DecisionCard, listOf } from "./editor/DecisionCard";
+import { jumpTo, offscreen } from "./editor/link";
+import { countText, planCounts } from "./counts";
 import { passages as findPassages } from "./editor/blocks";
-import { type DecisionRenderer, type EditorMode, ModeToggle, PlanEditor, SaveStatus, usePlanDraft } from "./editor/PlanEditor";
-import { IAlert, IDl, IDown, IFolder, IInfo, IMore } from "./icons";
+import { type DecisionRenderer, type EditorMode, type GutRenderer, ModeToggle, PlanEditor, SaveStatus, usePlanDraft } from "./editor/PlanEditor";
+import { IAlert, ICheck, IChev, IDl, IDown, IFolder, IMore } from "./icons";
 import { type Act, dependentsOf } from "./Session";
 import type { Decision, Question, SessionView } from "./types";
 
@@ -27,6 +29,10 @@ function questionFor(s: SessionView, key: string): Question | undefined {
   return undefined;
 }
 
+function questionRound(s: SessionView, key: string): number | undefined {
+  return s.rounds.find((r) => r.questions.some((q) => q.key === key))?.n;
+}
+
 type Tab = "doc" | "decisions";
 
 export function PlanView({ session, act, agentName, banner }: { session: SessionView; act: Act; agentName: string; banner?: ReactNode }) {
@@ -34,7 +40,12 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   const mobile = useMobile();
   const waiting = session.status !== "plated" ? (plan.waiting ?? []) : [];
   const readOnly = session.status !== "plated" || session.busy;
-  const answers = useMemo(() => Object.fromEntries(Object.entries(session.decisions).map(([k, d]) => [k, d.answer])), [session.decisions]);
+  // Answers changed outside Grillado and waiting for the user (#26) already read their new value here.
+  const answers = useMemo(() => {
+    const out = Object.fromEntries(Object.entries(session.decisions).map(([k, d]) => [k, d.answer]));
+    for (const e of plan.external ?? []) if (e.key in out) out[e.key] = e.to;
+    return out;
+  }, [session.decisions, plan.external]);
   const draft = usePlanDraft(session.id, plan.markdown, plan.reloadedAt, answers);
   const [mode, setModeRaw] = useState<EditorMode>("rich");
   // Switching views saves first (the editor closes any open block on a mode change).
@@ -43,56 +54,48 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
     setModeRaw(m);
   };
   const [tab, setTab] = useState<Tab>("doc");
-  const [flash, setFlash] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  // The block you last changed here (re-ask line goes under it) and what it said before.
+  const [touched, setTouched] = useState<{ key: string; was: string } | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
-  const decisions = Object.values(session.decisions);
-  const qIndex = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of session.rounds) r.questions.forEach((q, i) => m.set(`${r.n}:${q.key}`, i));
-    return m;
-  }, [session.rounds]);
   const psg = useMemo(() => findPassages(draft.text), [draft.text]);
-  // Decisions still open in the plan (wrapped up early, not answered since).
-  const openKeys = useMemo(() => {
-    const keys: string[] = [];
-    for (const m of draft.text.matchAll(/^```decision\n([\s\S]*?)^```/gm)) {
-      const body = m[1];
-      const key = /^key:\s*(.+)$/m.exec(body)?.[1]?.trim();
-      if (key && /^status:\s*open\s*$/m.test(body) && !session.decisions[key]) keys.push(key);
-    }
-    return keys;
-  }, [draft.text, session.decisions]);
-  const openCount = openKeys.length + plan.openDecisions.filter((t) => !session.rounds.some((r) => r.questions.some((q) => q.title === t))).length;
+  const counts = planCounts(session, draft.text);
+  const openKeys = useMemo(
+    // Newest first everywhere (§10).
+    () => [...counts.openKeys].sort((a, b) => (questionRound(session, b) ?? 0) - (questionRound(session, a) ?? 0)),
+    [counts.openKeys.join(" "), session.rounds],
+  );
+  const openCount = counts.open;
+  const text = countText(counts, mobile);
+  const staleKeys = useMemo(() => new Set([...waiting, ...(waiting.length && touched ? [touched.key] : [])]), [waiting.join(" "), touched]);
+  const reaskLine = useMemo(() => {
+    if (!waiting.length) return null;
+    const qs = waiting.map((k) => `“${session.stale?.[k]?.title ?? k}”`);
+    const n = psg.filter((p) => p.keys.some((k) => staleKeys.has(k))).length;
+    const anchor = touched && session.decisions[touched.key] ? touched.key : waiting[0];
+    return { anchor, text: fmt(COPY.reasking, { agent: agentName, questions: listOf(qs), n: `${n} ${n === 1 ? "passage" : "passages"}` }) };
+  }, [waiting.join(" "), psg, staleKeys, touched, agentName, session.stale, session.decisions]);
+  const external = useMemo(() => new Map((plan.external ?? []).map((e) => [e.key, e])), [plan.external]);
+  const label = (key: string) => {
+    const r = session.rounds.find((x) => x.questions.some((q) => q.key === key));
+    return r ? `R${r.n}·${r.questions.findIndex((q) => q.key === key) + 1}` : "";
+  };
 
-  useEffect(() => {
-    if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 1200);
-    return () => clearTimeout(t);
-  }, [flash]);
   useEffect(() => {
     if (!note) return;
     const t = setTimeout(() => setNote(""), 4000);
     return () => clearTimeout(t);
   }, [note]);
 
+  // §2.4: a decision jump scrolls it to the middle, flashes it and puts focus on the block.
   const goToDecision = (key: string) => {
-    const el = docRef.current?.querySelector<HTMLElement>(`.dz[data-key="${CSS.escape(key)}"]`);
-    el?.scrollIntoView({ block: "center" });
-    el?.focus({ preventScroll: true });
+    const el = docRef.current?.querySelector<HTMLElement>(`.dz[data-key="${CSS.escape(key)}"]`) ?? null;
+    jumpTo(el, el);
   };
   const showInPlan = (key: string) => {
     setTab("doc");
     setModeRaw("rich");
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        const id = psg.find((p) => p.keys.includes(key))?.id;
-        const el = id ? document.getElementById(id) : null;
-        if (el) el.scrollIntoView({ block: "center" });
-        else goToDecision(key);
-        setFlash(key);
-      }),
-    );
+    requestAnimationFrame(() => requestAnimationFrame(() => goToDecision(key)));
   };
   const reveal = async () => {
     try {
@@ -107,14 +110,22 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   };
   const save = async (key: string, open: boolean, pick: { optionId: string; text?: string }) => {
     await draft.flush();
+    const was = session.decisions[key]?.answer;
     await draft.track(act(open ? "answer-open" : "change", { key, ...pick }));
+    if (!open && was !== undefined) setTouched({ key, was });
+  };
+  const onExternal = async (confirm: boolean) => {
+    await draft.flush();
+    await act(confirm ? "external-confirm" : "external-dismiss");
   };
 
-  const renderDecision: DecisionRenderer = (fields, { invalid, setActive }) => {
+  const renderDecision: DecisionRenderer = (fields, { invalid, setActive, lit }) => {
     const key = fields.key ?? "";
     const stale = waiting.includes(key) || (!!session.stale?.[key] && !session.decisions[key] && fields.status !== "open");
     const open = fields.status === "open" && !session.decisions[key];
     const deps = dependentsOf(session, key).map((k) => nameOf(session.decisions[k]));
+    const ext = external.get(key);
+    const changed = touched?.key === key && session.decisions[key] && session.decisions[key].answer !== touched.was ? touched.was : undefined;
     return (
       <DecisionCard
         key={`${key}-${fields.answer ?? ""}`}
@@ -128,13 +139,47 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
         onActive={setActive}
         onSave={(pick) => save(key, open, pick)}
         agentName={agentName}
+        lit={lit}
+        was={changed}
+        feedback={reaskLine?.anchor === key ? reaskLine.text : undefined}
+        external={ext ? { from: ext.from, to: ext.to, deps: ext.deps.map((k) => (session.decisions[k] ? nameOf(session.decisions[k]) : k)) } : undefined}
+        onExternal={ext ? onExternal : undefined}
+        onReask={stale && !waiting.includes(key) && session.status === "plated" ? () => act("reask", { key }).then(() => undefined) : undefined}
       />
     );
   };
 
-  const tabs: { id: Tab; label: string; count: string; hot: boolean }[] = [
-    { id: "doc", label: "Document", count: "", hot: false },
-    { id: "decisions", label: "Decisions", count: openCount ? `${openCount} open` : String(decisions.length), hot: openCount > 0 },
+  // Right-margin cites (§2.3), one per cited decision, hidden on mobile (§5).
+  const gut: GutRenderer = (keys, { on, label: litKey }) =>
+    keys.map((k) => (
+      <GutCite
+        key={k}
+        id={label(k)}
+        decision={session.decisions[k]}
+        fallback={session.stale?.[k]?.title ?? k}
+        agentName={agentName}
+        on={on === k || litKey === k}
+        labelMode={litKey === k}
+        stale={staleKeys.has(k)}
+        dzKey={k}
+        onJump={() => goToDecision(k)}
+      />
+    ));
+
+  const tabs: { id: Tab; label: ReactNode; name?: string }[] = [
+    { id: "doc", label: "Document" },
+    {
+      id: "decisions",
+      label: (
+        <>
+          Decisions{" "}
+          <span className="ptab-ct">
+            {mobile && counts.open ? null : counts.total}
+            {counts.open ? <span className="ptab-open">{mobile ? "· " : " · "}{counts.open} open</span> : null}
+          </span>
+        </>
+      ),
+    },
   ];
 
   return (
@@ -150,6 +195,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
               className="ptab"
               aria-selected={tab === t.id}
               aria-controls={`ppanel-${t.id}`}
+              aria-label={t.name}
               tabIndex={tab === t.id ? 0 : -1}
               onClick={() => setTab(t.id)}
               onKeyDown={(e) => {
@@ -167,11 +213,6 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
               }}
             >
               {t.label}
-              {t.count ? (
-                <span className="ptab-ct" data-open={t.hot ? "" : undefined}>
-                  {t.count}
-                </span>
-              ) : null}
             </button>
           ))}
         </div>
@@ -184,6 +225,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
               answerChange={!!draft.answerChange}
               edited={!!plan.editedAt}
               open={openCount}
+              reasking={waiting.length}
             />
           )}
           {mobile || tab !== "doc" ? null : <ModeToggle mode={mode} onMode={setMode} />}
@@ -229,12 +271,6 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
         </div>
       </div>
       {banner}
-      {waiting.length ? (
-        <div className="pbanner" data-tone="info" role="status">
-          <IInfo s={16} />
-          <span>{fmt(COPY.waiting, { list: waiting.map((k) => session.stale?.[k]?.label ?? k).join(", "), agent: agentName })}</span>
-        </div>
-      ) : null}
       {draft.answerChange ? <AnswerChangeBanner session={session} edits={draft.answerChange} onCancel={draft.cancelAnswerChange} onSave={draft.applyAnswerChange} /> : null}
       {draft.conflict ? (
         <div className="pbanner" data-tone="warn" role="alert" aria-labelledby="conflict-t" aria-describedby="conflict-d">
@@ -276,79 +312,197 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
             setMode={setMode}
             readOnly={readOnly}
             decision={renderDecision}
-            highlight={flash}
+            gut={mobile ? undefined : gut}
+            staleKeys={staleKeys}
             afterTitle={
-              <p className="sub">
-                {decisions.length} decisions{openCount ? ` · ${openCount} open` : ""}{plan.editedAt ? " · edited" : ""}
+              <p className="sub" data-testid="plan-meta">
+                {text.titleMeta}
+                {plan.editedAt ? " · edited" : ""}
               </p>
             }
-            openBadge={openCount ? <span className="ct">{openCount}</span> : null}
-            cite={(round, key, n) => {
-              const i = qIndex.get(`${round}:${key}`);
-              const label = `R${round}·${i === undefined ? "?" : i + 1}`;
-              const d = session.decisions[key];
-              return (
-                <button
-                  key={n}
-                  type="button"
-                  className="cite"
-                  data-cite={key}
-                  aria-label={`${label}: ${d ? nameOf(d) : key}, go to the decision`}
-                  onClick={() => goToDecision(key)}
-                >
-                  {label}
-                </button>
-              );
-            }}
+            openBadge={openCount ? <span className="ct"> {openCount}</span> : null}
+            // Cites live in the right margin now (§2.3); on mobile there are none (§5).
+            cite={() => null}
           />
         </div>
         <div id="ppanel-decisions" role="tabpanel" aria-labelledby="ptab-decisions" hidden={tab !== "decisions"} className="dtab">
-          {tab === "decisions" ? <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} onShow={showInPlan} renderOpen={renderDecision} /> : null}
+          {tab === "decisions" ? (
+            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} onShow={showInPlan} renderOpen={renderDecision} save={save} />
+          ) : null}
         </div>
       </div>
     </div>
   );
 }
 
+/** A right-margin cite (§2.3): shows on hover, focus or a lit link; preview popover after 300ms (0 on focus). */
+function GutCite({
+  id,
+  decision,
+  fallback,
+  agentName,
+  on,
+  labelMode,
+  stale,
+  dzKey,
+  onJump,
+}: {
+  id: string;
+  decision?: Decision;
+  fallback: string;
+  agentName: string;
+  on: boolean;
+  labelMode: boolean;
+  stale: boolean;
+  dzKey: string;
+  onJump: () => void;
+}) {
+  const [peek, setPeek] = useState<null | { up: boolean }>(null);
+  const t = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const ref = useRef<HTMLSpanElement>(null);
+  const pid = useId();
+  const question = decision?.title ?? fallback;
+  const answer = decision?.answer ?? "";
+  const show = (delay: number) => {
+    clearTimeout(t.current);
+    t.current = setTimeout(() => {
+      const r = ref.current?.getBoundingClientRect();
+      setPeek({ up: !!r && r.bottom + 200 > window.innerHeight });
+    }, delay);
+  };
+  const hide = () => {
+    clearTimeout(t.current);
+    t.current = setTimeout(() => setPeek(null), 80);
+  };
+  useEffect(() => () => clearTimeout(t.current), []);
+  // Label mode points at an off-screen decision with ↑/↓; hover never scrolls on its own.
+  const where = labelMode ? offscreen(document.querySelector(`.dz[data-key="${CSS.escape(dzKey)}"]`)) : null;
+  return (
+    <span
+      ref={ref}
+      className="gut-i"
+      onPointerEnter={() => show(warm() ? 0 : 300)}
+      onPointerLeave={hide}
+      onFocus={() => show(0)}
+      onBlur={(e) => !ref.current?.contains(e.relatedTarget as Node) && hide()}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && peek) {
+          e.stopPropagation();
+          setPeek(null);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className={`gut-cite${on ? " on" : ""}${stale ? " st" : ""}`}
+        // The visible text ("R3·1", or "R3·1 answer" in label mode) leads the name (WCAG 2.5.3).
+        aria-label={labelMode && answer ? `${id} ${answer}, decision: ${question}. Show decision` : `Decision ${id}: ${question}${answer ? ` ${answer}` : ""}. Show decision`}
+        aria-describedby={peek ? pid : undefined}
+        onClick={onJump}
+      >
+        {id}
+        {labelMode && answer ? <span className="an"> {answer}</span> : null}
+        {where ? (
+          <span className="ar" aria-hidden="true">
+            {where === "above" ? "↑" : "↓"}
+          </span>
+        ) : null}
+      </button>
+      {peek ? (
+        <span className="peekcard" id={pid} role="tooltip" data-up={peek.up ? "" : undefined} onPointerLeave={() => (lastClose = performance.now())}>
+          <span className="q">{question}</span>
+          {answer ? (
+            <span className="a">
+              {answer}
+              {decision && !decision.accepted_recommendation ? <span className="yc">{COPY.yourCall}</span> : null}
+            </span>
+          ) : null}
+          <span className="m">
+            {id}
+            {decision ? "" : " · Will be asked again"}
+          </span>
+          <span className="f">
+            <button type="button" className="btn quiet sm" onClick={onJump}>
+              Show decision <span className="k" aria-hidden="true">↵</span>
+            </button>
+          </span>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+// Within 600ms of one popover closing, the next opens at once (§2.3 warm window).
+let lastClose = 0;
+const warm = () => performance.now() - lastClose < 600;
+
 function DecisionsTab({
   session,
   openKeys,
   agentName,
+  mobile,
+  psg,
+  label,
   onShow,
   renderOpen,
+  save,
 }: {
   session: SessionView;
   openKeys: string[];
   agentName: string;
+  mobile: boolean;
+  psg: { id: string; keys: string[] }[];
+  label: (key: string) => string;
   onShow: (key: string) => void;
   renderOpen: DecisionRenderer;
+  save: (key: string, open: boolean, pick: { optionId: string; text?: string }) => Promise<void>;
 }) {
-  // With decisions still open they come first and the resolved log starts collapsed (v1.1 frame d-tab-early).
+  // With decisions still open they come first and the resolved log starts collapsed (§4).
   const [expanded, setExpanded] = useState(!openKeys.length);
-  const decisions = Object.values(session.decisions);
+  const [changing, setChanging] = useState<string | null>(null);
+  const [saved, setSaved] = useState("");
+  const [cur, setCur] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const openBefore = useRef(openKeys);
+  // Answering an open one here says so inline (§4, board 5).
+  useEffect(() => {
+    const done = openBefore.current.filter((k) => !openKeys.includes(k) && session.decisions[k]);
+    openBefore.current = openKeys;
+    if (done.length) setSaved(fmt(COPY.savedQuestion, { question: session.decisions[done[0]].title }));
+  }, [openKeys.join(" ")]);
   const byRound = useMemo(() => {
     const m = new Map<number, Decision[]>();
-    for (const d of decisions) m.set(d.round, [...(m.get(d.round) ?? []), d]);
+    for (const d of Object.values(session.decisions)) m.set(d.round, [...(m.get(d.round) ?? []), d]);
+    for (const ds of m.values()) ds.sort((a, b) => label(a.key).localeCompare(label(b.key), undefined, { numeric: true }));
     return [...m.entries()].sort((a, b) => b[0] - a[0]);
-  }, [decisions]);
-  const label = (d: Decision) => {
-    const r = session.rounds.find((x) => x.n === d.round);
-    const i = r ? r.questions.findIndex((q) => q.key === d.key) : -1;
-    return `R${d.round}·${i + 1}`;
+  }, [session.decisions, session.rounds]);
+  const flat = byRound.flatMap(([, ds]) => ds);
+  const resolved = flat.length;
+  const rows = () => [...(listRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];
+  const move = (i: number) => {
+    const n = Math.max(0, Math.min(flat.length - 1, i));
+    setCur(n);
+    rows()[n]?.focus();
   };
   return (
     <div className="doc">
       <h1>Decisions</h1>
       <p className="sub">{COPY.decisionsLead}</p>
+      {saved ? (
+        <p className="fb" role="status">
+          <ICheck s={14} />
+          {saved}
+        </p>
+      ) : null}
       {openKeys.length ? (
-        <section className="dgrp" aria-labelledby="still-open">
-          <h2 id="still-open">Still open · {openKeys.length}</h2>
+        <section className="dgrp-open" aria-labelledby="still-open">
+          <h2 id="still-open">
+            Open<span className="ct"> {openKeys.length}</span>
+          </h2>
           <p className="sub">{fmt(COPY.openLead, { agent: agentName })}</p>
           {openKeys.map((key) => {
             const q = questionFor(session, key)!;
-            const r = session.rounds.find((x) => x.questions.includes(q));
-            const i = r ? r.questions.indexOf(q) + 1 : 0;
-            return <div key={key}>{renderOpen({ id: `R${r?.n ?? 0}·${i}`, key, question: q.title, status: "open" }, { invalid: false, active: false, setActive: () => {} })}</div>;
+            return <div key={key}>{renderOpen({ id: label(key), key, question: q.title, status: "open" }, { invalid: false, active: false, setActive: () => {} })}</div>;
           })}
         </section>
       ) : null}
@@ -356,7 +510,7 @@ function DecisionsTab({
         <h2>
           <button type="button" className="acc-h" aria-expanded={expanded} aria-controls="acc-resolved" onClick={() => setExpanded(!expanded)}>
             <IDown s={14} />
-            {decisions.length} resolved{" "}
+            {resolved} resolved{" "}
             <span className="acc-sub">
               {expanded || !byRound.length
                 ? COPY.resolvedNewest
@@ -366,23 +520,94 @@ function DecisionsTab({
             </span>
           </button>
         </h2>
-        <div id="acc-resolved" hidden={!expanded}>
+        <div id="acc-resolved" hidden={!expanded} ref={listRef}>
           {byRound.map(([round, ds]) => (
             <div key={round} className="dgrp">
               <h3>Round {round}</h3>
               <ul className="dlist">
-                {ds.map((d) => (
-                  <li key={d.key} className="drow">
-                    <span className="drow-id">{label(d)}</span>
-                    <span className="drow-t">{nameOf(d)}</span>
-                    <span className="drow-a">{d.answer}</span>
-                    {/* Only the rows where the user overrode the suggestion are marked (v1.2 review). */}
-                    <span className={d.accepted_recommendation ? "drow-by" : "drow-by yc"}>{d.accepted_recommendation ? null : "Your call"}</span>
-                    <button type="button" className="btn quiet sm" aria-label={`Show in plan: ${nameOf(d)}`} onClick={() => onShow(d.key)}>
-                      Show in plan
-                    </button>
-                  </li>
-                ))}
+                {ds.map((d) => {
+                  const i = flat.indexOf(d);
+                  const orphan = !psg.some((p) => p.keys.includes(d.key));
+                  const q = questionFor(session, d.key);
+                  const by = d.accepted_recommendation ? null : COPY.yourCall;
+                  if (changing === d.key && q)
+                    return (
+                      <li key={d.key} className="drow-chg">
+                        <DecisionCard
+                          fields={{ id: label(d.key), key: d.key, question: d.title, answer: d.answer }}
+                          state="settled"
+                          question={q}
+                          dependents={dependentsOf(session, d.key).map((k) => nameOf(session.decisions[k]))}
+                          passages={psg.filter((p) => p.keys.includes(d.key)).map((p) => p.id)}
+                          onActive={() => {}}
+                          onSave={(pick) => save(d.key, false, pick)}
+                          agentName={agentName}
+                          startExpanded
+                          onClose={() => {
+                            setChanging(null);
+                            requestAnimationFrame(() => rows()[i]?.focus());
+                          }}
+                        />
+                      </li>
+                    );
+                  return (
+                    <li
+                      key={d.key}
+                      className="drow"
+                      data-row
+                      tabIndex={i === cur ? 0 : -1}
+                      aria-label={`${d.title} ${d.answer}${by ? `, ${by}` : ""}`}
+                      onFocus={() => setCur(i)}
+                      onClick={mobile ? () => onShow(d.key) : undefined}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) {
+                          if (e.key === "ArrowLeft") {
+                            e.preventDefault();
+                            e.currentTarget.focus();
+                          }
+                          return;
+                        }
+                        if (e.key === "ArrowDown") move(i + 1);
+                        else if (e.key === "ArrowUp") move(i - 1);
+                        else if (e.key === "Home") move(0);
+                        else if (e.key === "End") move(flat.length - 1);
+                        else if (e.key === "Enter") onShow(d.key);
+                        else if (e.key === "ArrowRight") e.currentTarget.querySelector<HTMLElement>(".drow-chg-btn")?.focus();
+                        else return;
+                        e.preventDefault();
+                      }}
+                    >
+                      <span className="drow-q">{d.title}</span>
+                      <span className="drow-a">
+                        {d.answer}
+                        {by ? <span className="yc">{by}</span> : null}
+                        {orphan ? (
+                          <span className="orph">
+                            <IAlert s={12} />
+                            Not in the plan text yet
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="drow-m">
+                        {label(d.key)} · {d.accepted_recommendation ? COPY.youKept : COPY.you}
+                      </span>
+                      {mobile ? (
+                        <IChev s={14} />
+                      ) : (
+                        <span className="drow-ra">
+                          <button type="button" className="btn quiet sm" tabIndex={-1} aria-label={`Show in plan: ${nameOf(d)}`} onClick={() => onShow(d.key)}>
+                            Show in plan
+                          </button>
+                          {q && session.status === "plated" && !session.busy ? (
+                            <button type="button" className="btn quiet sm drow-chg-btn" tabIndex={-1} aria-label={`Change ${nameOf(d)}`} onClick={() => setChanging(d.key)}>
+                              Change
+                            </button>
+                          ) : null}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}
@@ -451,8 +676,4 @@ function AnswerChangeBanner({
       </span>
     </div>
   );
-}
-
-function listOf(names: string[]): string {
-  return names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }

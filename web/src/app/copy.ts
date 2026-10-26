@@ -2,11 +2,17 @@
 // `fmt`; never build these sentences by concatenation, and never write an agent's name in code.
 export const COPY = {
   openLead: "Answer here or in the plan. {agent} can fold your answers into the plan text later.",
-  decisionsLead: "Every answer from this session. Change one in the plan; what depends on it is asked again.",
-  waiting: "Asking again: {list}. {agent} is writing the next questions; the plan is read-only until then.",
+  decisionsLead: "Every answer from this session. Change one here or in the plan, and anything that depends on it is asked again.",
+  reasking: "Saved. {agent} will ask {questions} again, then update the {n} that mention these answers.",
+  external: "plan.md now says “{to}” instead of “{from}”, so {list} will be asked again once you confirm.",
+  savedQuestion: "Saved “{question}”",
+  pickedBy: "Picked by {agent}",
+  you: "You",
+  youKept: "You kept the suggestion",
+  yourCall: "Your call",
+  changedWas: "Changed just now · was {was}",
+  authBanner: "To keep going, log in to {agent}: {how}, then come back (your answers are saved).",
   agentChip: "Agent: {agent}",
-  answered: "Answered by {who} · {when}",
-  answeredBy: "Answered by {who}",
   resolvedNewest: "Newest first",
   resolvedRounds: "Rounds {first}–{last}",
 } as const;

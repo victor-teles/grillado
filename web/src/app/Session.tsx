@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
+import { COPY } from "./copy";
+import { confirmCounts, countText, plural, stillOpen } from "./counts";
 import { IAlert, IClock, IKey, ISq, IWifi } from "./icons";
 import { PlanView } from "./Plan";
 import { FiringUp, RoundView, SessionBody, Strip, WaitingView } from "./Round";
@@ -65,14 +67,11 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
     </button>
   ) : null;
   const copy = {
+    // One sentence, no title line (PR #2 review): "To keep going, log in to {agent}: run `claude` …, then come back (…)."
     auth: {
       icon: <IKey s={16} />,
-      title: `Log in to ${name} to continue`,
-      body: (
-        <>
-          <Cmds text={provider?.loginHint ?? "Log in with the agent's own command"} />, then come back. Your answers are saved.
-        </>
-      ),
+      title: "",
+      body: authSentence(name, provider?.loginHint ?? "Log in with the agent's own command"),
       retry: "I've logged in, retry",
     },
     rate_limit: { icon: <IClock s={16} />, title: `${name} needs a short break`, body: "It hit its usage limit. Try again in a few minutes, or switch agents.", retry: "Retry" },
@@ -89,7 +88,7 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
         {copy.icon}
       </span>
       <div>
-        <p className="t">{copy.title}</p>
+        {copy.title ? <p className="t">{copy.title}</p> : null}
         <p>{copy.body}</p>
       </div>
       <div className="acts">
@@ -99,6 +98,18 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
         </button>
       </div>
     </div>
+  );
+}
+
+/** COPY.authBanner with the agent's login hint as inline commands ("Run `claude` …" → "run `claude` …"). */
+function authSentence(agent: string, hint: string) {
+  const [before, after] = COPY.authBanner.replace("{agent}", agent).split("{how}");
+  return (
+    <>
+      {before}
+      <Cmds text={hint.charAt(0).toLowerCase() + hint.slice(1)} />
+      {after}
+    </>
   );
 }
 
@@ -246,8 +257,11 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
   const all = groupDecisions(session).flatMap((g) => g.items);
   const n = all.length;
   const plate = () => quiet(act("confirm"));
-  const open = session.tree.nodes.filter((x) => x.id !== session.tree.rootId && x.status !== "settled");
+  // The same open set the plan will list (counts.ts), so this screen and the plan agree.
+  const open = stillOpen(session).map((q) => ({ id: q.key, label: q.label || q.title }));
   const early = open.length > 0;
+  const cc = confirmCounts(session);
+  const counts = countText(cc);
   // Long lists fold after six rows; group headings only on an early wrap (v1.2).
   const fold = all.length > SHOW + 2 && !more;
   const shown = fold ? all.slice(0, SHOW) : all;
@@ -282,6 +296,8 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
     <SessionBody
       session={session}
       compact
+      // Same source as the title and the plan it will write (item 2 §4); the tree's own count includes upcoming nodes.
+      sideSub={early ? `${cc.resolved} settled · ${cc.open} open` : undefined}
       previewStale={preview}
       main={
         <div className="main" style={{ gridTemplateRows: mobile ? "minmax(0,1fr) auto" : "minmax(0,1fr)" }}>
@@ -292,8 +308,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
                 {/* Victor, v1.2 review: an early wrap asks the real question; no kicker above the title (C6). */}
                 <h1 id="confirm-title">{early ? `Wrap up with ${open.length} still open?` : "Is it done?"}</h1>
                 <p>
-                  {n} {n === 1 ? "decision" : "decisions"} settled,{" "}
-                  {early ? `${open.length} still open. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : "nothing open."} Read them over before the plan gets written.
+                  {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : `${plural(n, "decision")} settled, nothing open.`} Read them over before the plan gets written.
                 </p>
               </div>
               <div className="dl">

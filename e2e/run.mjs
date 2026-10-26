@@ -359,17 +359,40 @@ try {
   await page.keyboard.press("Escape");
   check("no Decisions log rail (Q1)", (await page.locator("aside.side2").count()) === 0 && (await page.getByText("Decisions log").count()) === 0);
   check("save status persists as 'Plated · saved to plan.md' (replaces the 'Saved to disk' badge)", (await page.getByTestId("save-status").textContent())?.includes("Plated · saved to plan.md"));
-  const cites = page.locator("[data-testid=plan] .cite");
-  check("citations render as R·n chips", (await cites.count()) === 3 && (await cites.nth(1).textContent()) === "R1·2", await cites.allTextContents().then((t) => t.join(" ")));
-  check("document shows chips and decision cards, not raw ids or YAML", !/\[R\d+:|kept_suggestion/.test(await page.getByTestId("plan").textContent()));
+  // Item 2 handoff: cites live in the right margin (.gut), one per passage, labelled R·n.
+  const cites = page.locator("[data-testid=plan] .gut-cite");
+  check("citations render as R·n margin cites", (await cites.count()) === 3 && ((await cites.nth(1).textContent()) ?? "").startsWith("R1·2"), await cites.allTextContents().then((t) => t.join(" ")));
+  const [citeBox, docBox] = [await cites.nth(1).boundingBox(), await page.locator("[data-testid=plan] .ps").nth(1).boundingBox()];
+  check("margin cites sit to the RIGHT of the text column", !!citeBox && !!docBox && citeBox.x > docBox.x + docBox.width - 1, JSON.stringify([citeBox, docBox]));
+  check("document shows cites and decision cards, not raw ids or YAML", !/\[R\d+:|kept_suggestion/.test(await page.getByTestId("plan").textContent()));
   const cards = page.locator("[data-testid=plan] .dz");
-  check("each decision renders as a compact card", (await cards.count()) === 3 && (await page.getByRole("group", { name: "Decision R1·2" }).count()) === 1);
-  await cites.nth(1).click();
-  check("a citation moves focus to its decision card", await page.evaluate(() => document.activeElement?.matches(".dz[data-key=platform]")));
-  check("focusing a card highlights the passages that cite it", (await page.locator("[data-testid=plan] mark.ctx").count()) === 1 && ((await page.locator("mark.ctx").textContent()) ?? "").includes("Mobile app"), (await page.locator("[data-testid=plan] mark.ctx").allTextContents()).join(" | "));
+  check("each decision renders as a compact card", (await cards.count()) === 3 && (await page.getByRole("group", { name: /^Decision R1·2/ }).count()) === 1);
+  // Hovering a passage lights its decision after the 120ms intent delay, and the margin cite shows the answer.
+  const ps2 = page.locator("[data-testid=plan] .ps[data-keys~=platform]").first();
+  await ps2.hover();
+  await page.waitForTimeout(60);
+  const early = await page.locator(".dz[data-key=platform].lk").count();
+  await page.waitForTimeout(200);
+  check("hovering text lights its decision only after the 120ms intent", early === 0 && (await page.locator(".dz[data-key=platform].lk").count()) === 1 && (await ps2.evaluate((e) => e.classList.contains("lk"))));
+  const litCite = page.locator(".gut-cite.on").first();
+  check("the lit margin cite carries a label with the answer", ((await litCite.textContent()) ?? "").includes("Mobile app"), await litCite.textContent());
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(400);
+  check("leaving the text clears the link", (await page.locator(".dz.lk, .ps.lk").count()) === 0);
+  // Hover a cite: the preview opens after 300ms; Esc closes it; Enter jumps.
+  await page.locator("[data-testid=plan] .blk").filter({ has: page.locator(".ps[data-keys~=platform]") }).first().hover();
+  await page.locator(".gut-cite", { hasText: "R1·2" }).first().hover();
+  await page.getByRole("tooltip").waitFor({ timeout: 2000 });
+  check("cite preview shows the question and answer", ((await page.getByRole("tooltip").textContent()) ?? "").includes("Mobile app"));
+  await page.locator(".gut-cite", { hasText: "R1·2" }).first().click();
+  await page.waitForTimeout(100);
+  check("a margin cite moves focus to its decision card", await page.evaluate(() => document.activeElement?.matches(".dz[data-key=platform]")));
+  check("focusing a card lights the passages that cite it", (await page.locator("[data-testid=plan] .ps.lk").count()) >= 1 && ((await page.locator(".ps.lk").first().textContent()) ?? "").includes("Mobile app"), (await page.locator("[data-testid=plan] .ps.lk").allTextContents()).join(" | "));
   // v1.1 backlog item 2: each block says who answered and when (meta line, from by: and at:).
-  check("decision card says who answered and when", /^Answered by you · [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$/.test(((await page.locator(".dz[data-key=platform] .dz-when").textContent()) ?? "").trim()), await page.locator(".dz[data-key=platform] .dz-when").textContent());
+  check("decision card says who answered and when", /^(You|You kept the suggestion), [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s?[AP]M$/.test(((await page.locator(".dz[data-key=platform] .dz-when").textContent()) ?? "").trim()), await page.locator(".dz[data-key=platform] .dz-when").textContent());
   check("card points at its passages (aria-describedby)", !!(await page.locator(".dz[data-key=platform]").getAttribute("aria-describedby")));
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(300);
   const axePlan = await new AxeBuilder({ page }).analyze();
   check("axe: plan view (light)", axePlan.violations.length === 0, axePlan.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
   // Decisions tab (manual activation): arrows move focus, Enter selects.
@@ -379,6 +402,11 @@ try {
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Decisions", level: 1 }).waitFor();
   check("Decisions tab lists every answer by round", (await page.locator(".drow").count()) === 3 && (await page.getByRole("heading", { name: "Round 2" }).count()) === 1);
+  check("Decisions is a page tab next to Document", (await page.getByRole("tablist").getByRole("tab").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()).join("|") === "Document|Decisions 3", (await page.getByRole("tablist").getByRole("tab").allTextContents()).join("|"));
+  // Roving rows: ↓ moves, Enter shows in plan (checked below via the button).
+  await page.locator(".drow").first().focus();
+  await page.keyboard.press("ArrowDown");
+  check("Decisions rows: arrow keys move between rows", await page.evaluate(() => document.activeElement === document.querySelectorAll(".drow")[1]));
   // The "n resolved" accordion: open when nothing is open, chevron + "Newest first"; collapsing hides the log.
   const accH = page.locator(".acc-h");
   check("'3 resolved' accordion starts open, newest first", (await accH.getAttribute("aria-expanded")) === "true" && ((await accH.textContent()) ?? "").replace(/\s+/g, " ").trim() === "3 resolved Newest first", await accH.textContent());
@@ -389,7 +417,7 @@ try {
   const axeTab = await new AxeBuilder({ page }).analyze();
   check("axe: Decisions tab (light)", axeTab.violations.length === 0, axeTab.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
   await page.getByRole("button", { name: "Show in plan: Storage" }).click();
-  await page.locator("mark.ctx").first().waitFor({ timeout: 2000 });
+  await page.locator(".dz[data-key=storage][data-fl]").first().waitFor({ timeout: 2000 });
   check("Show in plan returns to the document and highlights the passage", (await page.getByRole("tab", { name: /Document/ }).getAttribute("aria-selected")) === "true");
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "Dark theme" }).click();
@@ -715,7 +743,7 @@ try {
     await scope.locator(".dz-opts").waitFor({ state: "detached" });
     await page.waitForFunction((a) => document.querySelector(".dz[data-key=scope] .dz-av")?.textContent?.trim() === a, newAnswer);
     const note = (await scope.locator(".dz-n").first().textContent().catch(() => "")) ?? "";
-    const bullets = await page.locator("[data-testid=plan] li").allInnerTexts();
+    const bullets = await page.locator("[data-testid=plan] li .ps").allInnerTexts();
     const disk = readFileSync(planFile, "utf8");
     check("Save answer: the card's note no longer states the old answer", !note.includes(oldAnswer) && (note === "" || note.includes(newAnswer)), `${oldAnswer} -> ${newAnswer}: ${note}`);
     check("Save answer: the bullet citing the decision says the new answer", bullets.some((b) => b.startsWith(newAnswer)) && !bullets.some((b) => b.startsWith(oldAnswer)), bullets.join(" | "));
@@ -812,6 +840,53 @@ try {
     await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
     const s22 = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
     check("#22 Markdown: saving writes the answer and re-asks the dependents in a new round", readFileSync(planFile2, "utf8").includes("key: platform\nquestion: Start on the web?\nanswer: Mobile app") && s22.stale?.storage && !s22.decisions.storage && s22.rounds.at(-1).questions.some((q) => q.key === "storage"));
+
+    // DECISIONS #26: `answer:` edited outside Grillado is a Change. Notice in place, nothing reruns until confirmed.
+    const sessFile = path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json");
+    const readSess = () => JSON.parse(readFileSync(sessFile, "utf8"));
+    const replate = async () => {
+      await page.locator("[data-testid=question] legend").first().focus();
+      await page.keyboard.press("1");
+      await page.keyboard.press("Enter");
+      await page.getByRole("button", { name: "Yes, plate it" }).click();
+      await page.getByTestId("plan").waitFor({ timeout: 15_000 });
+      await page.waitForFunction(() => !document.querySelector(".dz[data-state=stale]"), null, { timeout: 15_000 });
+    };
+    await replate();
+    if ((await page.getByTestId("plan-raw").count()) > 0) await toMode("Rich");
+    const setFileAnswer = (to) => {
+      const md = readFileSync(planFile2, "utf8").replace(/(key: platform\nquestion: [^\n]*\nanswer: )[^\n]*/, `$1${to}`);
+      writeFileSync(planFile2, md);
+    };
+    const roundsBefore = readSess().rounds.length;
+    setFileAnswer("  mobile   APP ");
+    await page.waitForTimeout(1500);
+    check("#26 a whitespace/casing-only edit of answer: is ignored", (await page.locator(".fb.ext").count()) === 0 && readSess().rounds.length === roundsBefore && readSess().status === "plated" && !readSess().plan?.external?.length);
+    setFileAnswer("Web app");
+    const ext = page.locator(".dz[data-key=platform] .fb.ext");
+    await ext.waitFor({ timeout: 5000 });
+    const extText = ((await ext.textContent()) ?? "").replace(/\s+/g, " ");
+    check("#26 an external edit shows a one-sentence notice under the decision, naming the dependents", extText.includes("Web app") && extText.includes("Storage") && (await page.locator(".pbanner").count()) === 0, extText);
+    check("#26 nothing reruns until confirmed", readSess().rounds.length === roundsBefore && readSess().status === "plated");
+    const axe26 = await new AxeBuilder({ page }).analyze();
+    check("axe: external-edit notice", axe26.violations.length === 0, axeIds(axe26));
+    await shot(page, "external-edit-notice");
+    await ext.getByRole("button", { name: "Not now" }).click();
+    const staleCard = page.locator(".dz[data-key=storage][data-state=stale]");
+    await staleCard.waitFor({ timeout: 5000 });
+    const sDis = readSess();
+    check("#26 dismissing keeps the new answer and marks the dependents stale, no rerun", sDis.decisions.platform?.answer === "Web app" && sDis.stale?.storage && sDis.rounds.length === roundsBefore && sDis.status === "plated" && (await staleCard.getByRole("button", { name: /^Re-ask/ }).count()) === 1);
+    await staleCard.getByRole("button", { name: /^Re-ask/ }).click();
+    await page.locator("[data-testid=question]").getByText("Keep data local first?").first().waitFor({ timeout: 15_000 });
+    check("#26 Re-ask on a stale dependent asks it again", readSess().rounds.length === roundsBefore + 1 && readSess().rounds.at(-1).questions.some((q) => q.key === "storage"));
+    await replate();
+    const roundsB = readSess().rounds.length;
+    setFileAnswer("Mobile app");
+    await ext.waitFor({ timeout: 5000 });
+    await ext.getByRole("button", { name: /^Re-ask/ }).click();
+    await page.locator("[data-testid=question]").getByText("Keep data local first?").first().waitFor({ timeout: 15_000 });
+    const sCon = readSess();
+    check("#26 confirming re-asks the dependents", sCon.decisions.platform?.answer === "Mobile app" && sCon.rounds.length === roundsB + 1 && sCon.rounds.at(-1).questions.some((q) => q.key === "storage") && !sCon.decisions.storage);
   }
   check("restart: second server exits 0", (await stop(again, "SIGINT")).code === 0);
   await context.close();
@@ -856,11 +931,11 @@ try {
     await pg.keyboard.press("Enter");
     const banner = pg.getByTestId("problem");
     await banner.waitFor({ timeout: 15_000 });
-    check("auth error shown as 'Log in to …' (AC8)", (await banner.getAttribute("data-code")) === "auth" && /Log in to Claude Code/.test(await banner.textContent()));
+    check("auth error shown as 'Log in to …' (AC8)", (await banner.getAttribute("data-code")) === "auth" && /log in to Claude Code/i.test(await banner.textContent()) && (await banner.locator(".t").count()) === 0);
     await shot(pg, "auth-error");
     check("auth banner offers retry", (await pg.getByRole("button", { name: "I've logged in, retry" }).count()) === 1);
-    const authBody = banner.locator("p").nth(1);
-    check("auth banner is one sentence with the agent's command as inline code (v1.2 review)", ((await authBody.textContent()) ?? "").replace(/\s+/g, " ").trim() === "Run claude in a terminal and use /login, then come back. Your answers are saved." && (await authBody.locator("code").textContent()) === "claude", await authBody.textContent());
+    const authBody = banner.locator("p").first();
+    check("auth banner is one sentence, no title, agent name templated (item 2 leftover 1)", ((await authBody.textContent()) ?? "").replace(/\s+/g, " ").trim() === "To keep going, log in to Claude Code: run claude in a terminal and use /login, then come back (your answers are saved)." && (await authBody.locator("code").textContent()) === "claude", await authBody.textContent());
     const inlCopy = authBody.getByRole("button", { name: "Copy claude" });
     const icon = await inlCopy.locator("svg").boundingBox();
     check("the inline copy button has a 14px icon", icon && Math.round(icon.width) === 14, JSON.stringify(icon));
@@ -936,6 +1011,12 @@ try {
     const earlyTitle = pg.getByRole("heading", { level: 1, name: /^Wrap up with \d+ still open\?$/ });
     await earlyTitle.waitFor({ timeout: 15_000 });
     check("early confirm title is 'Wrap up with n still open?' (Victor, v1.2 review)", /^Wrap up with \d+ still open\?$/.test(((await earlyTitle.textContent()) ?? "").trim()), await earlyTitle.textContent());
+    const confirmOpen = Number(/(\d+) still open/.exec((await earlyTitle.textContent()) ?? "")?.[1]);
+    const confirmLine = /\d+ decisions? settled, \d+ still open/.exec((await pg.getByText(/decisions? settled, \d+ still open/).first().textContent()) ?? "")?.[0] ?? "";
+    check("early confirm: the counts read 'n decisions settled, k still open'", confirmLine.endsWith(` ${confirmOpen} still open`), confirmLine);
+    const confirmSettled = Number(/^(\d+)/.exec(confirmLine)?.[1]);
+    const sideSub = ((await pg.getByTestId("side-sub").first().textContent()) ?? "").trim();
+    check("early confirm: the Decisions panel count matches the title", sideSub === `${confirmSettled} settled · ${confirmOpen} open`, `${sideSub} vs ${confirmLine}`);
     check("early confirm has no kicker above the title (C6)", (await pg.getByText(/Wrapping up early|Nothing left open/).count()) === 0);
     check("early confirm lists Still open first", (await pg.locator(".dl h2").first().textContent()) === "Still open", await pg.locator(".dl h2").allTextContents().then((t) => t.join(",")));
     const axeM = await new AxeBuilder({ page: pg }).analyze();
@@ -963,6 +1044,16 @@ try {
     const openN = await pg.locator("[data-testid=plan] .dz[data-state=open]").count();
     const status = ((await pg.getByTestId("save-status").textContent()) ?? "").trim();
     check("save status reads 'Saved · n open'", status === `Saved · ${openN} open`, status);
+    // Item 2 handoff §4: one source for every count. Confirm, plan meta, tab and the Open heading agree.
+    const total = confirmSettled + confirmOpen;
+    const tabTxt = ((await pg.getByRole("tab", { name: /Decisions/ }).textContent()) ?? "").replace(/\s+/g, " ").trim();
+    const metaTxt = ((await pg.getByTestId("plan-meta").textContent()) ?? "").trim();
+    const openH = ((await pg.locator("[data-testid=plan] h2").first().textContent()) ?? "").replace(/\s+/g, " ").trim();
+    check(
+      "counts agree: confirm, plan meta, tab, Open heading and status",
+      openN === confirmOpen && tabTxt === `Decisions ${total} · ${confirmOpen} open` && metaTxt.endsWith(`${total} decisions · ${confirmOpen} open`) && openH === `Open decisions ${confirmOpen}`,
+      `${confirmLine} | ${tabTxt} | ${metaTxt} | ${openH} | ${status}`,
+    );
     const axeE = await new AxeBuilder({ page: pg }).analyze();
     check("axe: plan with open decisions (light)", axeE.violations.length === 0, axeE.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
     await answerBtn.click();
@@ -971,7 +1062,7 @@ try {
     await pg.getByRole("tab", { name: /Decisions/ }).click();
     await pg.getByRole("heading", { name: "Decisions", level: 1 }).waitFor();
     const accE = pg.locator(".acc-h");
-    check("with open decisions the Decisions tab shows Still open first and the resolved log collapsed", (await pg.locator(".dtab h2").first().textContent())?.startsWith("Still open") && (await accE.getAttribute("aria-expanded")) === "false" && (await pg.locator("#acc-resolved").isHidden()), `${await pg.locator(".dtab h2").first().textContent()} | ${await accE.textContent()}`);
+    check("with open decisions the Decisions tab shows Open first and the resolved log collapsed", (await pg.locator(".dtab h2").first().textContent())?.startsWith("Open") && (await accE.getAttribute("aria-expanded")) === "false" && (await pg.locator("#acc-resolved").isHidden()), `${await pg.locator(".dtab h2").first().textContent()} | ${await accE.textContent()}`);
     const axeD = await new AxeBuilder({ page: pg }).analyze();
     check("axe: Decisions tab with open decisions, resolved collapsed (mobile)", axeD.violations.length === 0, axeIds(axeD));
     await ctx.close();

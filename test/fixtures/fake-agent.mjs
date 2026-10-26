@@ -162,12 +162,39 @@ function roundReply() {
   return { type: "frontier_empty", summary: "Everything is settled.", questions: [] };
 }
 
+// FAKE_MODE=long writes plan prose a reader would recognize (item 2 handoff nice-to-have): each
+// decision lands in a section as a sentence, so passages and cites look real.
+const PROSE = {
+  audience: ["Who it's for", { Yes: "it's built for the person writing it first, so every rough edge gets felt the same day", No: "it's built for a small group from day one, so onboarding has to work on the first try" }],
+  budget: ["Who it's for", { Yes: "it stays free to run: no servers to pay for, and everything works on a laptop", No: "a small monthly bill is fine if it buys hosted search and backups" }],
+  core: ["Scope", { Yes: "the capture flow comes first. Opening the app and saving a thought takes under two seconds", No: "the review flow comes first, and capture borrows the system share sheet" }],
+  sync: ["Data", { Yes: "notes sync across devices through a single folder the user already backs up", No: "notes stay on one device until there is a reason to sync" }],
+  backup: ["Data", { Yes: "a nightly copy goes to a dated folder, and the last seven are kept", No: "backups are left to the user's own tools" }],
+  launch: ["Launch", { Yes: "it goes to five friends first, with a short note asking what they gave up on", No: "it launches publicly with a short changelog" }],
+};
+const FEATURE = { Yes: "is in v1", No: "waits until after v1" };
+function prose(d) {
+  const p = PROSE[d.key];
+  const cap = (t) => t[0].toUpperCase() + t.slice(1);
+  if (p) return [p[0], `${cap(p[1][d.answer] ?? `${d.key}: ${d.answer}`)} [R${d.round}:${d.key}].`];
+  return ["Scope", `${cap(d.key)} ${FEATURE[d.answer] ?? `: ${d.answer}`} [R${d.round}:${d.key}].`];
+}
+function longMarkdown(ds) {
+  const sections = new Map();
+  for (const d of ds) {
+    const [h, line] = prose(d);
+    sections.set(h, [...(sections.get(h) ?? []), line]);
+  }
+  const body = [...sections].map(([h, lines]) => `## ${h}\n${lines.join(" ")}`).join("\n\n");
+  return `## Problem\n${state.idea}. Ideas show up while walking or in the middle of something else, and most of them are gone by the time a laptop is open.\n\n${body}`;
+}
+
 function planReply() {
   const ds = state.decisions ?? [];
   return {
     type: "plan",
     title: `Plan: ${state.idea}`,
-    markdown: `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`,
+    markdown: mode === "long" ? longMarkdown(ds) : `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`,
     decisions: ds.map((d) => ({ round: d.round, questionId: d.key, statement: `Decided: ${d.answer}.` })),
     openDecisions: state.openDecisions ?? [],
   };
