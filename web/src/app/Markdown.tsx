@@ -17,6 +17,20 @@ export function editLabel(b: Block): string {
 }
 
 export type CiteRenderer = (round: number, key: string, n: number) => ReactNode;
+
+/** Plan text ↔ decision linking (item 2 handoff §2). */
+export interface PassageLink {
+  /** Decision hovered or focused: all its passages light up. */
+  active: string | null;
+  /** Passage hovered (after the 120ms intent): only it lights up. */
+  hover: string | null;
+  /** Keys whose passages go muted while they're asked again. */
+  stale: Set<string>;
+  onEnter: (id: string, keys: string[]) => void;
+  onLeave: (id: string) => void;
+  /** The passage's right-margin cites. */
+  gut?: (keys: string[], id: string) => ReactNode;
+}
 export type FenceBlock = Extract<Block, { kind: "fence" }>;
 
 /**
@@ -36,7 +50,7 @@ export function Markdown({
   onBlock,
   edit,
   decision,
-  active,
+  link,
 }: {
   source: string;
   cite?: CiteRenderer;
@@ -46,8 +60,7 @@ export function Markdown({
   edit?: { start: number; end: number; node: ReactNode };
   /** Renders a ```decision fence (the n-th in the document). */
   decision?: (b: FenceBlock, n: number) => ReactNode;
-  /** Decision whose context passages are highlighted (`mark.ctx`). */
-  active?: string | null;
+  link?: PassageLink;
 }) {
   const out: ReactNode[] = [];
   let openSection: ReactNode[] | null = null;
@@ -63,20 +76,32 @@ export function Markdown({
   };
   const ctx = { cite, n: 0 };
   let decisions = 0;
-  // A passage (sentence or list item) that cites decisions gets an id, so a decision block can
-  // point at it (aria-describedby), and a mark while its decision is hovered or focused.
+  // A passage (sentence or list item) that cites decisions: `span.ps[id]`, so a decision block can
+  // point at it (aria-describedby) and light it, and hovering it lights its decision (§2.2).
+  // Its cites move from the text to buttons in the right margin (`.gut`, §2.3).
   const passage = (b: Block, i: number, t: string) => {
     const keys = citedKeys(t);
     if (!keys.length) return <Fragment key={i}>{inline(t, ctx)}</Fragment>;
-    const on = !!active && keys.includes(active);
-    return on ? (
-      <mark key={i} id={passageId(b.start, i)} className="ctx">
-        {inline(t, ctx)}
-      </mark>
-    ) : (
-      <span key={i} id={passageId(b.start, i)} className="psg">
-        {inline(t, ctx)}
-      </span>
+    const id = passageId(b.start, i);
+    const lit = !!link && ((!!link.active && keys.includes(link.active)) || link.hover === id);
+    const stale = !!link && keys.some((k) => link.stale.has(k));
+    return (
+      <Fragment key={i}>
+        {link?.gut ? (
+          <span className="gut" contentEditable={false}>
+            {link.gut(keys, id)}
+          </span>
+        ) : null}
+        <span
+          id={id}
+          className={`ps${lit ? " lk" : ""}${stale ? " stale" : ""}`}
+          data-keys={keys.join(" ")}
+          onPointerEnter={link ? () => link.onEnter(id, keys) : undefined}
+          onPointerLeave={link ? () => link.onLeave(id) : undefined}
+        >
+          {inline(link?.gut ? t.replace(new RegExp(`\\s*${CITE.source}`, "g"), "") : t, ctx)}
+        </span>
+      </Fragment>
     );
   };
   let titled = false;

@@ -209,7 +209,9 @@ export interface AnswerEdit {
   to: string;
 }
 
-const same = (a: string, b: string) => clean(a) === clean(b);
+// Whitespace and casing alone never change an answer (DECISIONS #26).
+const norm = (v: string) => clean(v).replace(/\s+/g, " ").toLowerCase();
+const same = (a: string, b: string) => norm(a) === norm(b);
 
 /**
  * Settled answers that hand edits changed: every valid block whose `key` is settled in `answers`

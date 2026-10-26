@@ -14,7 +14,8 @@ import { Autosaver, type SaveState } from "./autosave";
 import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
 import { Diagram } from "./Diagram";
-import { type CiteRenderer, type FenceBlock, Markdown } from "../Markdown";
+import { type CiteRenderer, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
+import { canHover, selecting } from "./link";
 
 export type EditorMode = "rich" | "raw";
 
@@ -236,6 +237,7 @@ export function SaveStatus({
   answerChange,
   edited,
   open,
+  reasking,
 }: {
   save: PlanDraft["save"];
   onRetry: () => void;
@@ -246,6 +248,8 @@ export function SaveStatus({
   edited?: boolean;
   /** Decisions still open in the plan. */
   open?: number;
+  /** Decisions being asked again after a change (§3.5: "Saved · re-asking 1"). */
+  reasking?: number;
 }) {
   const [slow, setSlow] = useState(false);
   const failedRef = useRef(false);
@@ -266,13 +270,13 @@ export function SaveStatus({
   }, [save.state, conflict, answerChange]);
   const state = answerChange ? "held" : conflict ? "pending" : save.state === "saving" && !slow && !save.card ? "pending" : save.state;
   // With open decisions the status reads "Saved · n open" from the start (v1.2 §3).
-  const fresh = state === "idle" && !edited && !open;
+  const fresh = state === "idle" && !edited && !open && !reasking;
   const label = answerChange
     ? "Answer changed · not saved"
     : fresh
       ? "Plated · saved to plan.md"
       : state === "idle" || state === "saved"
-        ? `Saved${open ? ` · ${open} open` : ""}`
+        ? `Saved${reasking ? ` · re-asking ${reasking}` : open ? ` · ${open} open` : ""}`
         : state === "pending"
           ? "Edited · saving soon"
           : state === "saving"
@@ -390,7 +394,13 @@ function BlockEditor({ text, kind, onChange, onDone }: { text: string; kind: Blo
 }
 
 /** Renders a decision block from its last valid fields. */
-export type DecisionRenderer = (fields: DecisionFields, opts: { invalid: boolean; active: boolean; setActive: (on: boolean) => void }) => ReactNode;
+export type DecisionRenderer = (
+  fields: DecisionFields,
+  opts: { invalid: boolean; active: boolean; setActive: (on: boolean) => void; lit?: boolean; litFrom?: string | null },
+) => ReactNode;
+
+/** Right-margin cites of one passage; `label` is the decision lit from this passage (label mode, §2.2). */
+export type GutRenderer = (keys: string[], o: { passage: string; on: string | null; label: string | null }) => ReactNode;
 
 export function PlanEditor({
   draft,
@@ -402,6 +412,8 @@ export function PlanEditor({
   decision,
   readOnly,
   highlight,
+  gut,
+  staleKeys,
 }: {
   draft: PlanDraft;
   mode: EditorMode;
@@ -414,10 +426,40 @@ export function PlanEditor({
   readOnly?: boolean;
   /** "Show in plan": highlight this decision's passages for a moment. */
   highlight?: string | null;
+  gut?: GutRenderer;
+  /** Decisions being asked again: their passages go muted (§3 Reasked). */
+  staleKeys?: Set<string>;
 }) {
   // The block being edited, as a range of the draft. `len` follows the edited text's length.
   const [editing, setEditing] = useState<{ start: number; len: number; text: string; kind: Block["kind"] } | null>(null);
   const [active, setActive] = useState<string | null>(null);
+  // Text → decision (§2.2): the hovered passage, after a 120ms intent; leaving clears after 200ms,
+  // and moving to another passage within that grace swaps at once.
+  const [hover, setHover] = useState<{ id: string; keys: string[] } | null>(null);
+  const hoverT = useRef<{ on?: ReturnType<typeof setTimeout>; off?: ReturnType<typeof setTimeout> }>({});
+  const hoverRef = useRef(hover);
+  hoverRef.current = hover;
+  const link: PassageLink = {
+    active: active ?? highlight ?? null,
+    hover: hover?.id ?? null,
+    stale: staleKeys ?? new Set(),
+    onEnter: (id, keys) => {
+      clearTimeout(hoverT.current.on);
+      clearTimeout(hoverT.current.off);
+      if (!canHover() || selecting() || editing) return;
+      if (hoverRef.current) return setHover({ id, keys });
+      hoverT.current.on = setTimeout(() => !selecting() && setHover({ id, keys }), 120);
+    },
+    onLeave: () => {
+      clearTimeout(hoverT.current.on);
+      hoverT.current.off = setTimeout(() => setHover(null), 200);
+    },
+    gut: gut ? (keys, id) => gut(keys, { passage: id, on: active, label: hover?.id === id ? hover.keys[0] : null }) : undefined,
+  };
+  useEffect(() => () => {
+    clearTimeout(hoverT.current.on);
+    clearTimeout(hoverT.current.off);
+  }, []);
   const articleRef = useRef<HTMLDivElement>(null);
   // Rich mode shows the last valid version of a decision block that doesn't parse (§5).
   const lastValid = useRef(new Map<string, DecisionFields>());
@@ -475,7 +517,13 @@ export function PlanEditor({
         </pre>
       );
     const key = fields.key ?? "";
-    return decision(fields, { invalid: !parsed.ok, active: active === key, setActive: (on) => setActive((cur) => (on ? key : cur === key ? null : cur)) });
+    return decision(fields, {
+      invalid: !parsed.ok,
+      active: active === key,
+      setActive: (on) => setActive((cur) => (on ? (selecting() ? cur : key) : cur === key ? null : cur)),
+      lit: !!hover?.keys.includes(key),
+      litFrom: hover?.keys.includes(key) ? hover.id : null,
+    });
   };
 
   return (
@@ -510,7 +558,7 @@ export function PlanEditor({
             openBadge={openBadge}
             onBlock={readOnly ? undefined : startEdit}
             decision={renderDecision}
-            active={active ?? highlight}
+            link={link}
             edit={
               editing
                 ? {
