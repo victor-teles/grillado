@@ -16,6 +16,7 @@ export const CCOPY = {
   writing: "Writing suggestions",
   writingLive: "{agent} is writing suggestions",
   waiting: "Waiting for the current run",
+  applying: "Applying…",
   stoppedApply: "Stopped · nothing changed",
   couldntApply: "Couldn't write suggestions",
   noChanges: "No changes needed",

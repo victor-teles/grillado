@@ -604,7 +604,7 @@ export function PlanEditor({
             onBlock={readOnly ? undefined : startEdit}
             decision={renderDecision}
             link={link}
-            marks={editing ? undefined : marks}
+            marks={editing && marks ? outside(marks, editing.start, editing.start + editing.len) : marks}
             edit={
               editing
                 ? {
@@ -635,4 +635,10 @@ export function PlanEditor({
       )}
     </div>
   );
+}
+
+/** Marks outside the block being edited: only that block's suggestions and anchors hide while you edit it (item 3 §4.7). */
+function outside(marks: DocMarks, start: number, end: number): DocMarks {
+  const out = (a: { start: number; end: number }) => a.end < start || a.start > end;
+  return { ...marks, anchors: marks.anchors.filter(out), edits: marks.edits.filter(out) };
 }

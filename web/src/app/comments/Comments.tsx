@@ -345,6 +345,7 @@ export function useComments(o: Opts) {
       onReview={reviewThread}
       onShowDecision={o.onShowDecision}
       pending={placed.length}
+      applying={!!session.applying}
     />
   );
   const rail = !mobile && railOpen && o.tab === "doc" ? railBody : null;
@@ -633,6 +634,8 @@ function Rail(p: {
   onReview: (t: CommentThread) => void;
   onShowDecision: (key: string) => void;
   pending: number;
+  /** An "Apply feedback" run is going on some thread: Apply waits for it (no queue yet). */
+  applying: boolean;
 }) {
   const [showResolved, setShowResolved] = useState(false);
   const running = p.open.some((t) => t.run?.state === "running");
@@ -713,7 +716,8 @@ function Rail(p: {
   );
 }
 
-function Thread({ t, md, list, agentName, activeId, hoverId, setActive, setHover, act, onReview, onShowDecision }: Parameters<typeof Rail>[0] & { t: CommentThread }) {
+function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
+  const { t, md, list, agentName, activeId, hoverId, setActive, setHover, act, onReview, onShowDecision } = p;
   const A = (s: string) => fill(s, agentName);
   const [reply, setReply] = useState("");
   const lost = !anchorOf(md, t);
@@ -735,7 +739,7 @@ function Thread({ t, md, list, agentName, activeId, hoverId, setActive, setHover
       className={`th${activeId === t.id || hoverId === t.id ? " on" : ""}`}
       data-thread={t.id}
       tabIndex={-1}
-      aria-label={`Comment on ${sectionOf(md, t)}`}
+      aria-label={`Comment on ${sectionOf(md, t)}: “${plainQuote(t.quote).slice(0, 40)}”`}
       onPointerEnter={() => setHover(t.id)}
       onPointerLeave={() => setHover(null)}
       onFocus={() => setActive(t.id)}
@@ -787,15 +791,15 @@ function Thread({ t, md, list, agentName, activeId, hoverId, setActive, setHover
       {dropped ? (
         <div className="crow">
           <span className="t m">{CCOPY.noFit(dropped)}</span>
-          <button type="button" className="btn quiet" onClick={() => void act(`comments/${t.id}/apply`)}>
+          <button type="button" className="btn quiet" disabled={p.applying} onClick={() => void act(`comments/${t.id}/apply`)}>
             Ask again
           </button>
         </div>
       ) : null}
       {applyOk ? (
         <div className="acts">
-          <button type="button" className="btn primary apply" onClick={() => void act(`comments/${t.id}/apply`)}>
-            Apply feedback
+          <button type="button" className="btn primary apply" disabled={p.applying} onClick={() => void act(`comments/${t.id}/apply`)}>
+            {p.applying ? CCOPY.applying : "Apply feedback"}
           </button>
         </div>
       ) : null}

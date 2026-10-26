@@ -280,6 +280,54 @@ try {
     }
     await s.stop();
 
+    if (theme === "dark") {
+      // ------------------------------------------------ PO follow-ups: "Applying…" and per-block hiding
+      const s3 = await server({ FAKE_COMMENT_DELAY_MS: "1500" });
+      const c3 = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+      const p3 = await c3.newPage();
+      await toPlan(p3, s3.url);
+      const rail3 = p3.getByRole("complementary", { name: "Comments" });
+      const comment = async (quote, text) => {
+        await selectText(p3, quote);
+        await p3.getByRole("toolbar", { name: "Selection" }).waitFor();
+        await p3.keyboard.press("Control+Alt+KeyM");
+        const d = p3.getByRole("dialog", { name: "New comment" });
+        await d.getByRole("textbox").fill(text);
+        await p3.keyboard.press("Control+Enter");
+        await d.waitFor({ state: "hidden" });
+      };
+      await comment("Shared shopping list", "Say who shares it");
+      await comment("Implementation decisions", "Order these");
+      await p3.waitForFunction(() => document.querySelectorAll("[data-thread] .apply").length === 2, null, { timeout: 15000 });
+      const ta = rail3.locator("[data-thread]").filter({ hasText: "Say who shares it" });
+      const tb2 = rail3.locator("[data-thread]").filter({ hasText: "Order these" });
+      await ta.getByRole("button", { name: "Apply feedback" }).click();
+      await ta.getByText("Writing suggestions").waitFor();
+      const other = tb2.locator(".apply");
+      check("while Apply runs, the other thread's Apply is disabled", await other.isDisabled());
+      check("…and labelled Applying…", (await other.textContent()).trim() === "Applying…", await other.textContent());
+      await ta.getByText(/suggestions? ready/).waitFor({ timeout: 15000 });
+      await p3.waitForFunction(() => [...document.querySelectorAll("[data-thread] .apply")].some((b) => !b.disabled && b.textContent.trim() === "Apply feedback"));
+      check("Apply comes back once the run is done", await tb2.getByRole("button", { name: "Apply feedback" }).isEnabled());
+      // Editing one block hides only that block's suggestions (item 3 §4.7, PO call).
+      const total = await p3.locator("ins.sg").count();
+      // Edit the list block: its suggestion hides, the one in the Problem paragraph stays.
+      await p3.locator(".blk").filter({ has: p3.locator("li", { hasText: "Web app" }) }).first().locator(".blk-act").click({ force: true });
+      const ed = p3.locator("[data-editing] textarea").first();
+      await ed.waitFor();
+      const shown = await p3.locator("ins.sg").count();
+      check("editing a block keeps other blocks' suggestions visible", total >= 2 && shown >= 1 && shown < total && (await p3.locator("ins.sg").filter({ hasText: "shared by everyone" }).count()) === 1, `${shown} of ${total}`);
+      check("the edited block's suggestions are hidden", (await p3.locator("[data-editing] ins.sg").count()) === 0 && (await p3.locator("ins.sg").filter({ hasText: "shipped first" }).count()) === 0);
+      // Change the text under that suggestion, then finish: it no longer fits, so it's dropped and flagged.
+      await ed.fill((await ed.inputValue()).replace("Yes, one core flow", "One flow"));
+      await p3.keyboard.press("Escape");
+      await ta.getByText("1 suggestion no longer fits the text").waitFor({ timeout: 10000 });
+      check("on save, a suggestion that no longer fits is dropped and flagged", (await p3.locator("ins.sg").count()) === shown);
+      await axe(p3, "Applying… and per-block hiding");
+      await c3.close();
+      await s3.stop();
+    }
+
     // ---------------------------------------------------------------- mobile (#30)
     const s2 = await server({ FAKE_COMMENT_DELAY_MS: "300" });
     const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: "reduce" });
