@@ -6,7 +6,7 @@ const loadCm = () => (cm ??= import("./cm"));
 
 /**
  * CodeMirror text editor (Markdown view, diagram source). Hooks: `.ced`, `.ced-status`,
- * `.cm-cite`, `.cm-fenced`, `.cm-errline`, `.cm-errmsg`.
+ * `.cm-cite`, `.cm-fenced`, `.cm-fmark`, `.cm-dkey`, `.cm-dfield`, `.cm-errline`, `.cm-errmsg`.
  */
 export function CodeEditor({
   value,
@@ -74,7 +74,7 @@ export function CodeEditor({
       {ready ? null : <pre className="ced-loading mono">{value}</pre>}
       <div ref={host} className="ced-host mono" />
       {file ? (
-        <div className="ced-status sub mono" aria-hidden="true">
+        <div className="ced-status" aria-hidden="true">
           <span>{file}</span>
           <span>{mode}</span>
           <span>

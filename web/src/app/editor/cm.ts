@@ -69,16 +69,38 @@ const cites = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
-// Lines inside ``` fences (decision and diagram blocks) get a tint.
+// Lines inside ``` fences (decision and diagram blocks) get a tint. Inside a decision fence the
+// machine fields (id, key, by, kept_suggestion, at, status) step back whole; the human fields
+// (question, answer, note) keep a foreground value with a muted key (v1.2 §4). `key:` stays editable.
+const MACHINE = new Set(["id", "key", "by", "kept_suggestion", "at", "status"]);
+const fenceLine = Decoration.line({ class: "cm-fenced" });
+const fenceMark = Decoration.mark({ class: "cm-fmark" });
+const dfield = Decoration.mark({ class: "cm-dfield" });
+const dkey = Decoration.mark({ class: "cm-dkey" });
 function fenceDeco(view: EditorView): DecorationSet {
   const b = new RangeSetBuilder<Decoration>();
   const doc = view.state.doc;
   let inFence = false;
+  let decision = false;
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const fence = line.text.startsWith("```");
-    if (fence || inFence) b.add(line.from, line.from, Decoration.line({ class: "cm-fenced" }));
-    if (fence) inFence = !inFence;
+    if (fence || inFence) b.add(line.from, line.from, fenceLine);
+    if (fence) {
+      if (line.to > line.from) b.add(line.from, line.to, fenceMark);
+      inFence = !inFence;
+      decision = inFence && /^```decision\b/.test(line.text);
+      continue;
+    }
+    if (inFence && decision) {
+      const m = /^(\s*)([A-Za-z_]+)\s*:/.exec(line.text);
+      if (m) {
+        const start = line.from + m[1].length;
+        if (MACHINE.has(m[2].toLowerCase())) {
+          if (line.to > start) b.add(start, line.to, dfield);
+        } else b.add(start, line.from + m[0].length, dkey);
+      }
+    }
   }
   return b.finish();
 }
@@ -96,9 +118,9 @@ const fences = ViewPlugin.fromClass(
 );
 
 const highlight = HighlightStyle.define([
-  { tag: tags.heading, fontWeight: "650" },
+  { tag: tags.heading, fontWeight: "600" },
   { tag: [tags.processingInstruction, tags.punctuation, tags.meta], class: "cm-marker" },
-  { tag: tags.strong, fontWeight: "650" },
+  { tag: tags.strong, fontWeight: "600" },
   { tag: tags.emphasis, fontStyle: "italic" },
 ]);
 

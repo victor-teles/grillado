@@ -1,10 +1,10 @@
 // In-session screens: dispatcher, problem banners, confirm (+ reopen dialogs), plating.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { clock, useMobile, useSince } from "./chrome";
+import { useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
-import { IAlert, IBranch, ICheck, IClock, IKey, IPlate, ISq, IUndo, IWifi } from "./icons";
+import { IAlert, IClock, IKey, ISq, IWifi } from "./icons";
 import { PlanView } from "./Plan";
-import { FiringUp, RoundView, SessionBody, SkeletonCard, Strip, WaitingView, waitLabel } from "./Round";
+import { FiringUp, RoundView, SessionBody, Strip, WaitingView } from "./Round";
 import type { AppState, Decision, DecisionNode, SessionView, TreeState } from "./types";
 
 export type Act = (action: string, body?: unknown) => Promise<void>;
@@ -53,47 +53,41 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
   const code = session.error?.code ?? "unknown";
   const retry = () => quiet(act("retry"));
   const sw = others.length ? (
-    <button type="button" className="pill secondary sm" onClick={onSwitch}>
+    <button type="button" className="btn quiet" onClick={onSwitch}>
       Switch agent
     </button>
   ) : null;
   const copy = {
     auth: {
-      tone: "warn",
       icon: <IKey s={16} />,
       title: `Log in to ${name} to continue`,
       body: (
         <>
-          <Cmds text={provider?.loginHint ?? "Log in with the agent's own command"} />, then come back.
+          <Cmds text={provider?.loginHint ?? "Log in with the agent's own command"} />, then come back. Your answers are saved.
         </>
       ),
       retry: "I've logged in, retry",
     },
-    rate_limit: { tone: "info", icon: <IClock s={16} />, title: `${name} needs a short break`, body: "It hit its usage limit. Try again in a few minutes, or switch agents.", retry: "Retry" },
-    timeout: { tone: "info", icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "Nothing came back in time. Your answers are saved.", retry: "Retry" },
-    malformed: { tone: "info", icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
-    not_found: { tone: "err", icon: <IWifi s={16} />, title: `Can't reach ${name}`, body: "The command couldn't be started. Grillado keeps your answers and retries when you ask.", retry: "Retry" },
-    unknown: { tone: "err", icon: <IAlert s={16} />, title: "Can't reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
+    rate_limit: { icon: <IClock s={16} />, title: `${name} needs a short break`, body: "It hit its usage limit. Try again in a few minutes, or switch agents.", retry: "Retry" },
+    timeout: { icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "Nothing came back in time. Your answers are saved.", retry: "Retry" },
+    malformed: { icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
+    not_found: { icon: <IWifi s={16} />, title: `Can't reach ${name}`, body: "The command couldn't be started. Grillado keeps your answers and retries when you ask.", retry: "Retry" },
+    unknown: { icon: <IAlert s={16} />, title: "Can't reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
   }[code];
+  // v1.2: one neutral surface; the tone is only on the icon (warning-ink, muted for a rate limit).
+  const tone = code === "rate_limit" ? "info" : "warn";
   return (
-    <div className={`banner ${copy.tone}`} role="alert" data-testid="problem" data-code={code}>
+    <div className="banner" data-tone={tone} role="alert" data-testid="problem" data-code={code}>
       <span className="ic" aria-hidden="true">
         {copy.icon}
       </span>
       <div>
-        <div className="t">{copy.title}</div>
-        <div className="s">{copy.body}</div>
+        <p className="t">{copy.title}</p>
+        <p>{copy.body}</p>
       </div>
       <div className="acts">
-        {code === "auth" ? (
-          <span className="fb sm">
-            <ICheck s={12} />
-            Your answers are saved
-          </span>
-        ) : (
-          sw
-        )}
-        <button type="button" className={`pill ${code === "auth" ? "primary" : "secondary"} sm`} onClick={retry}>
+        {code === "auth" ? null : sw}
+        <button type="button" className="btn primary" onClick={retry}>
           {copy.retry}
         </button>
       </div>
@@ -134,7 +128,7 @@ export function Dialog({ labelId, descId, onClose, children, role = "dialog" }: 
   }, [onClose]);
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={ref} className="dlg" role={role} aria-modal="true" aria-labelledby={labelId} aria-describedby={descId}>
+      <div ref={ref} className="dialog" role={role} aria-modal="true" aria-labelledby={labelId} aria-describedby={descId}>
         {children}
       </div>
     </div>
@@ -167,58 +161,40 @@ export function ReopenDialog({ session, d, act, onClose, onPreview }: { session:
     return () => onPreview?.(null);
   }, [d.key, deps, onPreview]);
   const name = nameOf(d);
+  const depNames = deps.map((k) => (session.decisions[k] ? nameOf(session.decisions[k]) : k));
   return (
     <Dialog labelId="ro-t" descId="ro-d" onClose={onClose} role="alertdialog">
-      <h3 id="ro-t">Reopen “{name}”?</h3>
-      <p id="ro-d">{deps.length ? "You'll pick it again in the next round. These decisions depend on it, so they'll be asked again too:" : "You'll pick it again in the next round."}</p>
-      {deps.length ? (
-        <ul className="deps">
-          {deps.map((k) => (
-            <li key={k}>
-              <span className="hatch" aria-hidden="true" />
-              {session.decisions[k] ? nameOf(session.decisions[k]) : k}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <p>Everything else stays settled.</p>
-      <div className="ft">
-        <button type="button" className="pill secondary" data-autofocus onClick={onClose}>
+      <h2 id="ro-t">Reopen “{name}”?</h2>
+      <p id="ro-d">
+        You'll pick it again in the next round.
+        {depNames.length ? (
+          <>
+            {" "}
+            {depNames.length === 1 ? "This decision depends on it, so it'll be asked again too: " : "These decisions depend on it, so they'll be asked again too: "}
+            {depNames.map((d, i) => (
+              <span key={d}>
+                {i ? (i === depNames.length - 1 ? " and " : ", ") : null}
+                <b>{d}</b>
+              </span>
+            ))}
+            .
+          </>
+        ) : null}{" "}
+        Everything else stays settled.
+      </p>
+      <div className="foot">
+        <button type="button" className="btn quiet" data-autofocus onClick={onClose}>
           Cancel
         </button>
         <button
           type="button"
-          className="pill primary"
+          className="btn primary"
           onClick={() => {
             onClose();
             quiet(act("reopen", { key: d.key }));
           }}
         >
           Reopen {name}
-        </button>
-      </div>
-    </Dialog>
-  );
-}
-
-function ReopenPicker({ decisions, onPick, onClose }: { decisions: Decision[]; onPick: (d: Decision) => void; onClose: () => void }) {
-  return (
-    <Dialog labelId="rp-t" onClose={onClose}>
-      <h3 id="rp-t">Reopen a decision</h3>
-      <p>Pick one to answer again in the next round.</p>
-      <ul className="pick">
-        {decisions.map((d) => (
-          <li key={d.key}>
-            <button type="button" onClick={() => onPick(d)}>
-              <span>{nameOf(d)}</span>
-              <span className="a">{d.answer}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="ft">
-        <button type="button" className="pill secondary" onClick={onClose}>
-          Cancel
         </button>
       </div>
     </Dialog>
@@ -252,134 +228,92 @@ export function groupDecisions(session: SessionView): { title: string; items: De
   return [...groups.values()];
 }
 
+const SHOW = 6;
+
 function Confirm({ session, act }: { session: SessionView; act: Act }) {
   const mobile = useMobile();
   const [reopening, setReopening] = useState<Decision | null>(null);
-  const [picking, setPicking] = useState(false);
+  const [more, setMore] = useState(false);
   const [preview, setPreview] = useState<Set<string> | undefined>();
   const onPreview = useMemo(() => (keys: string[] | null) => setPreview(keys ? new Set(keys) : undefined), []);
-  const groups = groupDecisions(session);
-  const all = groups.flatMap((g) => g.items);
+  const all = groupDecisions(session).flatMap((g) => g.items);
   const n = all.length;
-  const minutes = clock(Math.max(0, Math.floor((Date.parse(session.updatedAt) - Date.parse(session.createdAt)) / 1000)));
   const plate = () => quiet(act("confirm"));
   const open = session.tree.nodes.filter((x) => x.id !== session.tree.rootId && x.status !== "settled");
   const early = open.length > 0;
+  // Long lists fold after six rows; group headings only on an early wrap (v1.2).
+  const fold = all.length > SHOW + 2 && !more;
+  const shown = fold ? all.slice(0, SHOW) : all;
+  const row = (d: Decision) => (
+    <div className="dr" key={d.key}>
+      <dt className="k">{nameOf(d)}</dt>
+      <dd className="v">
+        {d.answer}
+        {!d.accepted_recommendation ? <span className="yc">Your call</span> : null}
+      </dd>
+      <dd className="re">
+        <button type="button" className="btn quiet sm" aria-label={`Reopen ${nameOf(d)}`} onClick={() => setReopening(d)}>
+          Reopen
+        </button>
+      </dd>
+    </div>
+  );
+  const actions = (
+    <>
+      <button type="button" className="btn primary" autoFocus={!mobile} onClick={plate}>
+        Yes, plate it
+        <span className="k" aria-hidden="true">
+          ↵
+        </span>
+      </button>
+      <button type="button" className="btn quiet" onClick={() => quiet(act("keep-going"))}>
+        {mobile ? "Keep going" : "Keep going on a branch"}
+      </button>
+    </>
+  );
   return (
     <SessionBody
       session={session}
-      sideSub="whole plan"
       compact
       previewStale={preview}
       main={
         <div className="main" style={{ gridTemplateRows: mobile ? "minmax(0,1fr) auto" : "minmax(0,1fr)" }}>
           <div className="scroll">
-            <div className="col" style={{ maxWidth: 640 }}>
-              <Strip session={session} />
-              <div className="intro" style={{ gap: 6 }}>
-                <div className="eb">
-                  {early ? <span className="badge2 warn">Wrapping up early</span> : <span className="badge2 ok"><ICheck s={12} />Nothing left open</span>}
-                  after {session.rounds.length} {session.rounds.length === 1 ? "round" : "rounds"} · {minutes} elapsed
-                </div>
+            <Strip session={session} />
+            <section className="col appr" aria-labelledby="confirm-title">
+              <div className="intro">
+                <h1 id="confirm-title">Is it done?</h1>
+                <p>
+                  {n} {n === 1 ? "decision" : "decisions"} settled,{" "}
+                  {early ? `${open.length} still open. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : "nothing open."} Read them over before the plan gets written.
+                </p>
               </div>
-              <section className="card2 appr" aria-labelledby="confirm-title">
-                <div className="hd">
-                  <span className={`ic${early ? " warn" : ""}`} aria-hidden="true">
-                    <ICheck s={16} />
-                  </span>
-                  <div>
-                    <h1 id="confirm-title">Is it done?</h1>
-                    <p>
-                      {n} {n === 1 ? "decision" : "decisions"} settled,{" "}
-                      {early ? `${open.length} still open. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : "nothing open."} Read them over before the plan gets
-                      written.
-                    </p>
-                  </div>
-                </div>
-                <div className="dl">
-                  {early ? (
-                    <section aria-labelledby="grp-open">
-                      <h2 className="g" id="grp-open">
-                        Still open
-                      </h2>
-                      <dl style={{ margin: 0 }}>
-                        {open.map((x) => (
-                          <div className="row open-q" key={x.id}>
-                            <dt>{x.label}</dt>
-                            <dd>
-                              <span className="ans">Open · listed in the plan</span>
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </section>
-                  ) : null}
-                  {groups.map((g, gi) => (
-                    <section key={g.title} aria-labelledby={`grp-${gi}`}>
-                      <h2 className="g" id={`grp-${gi}`}>
-                        {g.title}
-                      </h2>
-                      <dl style={{ margin: 0 }}>
-                        {g.items.map((d) => (
-                          <div className="row" key={d.key}>
-                            <dt>{nameOf(d)}</dt>
-                            <dd>
-                              <span className="ans">
-                                {d.answer}
-                                {!d.accepted_recommendation ? <span className="sub" style={{ fontWeight: 450 }}> · your call</span> : null}
-                              </span>
-                              <button type="button" className="ro" aria-label={`Reopen ${nameOf(d)}`} onClick={() => setReopening(d)}>
-                                <IUndo s={12} />
-                                Reopen
-                              </button>
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </section>
-                  ))}
-                </div>
-                {mobile ? null : (
-                  <div className="ft">
-                    <button type="button" className="pill primary" autoFocus onClick={plate}>
-                      Yes, plate it <kbd>↵</kbd>
-                    </button>
-                    <button type="button" className="pill secondary" onClick={() => setPicking(true)} disabled={!n}>
-                      Reopen a decision
-                    </button>
-                    <span className="spacer" />
-                    <button type="button" className="pill ghost2" onClick={() => quiet(act("keep-going"))}>
-                      <IBranch s={14} />
-                      Keep going on a branch
-                    </button>
-                  </div>
-                )}
-              </section>
-            </div>
+              <div className="dl">
+                {early ? (
+                  <>
+                    <h3 id="grp-open">Still open</h3>
+                    <dl aria-labelledby="grp-open">
+                      {open.map((x) => (
+                        <div className="dr" key={x.id}>
+                          <dt className="k">{x.label}</dt>
+                          <dd className="v open">Open · listed in the plan</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <h3 id="grp-settled">Settled</h3>
+                  </>
+                ) : null}
+                <dl aria-labelledby={early ? "grp-settled" : undefined}>{shown.map(row)}</dl>
+                {fold ? (
+                  <button type="button" className="btn quiet sm more" onClick={() => setMore(true)}>
+                    Show {all.length - SHOW} more
+                  </button>
+                ) : null}
+              </div>
+              {mobile ? null : <div className="stickfoot">{actions}</div>}
+            </section>
           </div>
-          {mobile ? (
-            <div className="mbar">
-              <button type="button" className="pill primary" style={{ flex: 1 }} onClick={plate}>
-                Yes, plate it
-              </button>
-              <button type="button" className="pill secondary" onClick={() => setPicking(true)} disabled={!n}>
-                Reopen…
-              </button>
-              <button type="button" className="pill ghost2" onClick={() => quiet(act("keep-going"))}>
-                Keep going
-              </button>
-            </div>
-          ) : null}
-          {picking ? (
-            <ReopenPicker
-              decisions={all}
-              onClose={() => setPicking(false)}
-              onPick={(d) => {
-                setPicking(false);
-                setReopening(d);
-              }}
-            />
-          ) : null}
+          {mobile ? <div className="pinned">{actions}</div> : null}
           {reopening ? <ReopenDialog session={session} d={reopening} act={act} onClose={() => setReopening(null)} onPreview={onPreview} /> : null}
         </div>
       }
@@ -395,81 +329,47 @@ function Plating({ session, act, banner }: { session: SessionView; act: Act; ban
   const groups = groupDecisions(session);
   const n = Object.keys(session.decisions).length;
   const base = `Plating your plan from ${n} ${n === 1 ? "decision" : "decisions"}…`;
-  const long = elapsed >= 15;
-  const label = elapsed >= 60 ? "Still writing the plan. This one is taking a while" : long ? "Still writing the plan" : base;
-  void waitLabel;
+  const label = elapsed >= 60 ? "Still writing the plan. This one is taking a while" : elapsed >= 15 ? "Still writing the plan" : base;
   return (
     <SessionBody
       session={session}
-      sideSub={`${n} settled`}
       compact
       dim
       showHeat={false}
-      showLegend={false}
       main={
         <div className="main" style={{ gridTemplateRows: "minmax(0,1fr)" }}>
           <div className="scroll">
-            <div className="col" style={{ maxWidth: 720, gap: 14 }}>
-              <Strip session={session} />
+            <Strip session={session} />
+            <div className="col">
               {banner}
               {busy ? (
-                <div className="waiting" role="status" aria-live="polite">
-                  <div className="row">
-                    {long ? (
-                      <span className="rs">
-                        <span className="dots" aria-hidden="true">
-                          <i />
-                          <i />
-                          <i />
-                        </span>
-                        <span className="shimmer">{label}</span>
-                        <span className="det mono">{clock(elapsed)}</span>
-                      </span>
-                    ) : (
-                      <span className="thinking">
-                        <span className="fl" aria-hidden="true">
-                          <IPlate s={18} />
-                        </span>
-                        <span className="shimmer">{label}</span>
-                      </span>
-                    )}
-                    {elapsed >= 60 ? (
-                      <button type="button" className="pill secondary sm" onClick={() => quiet(act("stop"))}>
-                        <ISq s={12} />
-                        Stop
-                      </button>
-                    ) : null}
-                  </div>
+                <div className="status" role="status" aria-live="polite">
+                  <span>{label}</span>
+                  {elapsed >= 60 ? (
+                    <button type="button" className="btn quiet sm" onClick={() => quiet(act("stop"))}>
+                      <ISq s={12} />
+                      Stop
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
-              <article className="card2 plating-doc" aria-label="Plan draft" style={{ padding: "24px 28px", display: "grid", gap: 16 }}>
-                <h1 style={{ fontSize: 22, lineHeight: "28px", fontWeight: 650, letterSpacing: "-.02em", margin: 0 }}>{session.idea.split("\n")[0]}</h1>
-                {groups.map((g, gi) => (
-                  <section key={g.title} className="psec" style={{ display: "grid", gap: 8, ["--k" as string]: gi }}>
-                    <h2 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: "var(--muted-foreground)" }}>{g.title}</h2>
-                    <ul style={{ display: "flex", flexWrap: "wrap", gap: 6, listStyle: "none", margin: 0, padding: 0 }}>
-                      {g.items.map((d, i) => (
-                        <li key={d.key} className="chip" style={{ ["--k" as string]: gi * 3 + i }}>
-                          <span className="ck" aria-hidden="true">
-                            <ICheck s={12} />
-                          </span>
-                          <span className="k">{nameOf(d)}</span>
-                          {d.answer}
-                        </li>
-                      ))}
-                    </ul>
+              <article className="plate" aria-label="Plan draft">
+                <h1>{session.idea.split("\n")[0]}</h1>
+                {groups.map((g) => (
+                  <section key={g.title}>
+                    <h2>{g.title}</h2>
+                    <p>{g.items.map((d) => `${nameOf(d)}: ${d.answer}.`).join(" ")}</p>
                   </section>
                 ))}
                 {busy ? (
-                  <div aria-hidden="true" style={{ display: "grid", gap: 8 }}>
-                    <span className="sk" style={{ width: "40%", height: 12 }} />
-                    <span className="sk" style={{ width: "92%" }} />
-                    <span className="sk" style={{ width: "84%" }} />
-                    <span className="sk" style={{ width: "66%" }} />
+                  <div className="sk" aria-hidden="true">
+                    <i style={{ width: "62%" }} />
+                    <i />
+                    <i style={{ width: "90%" }} />
+                    <i style={{ width: "76%" }} />
                   </div>
                 ) : null}
               </article>
-              {busy && !groups.length ? <SkeletonCard /> : null}
             </div>
           </div>
         </div>

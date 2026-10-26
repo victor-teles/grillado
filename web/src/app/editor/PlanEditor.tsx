@@ -505,7 +505,6 @@ export function PlanEditor({
             onChange={(t) => !readOnly && draft.change(t)}
             onBlur={() => void draft.flush()}
             label="plan.md, Markdown source"
-            file="plan.md"
             errors={problems}
             testId="plan-raw"
           />

@@ -1,11 +1,11 @@
 // A ```decision block in the rich view (v1.1 §3): a compact card you change in place.
 //
-// Styling hooks (visuals are being redesigned; structure only):
-//   .dz[data-state=rest|changing|open|stale][data-invalid]   the card
-//   .dz-h (label row) .dz-id .dz-badge[data-kind=yours|kept|open|stale]
-//   .dz-q (question) .dz-a (answer) .dz-n (note) .dz-m (meta)
-//   .dz-aff (Affects n passages chip) .dz-opts[role=radiogroup] .dz-opt[aria-checked] .dz-tag
-//   .dz-other (free text) .dz-warn (dependents note) .dz-act (buttons)
+// v1.2 (HANDOFF-ENGINEER §3): a --sel surface, no border. Question muted, answer 15/600.
+//   .dz[data-state=rest|changing|open|stale][data-invalid]
+//   .dz-q .dz-a (+ .dz-badge[data-kind=yours] "Your call" after the answer) .dz-n
+//   .dz-h: one muted meta line ("R3·1 · Affects 2 passages"), revealed on hover / focus-within
+//   .dz-opts[role=radiogroup] .dz-opt[aria-checked]: the round's radio rows; .dz-tag muted inline
+//   .dz-warn muted text, .dz-err destructive text, .dz-act buttons on the right
 import { useEffect, useId, useRef, useState } from "react";
 import type { DecisionFields } from "../../../../src/core/decision-block.ts";
 import { OTHER_OPTION, type Question } from "../types";
@@ -52,6 +52,8 @@ export function DecisionCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [aff, setAff] = useState<{ above: number; below: number } | null>(null);
+  // Number-key hints show only after the first number press, as in the round.
+  const [keys, setKeys] = useState(false);
 
   useEffect(() => {
     if (!expanded) setPick(currentId ?? question?.recommendedOptionId);
@@ -152,6 +154,7 @@ export function DecisionCard({
           const o = allOptions[Number(e.key) - 1];
           if (o) {
             e.preventDefault();
+            setKeys(true);
             setPick(o.id);
           }
         } else if (e.key === "Enter" && !(e.target as HTMLElement).matches("button")) {
@@ -160,12 +163,39 @@ export function DecisionCard({
         }
       }}
     >
+      <div className="dz-q">
+        {state === "open" ? <span className="sr-only">Open: </span> : null}
+        {fields.question}
+      </div>
+      {view === "rest" || view === "stale" ? (
+        <>
+          {fields.answer ? (
+            <div className="dz-a">
+              <span className="dz-av">{fields.answer}</span>
+              {badge.kind === "yours" ? (
+                <span className="dz-badge yc" data-kind="yours">
+                  Your call
+                </span>
+              ) : null}
+              {badge.kind === "stale" ? (
+                <span className="dz-badge" data-kind="stale">
+                  Will be asked again
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {fields.note ? <div className="dz-n">{fields.note}</div> : null}
+          {invalid ? <div className="dz-n">This block has a mistake in plan.md. Showing the last version that worked.</div> : null}
+        </>
+      ) : null}
       <div className="dz-h">
-        <span className="dz-lbl sub">Decision</span>
-        <span className="dz-id mono">{fields.id}</span>
-        <span className="dz-badge" data-kind={badge.kind}>
-          {badge.text}
-        </span>
+        <span className="dz-lbl">Decision</span>
+        <span className="dz-id">{fields.id}</span>
+        {badge.kind === "kept" ? (
+          <span className="dz-badge" data-kind="kept">
+            Kept the suggestion
+          </span>
+        ) : null}
         {passages.length ? (
           <button type="button" className="dz-aff" onClick={jump} tabIndex={-1} aria-hidden="true">
             Affects {passages.length} {passages.length === 1 ? "passage" : "passages"}
@@ -173,28 +203,17 @@ export function DecisionCard({
           </button>
         ) : null}
       </div>
-      <div className="dz-q">{fields.question}</div>
-      {view === "rest" || view === "stale" ? (
-        <>
-          {fields.answer ? <div className="dz-a">{fields.answer}</div> : null}
-          {fields.note ? <div className="dz-n">{fields.note}</div> : null}
-          {invalid ? <div className="dz-n">This block has a mistake in plan.md. Showing the last version that worked.</div> : null}
-          {canChange ? (
-            <div className="dz-act">
-              <button ref={changeBtn} type="button" className="pill secondary sm" onClick={() => setExpanded(true)} aria-label={`Change ${fields.id}`}>
-                Change
-              </button>
-            </div>
-          ) : null}
-        </>
-      ) : null}
-      {view === "open" && !expanded ? (
+      {(view === "rest" || view === "stale" || (view === "open" && !expanded)) && canChange ? (
         <div className="dz-act">
-          {canChange ? (
-            <button type="button" className="pill secondary sm" onClick={() => setExpanded(true)}>
+          {view === "open" ? (
+            <button type="button" className="btn quiet sm" onClick={() => setExpanded(true)}>
               Answer
             </button>
-          ) : null}
+          ) : (
+            <button ref={changeBtn} type="button" className="btn quiet sm" onClick={() => setExpanded(true)} aria-label={`Change ${fields.id}`}>
+              Change
+            </button>
+          )}
         </div>
       ) : null}
       {expanded ? (
@@ -217,12 +236,19 @@ export function DecisionCard({
                   (e.currentTarget.parentElement?.children[allOptions.indexOf(n)] as HTMLElement | undefined)?.focus();
                 }}
               >
-                <kbd className="mono" aria-hidden="true">
-                  {i + 1}
-                </kbd>
-                <span>{o.label}</span>
-                {o.id === currentId ? <span className="dz-tag">Current</span> : null}
-                {o.id === question?.recommendedOptionId ? <span className="dz-tag">Recommended</span> : null}
+                <span className="rd" aria-hidden="true" />
+                <span className="lb">
+                  <span>{o.label}</span>
+                  {o.id === currentId ? <span className="dz-tag">Current</span> : null}
+                  {o.id === question?.recommendedOptionId ? <span className="dz-tag">Recommended</span> : null}
+                </span>
+                {keys ? (
+                  <kbd className="n" aria-hidden="true">
+                    {i + 1}
+                  </kbd>
+                ) : (
+                  <span />
+                )}
               </button>
             ))}
           </div>
@@ -248,10 +274,10 @@ export function DecisionCard({
             </p>
           ) : null}
           <div className="dz-act">
-            <button type="button" className="pill secondary sm" onClick={cancel}>
+            <button type="button" className="btn quiet sm" onClick={cancel}>
               {state === "open" ? "Leave open" : "Cancel"}
             </button>
-            <button type="button" className="pill primary sm" disabled={!ready || busy} aria-describedby={reasks ? `${uid}-warn` : undefined} onClick={() => void submit()}>
+            <button type="button" className="btn primary sm" disabled={!ready || busy} aria-describedby={reasks ? `${uid}-warn` : undefined} onClick={() => void submit()}>
               {reasks ? `Save and re-ask ${dependents.length}` : "Save answer"}
             </button>
           </div>

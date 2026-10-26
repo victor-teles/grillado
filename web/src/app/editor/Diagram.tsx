@@ -1,5 +1,6 @@
+import { IEdit } from "../icons";
 import { useEffect, useRef, useState } from "react";
-import { type DiagramResult, type MermaidLike, diagramLabel, diagramType, explainDiagramError, renderDiagram } from "./diagram";
+import { type DiagramResult, type MermaidLike, diagramLabel, explainDiagramError, renderDiagram } from "./diagram";
 
 // Mermaid is ~1 MB of JS, so it's only fetched when a plan actually has a diagram.
 let mermaid: Promise<MermaidLike> | null = null;
@@ -56,12 +57,12 @@ export function Diagram({ code, onEdit }: { code: string; onEdit?: () => void })
   return (
     <figure className="mmd" data-state={state} data-testid="diagram">
       {res === null && !shown ? (
-        <div className="mmd-ph sub">Drawing the diagram…</div>
+        <div className="mmd-ph">Drawing the diagram…</div>
       ) : shown ? (
         <div className={res?.ok ? "mmd-wrap" : "mmd-wrap mmd-last"}>
           {/* Mermaid output is sanitized (securityLevel: "strict"). */}
           <div className="mmd-svg" role="img" aria-label={shown.label} dangerouslySetInnerHTML={{ __html: shown.svg }} />
-          {res && !res.ok ? <span className="mmd-tag sub">Last version that worked</span> : null}
+          {res && !res.ok ? <span className="mmd-tag">Last version that worked</span> : null}
         </div>
       ) : (
         <pre>
@@ -70,31 +71,32 @@ export function Diagram({ code, onEdit }: { code: string; onEdit?: () => void })
       )}
       {res && !res.ok ? (
         <figcaption className="mmd-err" data-line={explained?.line}>
-          <strong>Diagram can't be drawn.</strong> {explained?.message}{" "}
-          <button type="button" className="ro" aria-expanded={details} onClick={() => setDetails(!details)}>
+          <span className="t">Diagram can't be drawn.</span> {explained?.message}{" "}
+          <button type="button" className="btn quiet sm" aria-expanded={details} onClick={() => setDetails(!details)}>
             Details
           </button>
-          {details ? <pre className="mmd-det mono">{res.error}</pre> : null}
+          {details ? <pre className="mmd-det">{res.error}</pre> : null}
         </figcaption>
       ) : null}
       <span className="sr-only" role="status">
         {said}
       </span>
-      <div className="mmd-f">
-        <span className="mono sub">mermaid · {diagramType(code)}</span>
-        {onEdit ? (
+      {onEdit ? (
+        <div className="mmd-f">
           <button
             type="button"
-            className="ro"
+            className="icon-btn"
+            aria-label="Edit source"
+            title="Edit source"
             onClick={(e) => {
               e.stopPropagation();
               onEdit();
             }}
           >
-            Edit source
+            <IEdit s={16} />
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </figure>
   );
 }

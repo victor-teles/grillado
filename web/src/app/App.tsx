@@ -3,7 +3,6 @@ import { ApiError, api, subscribe } from "./api";
 import { Header, useTheme } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { Landing, NoAgent, Picker } from "./Home";
-import { IPower } from "./icons";
 import { SessionScreen } from "./Session";
 import type { AppState, ProviderId, SessionView } from "./types";
 
@@ -88,10 +87,10 @@ export function App() {
     return (
       <div className="gr-app">
         <Header onQuit={quit} theme={theme} onTheme={toggleTheme} />
-        <main className="page">
-          <div className="center">
-            <h1 className="h1">This window isn't connected</h1>
-            <p className="lead" role="alert">
+        <main className="solo">
+          <div className="col">
+            <h1>This window isn't connected</h1>
+            <p className="lede" role="alert">
               Open the link printed in your terminal to use this Grillado window.
             </p>
           </div>
@@ -102,7 +101,7 @@ export function App() {
     return (
       <div className="gr-app">
         <Header onQuit={quit} theme={theme} onTheme={toggleTheme} />
-        <main className="page" aria-busy="true" />
+        <main className="solo" aria-busy="true" />
       </div>
     );
 
@@ -151,8 +150,8 @@ export function App() {
       <Header
         step={session && !picking ? stepOf(session) : undefined}
         title={session ? session.idea.split("\n")[0] : undefined}
-        round={session && !picking && (session.status === "answering" || session.status === "asking") ? Math.max(1, session.rounds.length + (session.status === "asking" ? 1 : 0)) : undefined}
-        provider={showAgent && ready.length ? provider : undefined}
+        // v1.2: no agent in the header before a session; the composer shows it.
+        provider={showAgent && session && ready.length ? provider : undefined}
         onSwitch={onSwitch}
         onHome={session || picking ? () => (picking && session ? setPicking(false) : go(null)) : undefined}
         onWrap={wrappable ? () => void act("wrap").catch(() => {}) : undefined}
@@ -171,7 +170,7 @@ export function App() {
 }
 
 function Stopped({ theme, onTheme }: { theme: "dark" | "light"; onTheme: () => void }) {
-  const [hint, setHint] = useState("This tab reconnects on its own");
+  const [hint, setHint] = useState("This tab reconnects on its own when Grillado is running again.");
   useEffect(() => {
     const t = setInterval(async () => {
       try {
@@ -186,25 +185,14 @@ function Stopped({ theme, onTheme }: { theme: "dark" | "light"; onTheme: () => v
   return (
     <div className="gr-app">
       <Header theme={theme} onTheme={onTheme} />
-      <main className="page">
-        <div className="center">
-          <span className="tile" aria-hidden="true">
-            <IPower s={24} />
-          </span>
-          <h1 className="h1">Grillado was stopped</h1>
-          <p className="lead">Your session is saved. Run this in a terminal to continue where you left off.</p>
-          <div className="inst card2" style={{ width: "100%", maxWidth: 420, gridTemplateColumns: "minmax(0,1fr) auto" }}>
-            <code className="mono">npx grillado</code>
-            <CopyButton kind="icon" text="npx grillado" label="Copy npx grillado" />
-          </div>
-          <span className="rs" role="status" style={{ marginTop: 18 }}>
-            <span className="dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
+      <main className="solo">
+        <div className="col">
+          <h1>Grillado stopped</h1>
+          <p className="lede">Your session is saved. Run this in a terminal to continue where you left off.</p>
+          <CopyButton kind="cmd" text="npx grillado" label="Copy npx grillado" />
+          <p className="note" role="status">
             {hint}
-          </span>
+          </p>
         </div>
       </main>
     </div>
