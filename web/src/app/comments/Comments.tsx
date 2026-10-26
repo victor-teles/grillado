@@ -787,7 +787,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
           </button>
         </div>
       ) : null}
-      {row ? <StatusRow row={row} t={t} act={act} onReview={onReview} onShowDecision={onShowDecision} /> : null}
+      {row ? <StatusRow row={row} t={t} agentName={agentName} act={act} onReview={onReview} onShowDecision={onShowDecision} /> : null}
       {dropped ? (
         <div className="crow">
           <span className="t m">{CCOPY.noFit(dropped)}</span>
@@ -822,7 +822,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
   );
 }
 
-function StatusRow({ row, t, act, onReview, onShowDecision }: { row: Row; t: CommentThread; act: Act2; onReview: (t: CommentThread) => void; onShowDecision: (k: string) => void }) {
+function StatusRow({ row, t, agentName, act, onReview, onShowDecision }: { row: Row; t: CommentThread; agentName: string; act: Act2; onReview: (t: CommentThread) => void; onShowDecision: (k: string) => void }) {
   const ok = row.kind === "accepted" || row.kind === "done" || row.kind === "ready";
   let button: ReactNode = null;
   if (row.kind === "writing")
@@ -860,7 +860,7 @@ function StatusRow({ row, t, act, onReview, onShowDecision }: { row: Row; t: Com
     <div className="crow" data-row={row.kind} role={row.kind === "failed" ? "alert" : undefined}>
       <span className="t">
         {row.kind === "writing" ? <span className="live" /> : ok ? <ICheck s={16} className="ok" /> : null}
-        <span className={ok || row.kind === "writing" ? "" : "m"}>{rowText(row)}</span>
+        <span className={ok || row.kind === "writing" ? "" : "m"}>{fill(rowText(row), agentName)}</span>
       </span>
       {button}
     </div>

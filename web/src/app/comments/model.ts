@@ -13,7 +13,7 @@ export const CCOPY = {
   replying: "{agent} replying",
   replied: "{agent} replied",
   couldntReply: "Couldn't reply",
-  writing: "Writing suggestions",
+  writing: "{agent} is writing suggestions",
   writingLive: "{agent} is writing suggestions",
   waiting: "Waiting for the current run",
   applying: "Applying…",

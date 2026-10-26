@@ -66,6 +66,8 @@ describe("thread status rows", () => {
   });
   test("running, stopped, no changes, decision", () => {
     expect(statusRow(thread({ run: { kind: "apply", state: "running", startedAt: "" } }), [])?.kind).toBe("writing");
+    // Item 6 §18 H: the running row names the agent.
+    expect(fill(rowText(statusRow(thread({ run: { kind: "apply", state: "running", startedAt: "" } }), [])!), "Codex")).toBe("Codex is writing suggestions");
     expect(rowText(statusRow(thread({ run: { kind: "apply", state: "stopped", startedAt: "" } }), [])!)).toBe("Stopped · nothing changed");
     expect(statusRow(thread({ run: { kind: "apply", state: "done", startedAt: "", edits: 0 } }), [])?.kind).toBe("none");
     expect(statusRow(thread({ run: { kind: "apply", state: "done", startedAt: "", decision: "scope" } }), [])).toEqual({ kind: "decision", key: "scope" });

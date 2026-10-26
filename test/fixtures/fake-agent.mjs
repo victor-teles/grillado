@@ -225,7 +225,7 @@ function commentReply() {
   return { type: "edits", summary: "Spelled it out", edits };
 }
 
-// FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "Writing suggestions").
+// FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
 const reply = isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);

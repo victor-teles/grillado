@@ -168,7 +168,7 @@ try {
 
     // Apply feedback: the plan stays editable while it runs (no lock, no caret).
     await rail.getByRole("button", { name: "Apply feedback" }).click();
-    await rail.getByText("Writing suggestions").waitFor();
+    await rail.getByText("Claude Code is writing suggestions").waitFor();
     await snap("i3-writing");
     if (one) {
       check("plan not read-only while writing suggestions", (await pg.locator(".ped[data-readonly]").count()) === 0);
@@ -302,7 +302,7 @@ try {
       const ta = rail3.locator("[data-thread]").filter({ hasText: "Say who shares it" });
       const tb2 = rail3.locator("[data-thread]").filter({ hasText: "Order these" });
       await ta.getByRole("button", { name: "Apply feedback" }).click();
-      await ta.getByText("Writing suggestions").waitFor();
+      await ta.getByText("Claude Code is writing suggestions").waitFor();
       const other = tb2.locator(".apply");
       check("while Apply runs, the other thread's Apply is disabled", await other.isDisabled());
       check("…and labelled Applying…", (await other.textContent()).trim() === "Applying…", await other.textContent());
