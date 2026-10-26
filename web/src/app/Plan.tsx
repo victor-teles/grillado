@@ -2,7 +2,7 @@
 // Markdown, ⋯ Plan actions), the plan editor with inline decision blocks, and neutral banners:
 // waiting, "plan.md changed outside Grillado", and "You changed the answer to …" (DECISIONS #22).
 //
-// Styling hooks: .planv[data-waiting] .dtb .ptabs[role=tablist] .ptab[aria-selected] .ptab-ct
+// Styling hooks: .planv[data-waiting] [data-landing] .dtb .ptabs[role=tablist] .ptab[aria-selected] .ptab-ct
 //   .pbanner[data-tone] .dtab .dgrp .drow .acc .acc-h[aria-expanded] .copy-md
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "./api";
@@ -234,7 +234,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
   ];
 
   return (
-    <div className="planv" data-waiting={waiting.length ? "" : undefined} data-reviewing={cm.pending ? "" : undefined} data-composing={cm.composing ? "" : undefined}>
+    <div className="planv" data-waiting={waiting.length ? "" : undefined} data-reviewing={cm.pending ? "" : undefined} data-composing={cm.composing ? "" : undefined} data-landing={cm.landing ? "" : undefined}>
       <div className="dtb">
         <div className="ptabs" role="tablist" aria-label="Plan">
           {tabs.map((t, i) => (

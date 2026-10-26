@@ -5,7 +5,7 @@
 // the mobile review bar (#30). Suggestions never touch the draft: the server writes an accepted one
 // to plan.md and the draft adopts it, so plan.md, Copy and Download only ever hold accepted text.
 //
-// Styling hooks: .seltb .composer .cmk(.on) .rail.cm .rtabs .th(.on) .th .row .rempty .racc
+// Styling hooks: .seltb .cpop .cmk(.on) .rail.cm .rtabs .th(.on) .th .row .rempty .racc
 //   ins.sg del.sg(.f) .ipill .review .toast .sheet .scrim .mtb .mbar
 import { type MutableRefObject, type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -274,6 +274,27 @@ export function useComments(o: Opts) {
       } else if (t.run?.kind === "apply" && t.run.state === "running") setLive(A(CCOPY.writingLive));
     }
   }, [threads]);
+
+  // Fix-up of #4, MF2: .planv[data-landing] gates the tint fade-in to the ~250ms after a run's
+  // suggestions land. Worked out during render, so the new marks get their first style with the
+  // attribute already set; the segments remount when focus moves, and that must not replay the fade.
+  const landedAt = useRef<Map<string, number> | null>(null);
+  const seed = !landedAt.current; // runs already done when the plan opens don't fade in
+  landedAt.current ??= new Map();
+  const now = seed ? -Infinity : performance.now();
+  let landing = false;
+  for (const t of threads) {
+    if (t.run?.kind !== "apply" || t.run.state !== "done" || !t.run.edits) continue;
+    const k = `${t.id}:${t.run.startedAt}`;
+    if (!landedAt.current.has(k)) landedAt.current.set(k, now);
+    if (performance.now() - landedAt.current.get(k)! < 250) landing = true;
+  }
+  const [, settle] = useState(0);
+  useEffect(() => {
+    if (!landing) return;
+    const id = setTimeout(() => settle((n) => n + 1), 260);
+    return () => clearTimeout(id);
+  }, [landing]);
 
   // ---------- keyboard ----------
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -638,6 +659,7 @@ export function useComments(o: Opts) {
     marks: docMode ? marks : undefined,
     pending: placed.length,
     composing: !!composing,
+    landing,
     rail,
     railButton,
     menuItem,
@@ -806,7 +828,7 @@ function Composer({
       </>
     );
   return (
-    <div ref={ref} className="composer" role="dialog" aria-label="New comment" style={pos ?? { visibility: "hidden", top: 0, left: 0 }}>
+    <div ref={ref} className="cpop" role="dialog" aria-label="New comment" style={pos ?? { visibility: "hidden", top: 0, left: 0 }}>
       {body}
     </div>
   );
