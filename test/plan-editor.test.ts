@@ -223,6 +223,8 @@ describe("Mermaid", () => {
     const fake: MermaidLike = { initialize: (c) => seen.push(c), parse: async () => true, render: async () => ({ svg: "<svg/>" }) };
     await renderDiagram("graph TD; A-->B", { dark: true, load: async () => fake });
     expect(seen[0]).toMatchObject({ securityLevel: "strict", theme: "dark", startOnLoad: false });
+    await renderDiagram("graph TD; A-->B", { dark: true, theme: { primaryColor: "#111111" }, load: async () => fake });
+    expect(seen[1]).toMatchObject({ theme: "base", themeVariables: { primaryColor: "#111111" }, htmlLabels: false, flowchart: { useMaxWidth: false, curve: "basis" } });
   });
 
   test("Mermaid uses dagre and diagrams can't switch to the unshipped ELK layout", async () => {

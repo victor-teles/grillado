@@ -488,12 +488,13 @@ try {
   await page.keyboard.press("Backspace");
   check("raw keystrokes save too", await waitDisk((t) => t === typed));
   await toMode("Rich");
-  await page.locator(".mmd[data-state=ok] .mmd-svg > svg").first().waitFor({ timeout: 15_000 });
-  await page.locator(".mmd[data-state=ok] .mmd-svg > svg").nth(1).waitFor({ timeout: 15_000 });
-  check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] .mmd-svg > svg").count()) === 2);
+  await page.locator(".mmd[data-state=ok] .mmw > svg").first().waitFor({ timeout: 15_000 });
+  await page.locator(".mmd").nth(1).scrollIntoViewIfNeeded(); // diagrams draw when they come near the viewport
+  await page.locator(".mmd[data-state=ok] .mmw > svg").nth(1).waitFor({ timeout: 15_000 });
+  check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] .mmw > svg").count()) === 2);
   check("diagram SVG is an image named by type and node count", /^flowchart diagram, 2 nodes$/.test((await page.locator(".mmd[data-state=ok] [role=img]").first().getAttribute("aria-label")) ?? ""));
   await page.locator(".mmd[data-state=error]").waitFor({ timeout: 5000 });
-  check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .mmd-err").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] pre").textContent()).includes("A -->"));
+  check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .err5").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] .src5").textContent()).includes("A -->"));
   // Recording bug 3: breaking a diagram while editing autosaves the raw text (plan.md is the source of truth);
   // the live preview keeps the last good render, the rest of the plan is untouched, and fixing it renders again.
   {
@@ -503,24 +504,25 @@ try {
     await page.locator(".mmd[data-state=ok]").first().getByRole("button", { name: "Edit source" }).click();
     const box = page.getByRole("textbox", { name: /Edit block as Markdown/ });
     await box.waitFor();
-    await page.locator(".blk-preview .mmd[data-state=ok]").waitFor({ timeout: 10_000 });
+    await page.locator(".blk-preview .lp5:not(.dim) svg").waitFor({ timeout: 10_000 });
     const src = await box.inputValue();
     await box.fill(src.replace(good, broken));
-    await page.locator(".blk-preview .mmd[data-state=error]").waitFor({ timeout: 10_000 });
-    check("broken diagram while editing: preview keeps the last good render, tagged", (await page.locator(".blk-preview .mmd-last svg").count()) === 1 && (await page.locator(".blk-preview .mmd-tag").textContent()) === "Last version that worked");
+    await page.locator(".blk-preview .lp5.dim").waitFor({ timeout: 10_000 });
+    check("broken diagram while editing: preview keeps the last good render, tagged", (await page.locator(".blk-preview .lp5.dim svg").count()) === 1 && (await page.locator(".blk-preview .lp5 .lbl").textContent()) === "Last version that worked");
     check("broken diagram autosaves as raw text; the rest of plan.md is intact", await waitDisk((t) => t.includes("```mermaid\n" + broken + "\n```") && (t.match(/^```decision$/gm) ?? []).length === 3 && t.includes("Asks for ELK")));
     await box.press("Escape");
     const edited = page.locator("[data-testid=plan] .mmd").first();
     await page.waitForFunction(() => document.querySelectorAll("[data-testid=plan] .mmd[data-state=error]").length === 2, null, { timeout: 10_000 }).catch(() => undefined);
     check("after closing, the rich view shows the broken source and its error (no crash)", (await page.locator(".mmd[data-state=error]").count()) === 2 && (await page.locator(".dz").count()) === 3, `${await page.locator(".mmd[data-state=error]").count()} errors, ${await page.locator(".mmd[data-state=ok]").count()} ok, ${await page.locator(".dz").count()} cards, editing=${await page.locator(".blk[data-editing]").count()}`);
-    check("the rich view's broken diagram is the edited one, showing its source", (await edited.getAttribute("data-state")) === "error" && ((await edited.locator("pre").textContent()) ?? "").includes("A[Idea] -->"));
+    check("the rich view's broken diagram is the edited one, showing its source", (await edited.getAttribute("data-state")) === "error" && ((await edited.locator(".src5").textContent()) ?? "").includes("A[Idea] -->"));
     await edited.hover();
     await edited.getByRole("button", { name: "Edit source" }).click();
     await box.waitFor();
     await box.fill((await box.inputValue()).replace(broken, good));
     await box.press("Escape");
     const fixedOnDisk = await waitDisk((t) => t.includes(good));
-    const redrawn = await page.locator(".mmd[data-state=ok] .mmd-svg > svg").nth(1).waitFor({ timeout: 10_000 }).then(() => true).catch(() => false);
+    await page.locator(".mmd").nth(1).scrollIntoViewIfNeeded();
+    const redrawn = await page.locator(".mmd[data-state=ok] .mmw > svg").nth(1).waitFor({ timeout: 10_000 }).then(() => true).catch(() => false);
     check("fixing the diagram saves and renders it again", fixedOnDisk && redrawn, `on disk ${fixedOnDisk}, redrawn ${redrawn}`);
   }
   await page.locator(".mmd").first().scrollIntoViewIfNeeded();
@@ -643,7 +645,7 @@ try {
 
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "Light theme" }).click();
-  await page.locator(".mmd[data-state=ok] .mmd-svg > svg").first().waitFor();
+  await page.locator(".mmd[data-state=ok] .mmw > svg").first().waitFor();
   await page.waitForTimeout(400);
   const axeDocLight = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor with diagrams (light)", axeDocLight.violations.length === 0, axeIds(axeDocLight));
@@ -691,6 +693,7 @@ try {
   await page.goto(url2);
   await page.goto(`http://127.0.0.1:${port2}${sessionPath}`);
   await page.getByTestId("plan").waitFor({ timeout: 10_000 });
+  await page.locator(".mmd").nth(1).scrollIntoViewIfNeeded().catch(() => {});
   await page.locator(".mmd[data-state=ok]").nth(1).waitFor({ timeout: 15_000 }).catch(() => {});
   const restored = (await page.getByTestId("plan").textContent()) ?? "";
   check("plan edits survive a restart", restored.includes("Edited in place.") && (await page.locator(".mmd[data-state=ok]").count()) === 2, restored.slice(0, 80));

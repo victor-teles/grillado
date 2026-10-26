@@ -13,6 +13,7 @@ import { promptFragments } from "../src/core/prompts.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
 import { createSession } from "../src/core/session.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
+import { fitDiagram, zoomStep } from "../web/src/app/editor/diagram.ts";
 
 const FLOW = `flowchart TD
   accTitle: Sync flow
@@ -231,5 +232,27 @@ describe("diagrams route", () => {
     const { call } = await serve();
     expect((await call("POST", "/diagrams", { sections: [] })).json.error).toContain("section");
     expect((await call("POST", "/diagrams", { sections: ["Sync"], kinds: [] })).json.error).toContain("kind");
+  });
+});
+
+describe("diagram sizing and zoom (§6.3, §7)", () => {
+  test("fits the column at natural size", () => {
+    expect(fitDiagram({ w: 600, h: 300 }, { col: 680, wide: 820 })).toEqual({ scale: 1, breakout: false, crop: false });
+  });
+  test("breaks out to 820, then scales to the floor, then crops", () => {
+    expect(fitDiagram({ w: 800, h: 300 }, { col: 680, wide: 820 })).toEqual({ scale: 1, breakout: true, crop: false });
+    expect(fitDiagram({ w: 900, h: 300 }, { col: 680, wide: 820 }).scale).toBeCloseTo(820 / 900);
+    expect(fitDiagram({ w: 1400, h: 300 }, { col: 680, wide: 820 })).toEqual({ scale: 0.85, breakout: true, crop: true });
+  });
+  test("too tall crops; phones always fit the width", () => {
+    expect(fitDiagram({ w: 400, h: 900 }, { col: 680, wide: 820 }).crop).toBe(true);
+    expect(fitDiagram({ w: 1400, h: 900 }, { col: 350, wide: 350, fit: true })).toEqual({ scale: 0.25, breakout: false, crop: false });
+  });
+  test("zoom steps through 50–300% and stops at the ends", () => {
+    expect(zoomStep(100, 1)).toBe(150);
+    expect(zoomStep(87, 1)).toBe(100);
+    expect(zoomStep(87, -1)).toBe(75);
+    expect(zoomStep(300, 1)).toBe(300);
+    expect(zoomStep(50, -1)).toBe(50);
   });
 });

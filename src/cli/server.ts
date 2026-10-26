@@ -4,7 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { nextRound, replyToComment, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
-import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, planSections } from "../core/diagrams.ts";
+import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { addComment, addMessage, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, startRun, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
@@ -526,6 +526,14 @@ export class GrilladoServer {
     if (op === "undo") {
       if (!undoReview(s)) throw new Error("Nothing to undo.");
     } else if (op === "accept" || op === "reject") {
+      // Edit on a diagram suggestion accepts it with your changes, as one step (#42).
+      const code = typeof body?.code === "string" ? body.code : null;
+      if (op === "accept" && code !== null && Array.isArray(body?.ids) && body.ids.length === 1) {
+        const x = (s.suggestions ?? []).find((y) => y.id === String(body.ids[0]) && y.kind === "diagram" && y.status === "pending");
+        if (!x) throw new Error("Those suggestions were already reviewed.");
+        if (!code.trim() || code.length > 8000) throw new Error("The diagram is empty.");
+        withCode(x, code);
+      }
       // "all" takes every pending suggestion (Accept all / Reject all).
       review(s, op, body?.ids === "all" ? pending(s).map((x) => x.id) : body?.ids);
     } else throw new Error("Not found");

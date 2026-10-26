@@ -15,6 +15,8 @@ import { type EditorMode, type PlanDraft } from "../editor/PlanEditor";
 import { cleanSelection, sourceRange } from "../editor/selection";
 import { ICheck, IChev, IDown, IEdit, IMore, IMsg, IUndo, IUp, IX } from "../icons";
 import type { CommentThread, SessionView, Suggestion } from "../types";
+import { SuggestionBlock } from "../diagrams/SuggestionBlock";
+import { formatDuration } from "../../../../src/core/diagrams.ts";
 import { CCOPY, type Placed, type Row, anchorOf, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -71,6 +73,9 @@ interface Opts {
   editRef: MutableRefObject<((start: number, end: number) => void) | null>;
   onShowDecision: (key: string) => void;
   setNote: (t: string) => void;
+  /** Item 5: extra block rows (the "{agent} is drawing…" row) and a bar that takes the review bar's slot. */
+  inserts?: { key: string; at: number; node: ReactNode }[];
+  hideReviewBar?: boolean;
 }
 
 export function useComments(o: Opts) {
@@ -166,10 +171,10 @@ export function useComments(o: Opts) {
   };
 
   // ---------- review ----------
-  const review = async (op: "accept" | "reject" | "undo", ids?: string[] | "all") => {
+  const review = async (op: "accept" | "reject" | "undo", ids?: string[] | "all", code?: string) => {
     await draft.flush();
     const next = op === "undo" || ids === "all" ? null : placed.find((p) => !ids?.includes(p.s.id) && placed.indexOf(p) > index) ?? placed.find((p) => !ids?.includes(p.s.id)) ?? null;
-    const ok = await act("suggestions", { op, ids });
+    const ok = await act("suggestions", code === undefined ? { op, ids } : { op, ids, code });
     if (!ok) return;
     const n = ids === "all" ? placed.length : (ids?.length ?? 0);
     if (op === "undo") {
@@ -281,14 +286,28 @@ export function useComments(o: Opts) {
       el?.focus({ preventScroll: true });
     });
   };
+  const sgBlock = (p: Placed) => (
+    <SuggestionBlock
+      placed={p}
+      index={placed.indexOf(p)}
+      total={placed.length}
+      focused={p.s.id === focusId}
+      agentName={agentName}
+      onFocus={() => setFocus(p.s.id)}
+      onAccept={(code) => void review("accept", [p.s.id], code)}
+      onReject={() => void review("reject", [p.s.id])}
+    />
+  );
   const marks: DocMarks | undefined =
-    anchors.length || placed.length || composing
+    anchors.length || placed.length || composing || o.inserts?.length
       ? {
           anchors: [
             ...anchors.filter((x) => x.r).map(({ t, r }) => ({ id: t.id, start: r!.start, end: r!.end, active: activeId === t.id || hoverId === t.id, label: `Comment: ${t.messages[0]?.text.slice(0, 80) ?? ""}`, details: railShown ? `th-${t.id}` : undefined })),
             ...(composing ? [{ id: "new", start: composing.at, end: composing.end, active: true, label: "New comment" }] : []),
           ],
-          edits: placed.map((p) => ({ id: p.s.id, start: p.start, end: p.end, after: p.after, focused: p.s.id === focusId })),
+          edits: placed.filter((p) => !p.block).map((p) => ({ id: p.s.id, start: p.start, end: p.end, after: p.after, focused: p.s.id === focusId })),
+          inserts: [...placed.filter((p) => p.block && !p.s.replace).map((p) => ({ key: p.s.id, at: p.end, node: sgBlock(p) })), ...(o.inserts ?? [])],
+          replaces: placed.filter((p) => p.block && p.s.replace).map((p) => ({ start: p.start, node: sgBlock(p) })),
           onAnchor: (id) => id !== "new" && openThread(id),
           onAnchorHover: setHover,
           onEdit: (id) => setFocus(id),
@@ -366,15 +385,28 @@ export function useComments(o: Opts) {
       </>
     ) : null;
 
+  // After an Add diagrams run: "2 sections skipped · 4.2 s" (§4, §18 B).
+  const dr = session.diagramRun;
+  const runNote =
+    dr && !session.drawing && placed.some((p) => p.block) && (dr.state === "done" || dr.state === "stopped")
+      ? {
+          stopped: dr.state === "stopped",
+          text: [dr.skipped ? `${dr.skipped} ${dr.skipped === 1 ? "section" : "sections"} skipped` : "", dr.ms ? formatDuration(dr.ms) : ""].filter(Boolean).join(" · "),
+        }
+      : null;
   const reviewBar =
-    docMode && (placed.length || bar) && !composing ? (
+    docMode && (placed.length || bar) && !composing && !o.hideReviewBar ? (
       mobile ? (
         placed.length ? <MobileBar placed={placed} index={index} go={go} review={review} agentName={agentName} /> : null
       ) : (
         <div className="review" role="toolbar" aria-label="Review suggestions">
           {placed.length ? (
             <>
-              <span className="lbl">{A(CCOPY.from(placed.length))}</span>
+              <span className="lbl">
+                {runNote?.stopped ? "Stopped · " : ""}
+                {A(CCOPY.from(placed.length))}
+              </span>
+              {runNote?.text ? <span className="dt">{runNote.text}</span> : null}
               <span className="nav">
                 <button type="button" className="icon-btn" aria-label="Previous suggestion" aria-keyshortcuts="Alt+ArrowUp" onClick={() => go(-1)}>
                   <IUp s={16} />

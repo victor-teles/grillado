@@ -5,7 +5,7 @@
 // .ped-save[data-save], .blk[data-block][data-start] with .blk-act (keyboard Edit), .blk[data-editing]
 // .blk-edit (.mono only for fences) and .blk-hint, .doc-raw .ced, .dz, mark.ctx, .mmd.
 import { type MutableRefObject, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ICheck } from "../icons";
+import { IAlert, ICheck } from "../icons";
 import { type AnswerEdit, type DecisionFields, answerEdits, decisionProblems, fillUserDecisions, parseDecisionBody, revertAnswerEdits } from "../../../../src/core/decision-block.ts";
 import { textHash } from "../../../../src/core/text-hash.ts";
 import { ApiError, api } from "../api";
@@ -14,7 +14,7 @@ import { Autosaver, type SaveState } from "./autosave";
 import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
 import type { CodeEditorHandle } from "./cm";
-import { Diagram } from "./Diagram";
+import { LivePreview } from "./Diagram";
 import { type CiteRenderer, type DocMarks, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
 import { canHover, jumpTo, selecting } from "./link";
 import { formatEdit, formatKey } from "./selection";
@@ -359,8 +359,9 @@ export function autosize(el: HTMLTextAreaElement | null) {
 export type NewBlock = { pointer: boolean };
 
 /** The hint under the block editor (its aria-describedby): Esc closes the menu first; phones have no Esc. */
-function hintOf(fields: boolean, menu: boolean, mobile?: boolean): ReactNode {
+function hintOf(fields: boolean, menu: boolean, mobile?: boolean, mermaid?: boolean): ReactNode {
   const k = (t: string) => <span className="kb4">{t}</span>;
+  if (mermaid && !menu && !fields) return mobile ? "Mermaid" : <>Mermaid · {k("⌘↵")} draw now · {k("Esc")} finish</>;
   if (fields) return mobile ? <>{k("Tab")} next field</> : <>{k("Tab")} next field · {k("Esc")} finish</>;
   if (mobile) return "Markdown";
   return menu ? <>Markdown · {k("Esc")} close menu</> : <>Markdown · {k("Esc")} to finish</>;
@@ -430,6 +431,10 @@ function BlockEditor({
     onDone(refocus, { at: s.last.current ?? undefined, remove: !!fresh && (!t.trim() || t.trim() === "/") });
   };
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
+  const [now, setNow] = useState(0);
+  const [merr, setMerr] = useState<{ line?: number; message: string; raw: string } | null>(null);
+  const [mdet, setMdet] = useState(false);
+  const errId = useId();
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
   // Prose is edited in Inter at its own size so nothing jumps; once the block holds a fence it is mono (#17).
   const cls = kind === "fence" || /^```/m.test(text) ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
@@ -461,7 +466,8 @@ function BlockEditor({
           className={cls}
           rows={1}
           aria-label="Edit block as Markdown. Escape to finish."
-          aria-describedby={hint}
+          aria-describedby={preview && merr ? `${hint} ${errId}` : hint}
+          aria-invalid={preview && merr ? true : undefined}
           placeholder="Type / for blocks"
           spellCheck
           {...comboboxProps(s)}
@@ -488,6 +494,13 @@ function BlockEditor({
               onChange(out.text);
               return;
             }
+            // In a diagram, ⌘↵ draws the preview now (§9); Esc finishes.
+            if (preview && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              e.stopPropagation();
+              setNow((n) => n + 1);
+              return;
+            }
             if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
               e.preventDefault();
               e.stopPropagation();
@@ -497,12 +510,24 @@ function BlockEditor({
         />
       </div>
       <p className="blk-hint" id={hint} aria-hidden="true">
-        {hintOf(!!f, !!s.menu, mobile)}
+        {hintOf(!!f, !!s.menu, mobile, !!preview)}
       </p>
       {preview && preview.kind === "fence" ? (
-        <div className="blk-preview" aria-label="Live preview">
-          <Diagram code={preview.body} />
-        </div>
+        <>
+          {merr ? (
+            <div className="merr" id={errId} role="status" onMouseDown={(e) => e.preventDefault()}>
+              <IAlert s={16} />
+              <span>{merr.message}</span>
+              <button type="button" className="btn quiet sm" aria-expanded={mdet} onClick={() => setMdet(!mdet)}>
+                Details
+              </button>
+              {mdet ? <pre className="mmd-det">{merr.raw}</pre> : null}
+            </div>
+          ) : null}
+          <div className="blk-preview" role="group" aria-label="Live preview">
+            <LivePreview code={preview.body} now={now} onError={setMerr} />
+          </div>
+        </>
       ) : null}
       <SlashMenu s={s} host={host} agentName={agentName} mobile={mobile} dock={dock + 48} />
       {mobile ? (
@@ -802,7 +827,7 @@ export function PlanEditor({
                         onChange={editBlock}
                         onDone={doneEditing}
                         agentName={agentName}
-                        onAgentDiagram={onAgentDiagram}
+                        onAgentDiagram={onAgentDiagram ? (at) => onAgentDiagram(editing.start + at) : undefined}
                         mobile={mobile}
                       />
                     ),
@@ -913,5 +938,5 @@ function RawEditor({
 /** Marks outside the block being edited: only that block's suggestions and anchors hide while you edit it (item 3 §4.7). */
 function outside(marks: DocMarks, start: number, end: number): DocMarks {
   const out = (a: { start: number; end: number }) => a.end < start || a.start > end;
-  return { ...marks, anchors: marks.anchors.filter(out), edits: marks.edits.filter(out) };
+  return { ...marks, anchors: marks.anchors.filter(out), edits: marks.edits.filter(out), replaces: marks.replaces?.filter((r) => r.start < start || r.start >= end) };
 }

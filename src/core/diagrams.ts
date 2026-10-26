@@ -128,6 +128,12 @@ export function addDiagramSuggestion(s: CommentState & { plan?: { markdown: stri
   return x;
 }
 
+/** A diagram suggestion with its Mermaid source changed (Edit, then finish: accepted with your changes, #42). */
+export function withCode(x: Suggestion, code: string): void {
+  const fence = fenceOf(code);
+  x.after = x.replace ? fence : `${x.before}\n\n${fence}`;
+}
+
 /** The Mermaid source a diagram suggestion adds. */
 export function suggestedCode(x: Pick<Suggestion, "after" | "replace">): string {
   const m = x.after.match(/```mermaid\n([\s\S]*?)\n```$/);

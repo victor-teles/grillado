@@ -11,6 +11,7 @@ import { COPY, fmt } from "./copy";
 import { CopyButton, copy } from "./CopyButton";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useComments } from "./comments/Comments";
+import { useDiagrams } from "./diagrams/AddDiagrams";
 import { DecisionCard, listOf } from "./editor/DecisionCard";
 import { jumpTo, offscreen } from "./editor/link";
 import { countText, planCounts } from "./counts";
@@ -148,7 +149,9 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   };
 
   // Item 3: comments, Apply feedback and suggestions.
-  const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, setNote });
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const dg = useDiagrams({ session, draft, agentName, mobile, enabled: !readOnly && tab === "doc", moreRef, setNote });
+  const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
 
   const renderDecision: DecisionRenderer = (fields, { invalid, setActive, lit }) => {
     const key = fields.key ?? "";
@@ -273,11 +276,12 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type="button" className="icon-btn" aria-label="Plan actions" onPointerDown={() => void draft.flush()}>
+              <button ref={moreRef} type="button" className={`icon-btn${dg.open ? " on5" : ""}`} aria-label="Plan actions" onPointerDown={() => void draft.flush()}>
                 <IMore s={16} />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="pmenu">
+              {dg.menuItem}
               {mobile && tab === "doc" ? (
                 <>
                   <DropdownMenuRadioGroup value={mode} onValueChange={(v) => setMode(v as EditorMode)}>
@@ -356,6 +360,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
             staleKeys={staleKeys}
             marks={cm.marks}
             editRef={editRef}
+            onAgentDiagram={dg.onAgentDiagram}
             afterTitle={
               <p className="sub" data-testid="plan-meta">
                 {text.titleMeta}
@@ -374,6 +379,8 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
         </div>
       </div>
           {cm.overlay}
+          {dg.bar}
+          {dg.popover}
         </div>
         {cm.rail}
       </div>

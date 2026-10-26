@@ -33,6 +33,10 @@ export interface DocMarks {
   onEdit: (id: string) => void;
   /** Accept / Reject controls after the focused suggestion. */
   pill: (id: string) => ReactNode;
+  /** Block-level additions (item 5): each goes before the first block that starts at or after `at`. */
+  inserts?: { key: string; at: number; node: ReactNode }[];
+  /** Blocks shown in place of the block starting at `start` (a diagram replacement pair). */
+  replaces?: { start: number; node: ReactNode }[];
 }
 
 // Private-use sentinels spliced into a block's source so marks survive the Markdown parse.
@@ -232,7 +236,20 @@ export function Markdown({
       <Fragment key={b.start}>{node}</Fragment>
     );
 
+  const inserts = [...(marks?.inserts ?? [])].sort((a, b) => a.at - b.at);
+  const flushInserts = (upTo: number) => {
+    while (inserts.length && inserts[0].at <= upTo) {
+      const x = inserts.shift()!;
+      push(<Fragment key={`ins-${x.key}`}>{x.node}</Fragment>);
+    }
+  };
   for (const plain of parseBlocks(source)) {
+    flushInserts(plain.start);
+    const rep = marks?.replaces?.find((r) => r.start === plain.start);
+    if (rep && !(edit && plain.start >= edit.start && plain.start < edit.end)) {
+      push(<Fragment key={`rep-${plain.start}`}>{rep.node}</Fragment>);
+      continue;
+    }
     // With marks, render a re-parse of the decorated source (same kind, same offsets for editing).
     const deco = decorate(plain, marks);
     const re = deco === null ? null : parseBlocks(deco)[0];
@@ -357,6 +374,7 @@ export function Markdown({
     }
   }
   showEdit();
+  flushInserts(Infinity);
   closeOpen();
   return <>{out}</>;
 }
