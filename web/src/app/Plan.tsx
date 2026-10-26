@@ -10,6 +10,7 @@ import { useMobile } from "./chrome";
 import { COPY, fmt } from "./copy";
 import { CopyButton, copy } from "./CopyButton";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useComments } from "./comments/Comments";
 import { DecisionCard, listOf } from "./editor/DecisionCard";
 import { jumpTo, offscreen } from "./editor/link";
 import { countText, planCounts } from "./counts";
@@ -58,6 +59,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   // The block you last changed here (re-ask line goes under it) and what it said before.
   const [touched, setTouched] = useState<{ key: string; was: string } | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
+  const editRef = useRef<((start: number, end: number) => void) | null>(null);
   const psg = useMemo(() => findPassages(draft.text), [draft.text]);
   const counts = planCounts(session, draft.text);
   const openKeys = useMemo(
@@ -118,6 +120,9 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
     await draft.flush();
     await act(confirm ? "external-confirm" : "external-dismiss");
   };
+
+  // Item 3: comments, Apply feedback and suggestions.
+  const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, setNote });
 
   const renderDecision: DecisionRenderer = (fields, { invalid, setActive, lit }) => {
     const key = fields.key ?? "";
@@ -183,7 +188,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   ];
 
   return (
-    <div className="planv" data-waiting={waiting.length ? "" : undefined}>
+    <div className="planv" data-waiting={waiting.length ? "" : undefined} data-reviewing={cm.pending ? "" : undefined} data-composing={cm.composing ? "" : undefined}>
       <div className="dtb">
         <div className="ptabs" role="tablist" aria-label="Plan">
           {tabs.map((t, i) => (
@@ -226,9 +231,11 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
               edited={!!plan.editedAt}
               open={openCount}
               reasking={waiting.length}
+              review={cm.pending}
             />
           )}
           {mobile || tab !== "doc" ? null : <ModeToggle mode={mode} onMode={setMode} />}
+          {cm.railButton}
           <CopyButton
             text={draft.text}
             label={mobile ? "Copy" : "Copy Markdown"}
@@ -252,6 +259,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
                   <DropdownMenuSeparator />
                 </>
               ) : null}
+              {cm.menuItem}
               <DropdownMenuItem asChild>
                 <a href={`/api/sessions/${session.id}/plan.md`} download>
                   <IDl s={16} />
@@ -304,6 +312,9 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
         {draft.notice || note}
       </span>
       {note ? <span className="pnote">{note}</span> : null}
+      {cm.rawNote}
+      <div className="pvrow">
+        <div className="pvmain">
       <div className="docwrap" ref={docRef}>
         <div id="ppanel-doc" role="tabpanel" aria-labelledby="ptab-doc" hidden={tab !== "doc"}>
           <PlanEditor
@@ -314,6 +325,8 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
             decision={renderDecision}
             gut={mobile ? undefined : gut}
             staleKeys={staleKeys}
+            marks={cm.marks}
+            editRef={editRef}
             afterTitle={
               <p className="sub" data-testid="plan-meta">
                 {text.titleMeta}
@@ -330,6 +343,10 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
             <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} onShow={showInPlan} renderOpen={renderDecision} save={save} />
           ) : null}
         </div>
+      </div>
+          {cm.overlay}
+        </div>
+        {cm.rail}
       </div>
     </div>
   );

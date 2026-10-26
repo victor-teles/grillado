@@ -42,3 +42,19 @@ export function toggleFormat(source: string, start: number, end: number, f: Form
   if (inner.startsWith(w) && inner.endsWith(w) && inner.length > 2 * w.length) return source.slice(0, start) + inner.slice(w.length, -w.length) + source.slice(end);
   return `${source.slice(0, start)}${w}${inner}${w}${source.slice(end)}`;
 }
+
+/** ⌘B / ⌘I in the block and Markdown editors: the new text, with the same words still selected. */
+export function formatEdit(source: string, start: number, end: number, f: Format): { text: string; start: number; end: number } {
+  const text = toggleFormat(source, start, end, f);
+  const w = WRAP[f].length;
+  const inner = source.slice(start, end).replace(/^[*~`]+|[*~`]+$/g, "");
+  const at = text.indexOf(inner, Math.max(0, start - w));
+  return at < 0 ? { text, start, end } : { text, start: at, end: at + inner.length };
+}
+
+/** The format a key press asks for (⌘B bold, ⌘I italic; Ctrl on Windows / Linux), or null. */
+export function formatKey(e: { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }): Format | null {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return null;
+  const k = e.key.toLowerCase();
+  return k === "b" ? "bold" : k === "i" ? "italic" : null;
+}

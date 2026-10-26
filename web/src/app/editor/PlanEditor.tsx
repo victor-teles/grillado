@@ -4,7 +4,7 @@
 // Hooks (v1.2): .ped[data-mode], .ped-modes (segmented Rich | Markdown, lives in the plan toolbar),
 // .ped-save[data-save], .blk[data-block][data-start] with .blk-act (keyboard Edit), .blk[data-editing]
 // .blk-edit (.mono only for fences) and .blk-hint, .doc-raw .ced, .dz, mark.ctx, .mmd.
-import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type MutableRefObject, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ICheck } from "../icons";
 import { type AnswerEdit, type DecisionFields, answerEdits, decisionProblems, parseDecisionBody, revertAnswerEdits } from "../../../../src/core/decision-block.ts";
 import { textHash } from "../../../../src/core/text-hash.ts";
@@ -14,8 +14,9 @@ import { Autosaver, type SaveState } from "./autosave";
 import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
 import { Diagram } from "./Diagram";
-import { type CiteRenderer, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
+import { type CiteRenderer, type DocMarks, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
 import { canHover, selecting } from "./link";
+import { formatEdit, formatKey } from "./selection";
 
 export type EditorMode = "rich" | "raw";
 
@@ -238,6 +239,7 @@ export function SaveStatus({
   edited,
   open,
   reasking,
+  review,
 }: {
   save: PlanDraft["save"];
   onRetry: () => void;
@@ -250,6 +252,8 @@ export function SaveStatus({
   open?: number;
   /** Decisions being asked again after a change (§3.5: "Saved · re-asking 1"). */
   reasking?: number;
+  /** Suggestions waiting for review: "Saved · 3 to review" (item 3 §4.4). */
+  review?: number;
 }) {
   const [slow, setSlow] = useState(false);
   const failedRef = useRef(false);
@@ -270,13 +274,13 @@ export function SaveStatus({
   }, [save.state, conflict, answerChange]);
   const state = answerChange ? "held" : conflict ? "pending" : save.state === "saving" && !slow && !save.card ? "pending" : save.state;
   // With open decisions the status reads "Saved · n open" from the start (v1.2 §3).
-  const fresh = state === "idle" && !edited && !open && !reasking;
+  const fresh = state === "idle" && !edited && !open && !reasking && !review;
   const label = answerChange
     ? "Answer changed · not saved"
     : fresh
       ? "Plated · saved to plan.md"
       : state === "idle" || state === "saved"
-        ? `Saved${reasking ? ` · re-asking ${reasking}` : open ? ` · ${open} open` : ""}`
+        ? `Saved${reasking ? ` · re-asking ${reasking}` : review ? ` · ${review} to review` : open ? ` · ${open} open` : ""}`
         : state === "pending"
           ? "Edited · saving soon"
           : state === "saving"
@@ -348,15 +352,34 @@ export function autosize(el: HTMLTextAreaElement | null) {
   if (window.scrollY !== winY) window.scrollTo({ top: winY });
 }
 
-function BlockEditor({ text, kind, onChange, onDone }: { text: string; kind: Block["kind"]; onChange: (t: string) => void; onDone: (refocus: boolean) => void }) {
+function BlockEditor({
+  text,
+  kind,
+  sel,
+  onChange,
+  onDone,
+}: {
+  text: string;
+  kind: Block["kind"];
+  /** Range to select on open (the selection toolbar's Edit, item 3 §2). */
+  sel?: [number, number];
+  onChange: (t: string) => void;
+  onDone: (refocus: boolean) => void;
+}) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const hint = useId();
-  useLayoutEffect(() => autosize(ref.current), [text]);
+  // After ⌘B / ⌘I the words stay selected, so a second shortcut stacks (or undoes) the mark.
+  const keep = useRef<[number, number] | null>(null);
+  useLayoutEffect(() => {
+    autosize(ref.current);
+    if (keep.current) ref.current?.setSelectionRange(...keep.current);
+    keep.current = null;
+  }, [text]);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.focus({ preventScroll: true });
-    el.setSelectionRange(el.value.length, el.value.length);
+    el.setSelectionRange(sel?.[0] ?? el.value.length, sel?.[1] ?? el.value.length);
   }, []);
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
@@ -374,6 +397,16 @@ function BlockEditor({ text, kind, onChange, onDone }: { text: string; kind: Blo
         onChange={(e) => onChange(e.target.value)}
         onBlur={() => onDone(false)}
         onKeyDown={(e) => {
+          // ⌘B / ⌘I keep working here: the selection toolbar has no formatting buttons (#27).
+          const f = formatKey(e);
+          const el = e.currentTarget;
+          if (f && el.selectionStart !== el.selectionEnd) {
+            e.preventDefault();
+            const out = formatEdit(el.value, el.selectionStart, el.selectionEnd, f);
+            keep.current = [out.start, out.end];
+            onChange(out.text);
+            return;
+          }
           if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
             e.preventDefault();
             e.stopPropagation();
@@ -414,6 +447,8 @@ export function PlanEditor({
   highlight,
   gut,
   staleKeys,
+  marks,
+  editRef,
 }: {
   draft: PlanDraft;
   mode: EditorMode;
@@ -429,9 +464,13 @@ export function PlanEditor({
   gut?: GutRenderer;
   /** Decisions being asked again: their passages go muted (§3 Reasked). */
   staleKeys?: Set<string>;
+  /** Comment anchors and pending suggestions (item 3). */
+  marks?: DocMarks;
+  /** Opens the block editor at a source range (the selection toolbar's Edit). */
+  editRef?: MutableRefObject<((start: number, end: number) => void) | null>;
 }) {
   // The block being edited, as a range of the draft. `len` follows the edited text's length.
-  const [editing, setEditing] = useState<{ start: number; len: number; text: string; kind: Block["kind"] } | null>(null);
+  const [editing, setEditing] = useState<{ start: number; len: number; text: string; kind: Block["kind"]; sel?: [number, number] } | null>(null);
   const [active, setActive] = useState<string | null>(null);
   // Text → decision (§2.2): the hovered passage, after a 120ms intent; leaving clears after 200ms,
   // and moving to another passage within that grace swaps at once.
@@ -467,6 +506,12 @@ export function PlanEditor({
   const problems = useMemo(() => decisionProblems(draft.text), [draft.text]);
 
   const startEdit = (b: Block) => !readOnly && setEditing({ start: b.start, len: b.end - b.start, text: b.raw, kind: b.kind });
+  if (editRef)
+    editRef.current = (start, end) => {
+      const b = parseBlocks(draft.text).find((x) => start >= x.start && start < x.end);
+      if (!b || readOnly || (b.kind === "fence" && b.lang === "decision")) return;
+      setEditing({ start: b.start, len: b.end - b.start, text: b.raw, kind: b.kind, sel: [start - b.start, Math.min(end, b.end) - b.start] });
+    };
   const editBlock = (t: string) => {
     if (!editing) return;
     draft.change(splice(draft.text, editing.start, editing.start + editing.len, t));
@@ -559,13 +604,14 @@ export function PlanEditor({
             onBlock={readOnly ? undefined : startEdit}
             decision={renderDecision}
             link={link}
+            marks={editing ? undefined : marks}
             edit={
               editing
                 ? {
                     start: editing.start,
                     end: editing.start + editing.len,
                     node: (
-                      <BlockEditor key={editing.start} text={editing.text} kind={editing.kind} onChange={editBlock} onDone={doneEditing} />
+                      <BlockEditor key={editing.start} text={editing.text} kind={editing.kind} sel={editing.sel} onChange={editBlock} onDone={doneEditing} />
                     ),
                   }
                 : undefined

@@ -4,6 +4,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Annotation, type Extension, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
+import { type Format, formatEdit } from "./selection";
 import { Decoration, type DecorationSet, EditorView, MatchDecorator, ViewPlugin, type ViewUpdate, WidgetType, keymap, lineNumbers } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 
@@ -131,6 +132,20 @@ export interface CodeEditorHandle {
   destroy(): void;
 }
 
+/** ⌘B / ⌘I wrap the selection in Markdown marks, or unwrap it (item 3 keeps them working in the editor). */
+const format = (f: Format) => (view: EditorView) => {
+  const r = view.state.selection.main;
+  if (r.empty) return false;
+  const doc = view.state.doc.toString();
+  const out = formatEdit(doc, r.from, r.to, f);
+  let a = 0;
+  while (a < doc.length && doc[a] === out.text[a]) a++;
+  let z = 0;
+  while (z < doc.length - a && doc[doc.length - 1 - z] === out.text[out.text.length - 1 - z]) z++;
+  view.dispatch({ changes: { from: a, to: doc.length - z, insert: out.text.slice(a, out.text.length - z) }, selection: { anchor: out.start, head: out.end } });
+  return true;
+};
+
 export function createEditor(opts: {
   parent: HTMLElement;
   value: string;
@@ -145,7 +160,7 @@ export function createEditor(opts: {
     lineNumbers(),
     history(),
     EditorView.lineWrapping,
-    keymap.of([...(opts.keys ?? []), ...defaultKeymap, ...historyKeymap]),
+    keymap.of([...(opts.keys ?? []), { key: "Mod-b", run: format("bold") }, { key: "Mod-i", run: format("italic") }, ...defaultKeymap, ...historyKeymap]),
     syntaxHighlighting(highlight),
     errorField,
     cites,

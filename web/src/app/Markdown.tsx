@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
 import { Diagram } from "./editor/Diagram";
-import { IEdit, IMsg } from "./icons";
+import { IEdit } from "./icons";
 
 const KIND = { para: "paragraph", heading: "heading", list: "list", fence: "code block" } as const;
 /** "Edit paragraph: A weekend MVP for the four…" — the first few words, without Markdown marks or citations. */
@@ -19,14 +19,16 @@ export function editLabel(b: Block): string {
 export type CiteRenderer = (round: number, key: string, n: number) => ReactNode;
 
 /**
- * Comment anchors and pending suggestions drawn over the text (Phase 2 §2): `mark.cmt` with a
- * `.cmk` button after it, and each suggestion as `del.ae` (the text it replaces) then `ins.ae`.
- * Ranges are source offsets in the rendered Markdown.
+ * Comment anchors and pending suggestions drawn over the text (item 3 §3.4, §4.2): `mark.cmk`
+ * (its first piece is a Tab stop with `aria-details` → the thread), and each suggestion as
+ * `del.sg` (the text it removes) then `ins.sg`. Ranges are source offsets in the rendered Markdown.
  */
 export interface DocMarks {
-  anchors: { id: string; start: number; end: number; active: boolean; label: string }[];
+  /** `details`: id of the thread element when it is on screen (the rail is open). */
+  anchors: { id: string; start: number; end: number; active: boolean; label: string; details?: string }[];
   edits: { id: string; start: number; end: number; after: string; focused: boolean }[];
   onAnchor: (id: string) => void;
+  onAnchorHover: (id: string | null) => void;
   onEdit: (id: string) => void;
   /** Accept / Reject controls after the focused suggestion. */
   pill: (id: string) => ReactNode;
@@ -53,6 +55,8 @@ function decorate(b: Block, marks: DocMarks | undefined): string | null {
   });
   marks.edits.forEach((e, i) => {
     if (e.start < b.start || e.end > b.end) return;
+    // A pure insertion is one token, after any anchor that ends here.
+    if (e.start === e.end) return tokens.push({ at: e.start, rank: 1.5, s: E_OPEN + String.fromCharCode(IDX + i) + E_SEP + e.after.replace(/\n/g, " ") + E_CLOSE });
     tokens.push({ at: e.start, rank: 3, s: E_OPEN + String.fromCharCode(IDX + i) });
     tokens.push({ at: e.end, rank: 0, s: E_SEP + e.after.replace(/\n/g, " ") + E_CLOSE });
   });
@@ -71,6 +75,10 @@ interface MarkState {
   anchor: number | null;
   edit: number | null;
   part: "del" | "ins" | null;
+  /** The next piece of the current part is its first (it carries the hidden "suggested …" label). */
+  first?: boolean;
+  /** Anchors that already have their Tab stop. */
+  seen?: Set<number>;
 }
 
 /** Plan text ↔ decision linking (item 2 handoff §2). */
@@ -179,8 +187,8 @@ export function Markdown({
           // Chips, links and other controls inside a block keep their own behavior.
           if ((e.target as HTMLElement).closest("button,a,input,textarea,select")) return;
           // A pending suggestion is reviewed, not edited: clicking it focuses it.
-          const ae = (e.target as HTMLElement).closest<HTMLElement>("[data-edit]");
-          if (ae && marks) return marks.onEdit(ae.dataset.edit!);
+          const ae = (e.target as HTMLElement).closest<HTMLElement>("[data-sg]");
+          if (ae && marks) return marks.onEdit(ae.dataset.sg!);
           if (window.getSelection()?.toString()) return; // selecting text isn't a request to edit
           onBlock(b);
         }}
@@ -203,7 +211,7 @@ export function Markdown({
     const deco = decorate(plain, marks);
     const re = deco === null ? null : parseBlocks(deco)[0];
     const b: Block = re && re.kind === plain.kind ? ({ ...re, start: plain.start, end: plain.end, raw: plain.raw } as Block) : plain;
-    ctx.mk = { anchor: null, edit: null, part: null };
+    ctx.mk = { anchor: null, edit: null, part: null, seen: ctx.mk.seen };
     // Blocks inside (or starting inside) the edited range are replaced by the block editor.
     if (edit && b.start >= edit.start && (b.start < edit.end || b.end <= edit.end)) {
       showEdit();
@@ -212,7 +220,7 @@ export function Markdown({
     if (edit && b.start >= edit.end) showEdit();
     if (b.kind === "fence" && b.lang === "decision" && decision) {
       push(
-        <div key={b.start} className="blk" data-block="decision">
+        <div key={b.start} className="blk" data-block="decision" data-start={b.start}>
           {decision(b, decisions++)}
         </div>,
       );
@@ -286,16 +294,42 @@ function runs(text: string, ctx: Ctx, key: string | number): ReactNode {
     if (mk.edit !== null && mk.part) {
       const e = marks.edits[mk.edit];
       const Tag = mk.part;
+      const first = mk.first;
+      mk.first = false;
       node = (
-        <Tag key={`${k}e`} className="ae" data-edit={e.id} data-focus={e.focused ? "" : undefined}>
+        <Tag key={`${k}e`} className={`sg${e.focused ? " f" : ""}`} data-sg={e.id} tabIndex={-1}>
+          {first ? <span className="sr-only">{Tag === "del" ? "suggested removal: " : "suggested insertion: "}</span> : null}
           {node}
         </Tag>
       );
     }
     if (mk.anchor !== null) {
-      const a = marks.anchors[mk.anchor];
+      const n = mk.anchor;
+      const a = marks.anchors[n];
+      const seen = (mk.seen ??= new Set());
+      const stop = !seen.has(n);
+      seen.add(n);
       node = (
-        <mark key={`${k}a`} className="cmt" data-thread={a.id} data-active={a.active ? "" : undefined}>
+        <mark
+          key={`${k}a`}
+          className={`cmk${a.active ? " on" : ""}`}
+          data-thread={a.id}
+          tabIndex={stop ? 0 : undefined}
+          aria-details={stop ? a.details : undefined}
+          aria-label={stop ? a.label : undefined}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            if (!getSelection()?.toString()) marks.onAnchor(a.id);
+          }}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter") {
+              ev.preventDefault();
+              marks.onAnchor(a.id);
+            }
+          }}
+          onPointerEnter={() => marks.onAnchorHover(a.id)}
+          onPointerLeave={() => marks.onAnchorHover(null)}
+        >
           {node}
         </mark>
       );
@@ -312,20 +346,15 @@ function runs(text: string, ctx: Ctx, key: string | number): ReactNode {
       else {
         mk.edit = n;
         mk.part = "del";
+        mk.first = true;
       }
     } else if (c === A_CLOSE) {
       flush();
-      const a = mk.anchor === null ? null : marks.anchors[mk.anchor];
       mk.anchor = null;
-      if (a)
-        out.push(
-          <button key={`${key}-k${out.length}`} type="button" className="cmk" data-thread={a.id} aria-label={a.label} onClick={() => marks.onAnchor(a.id)}>
-            <IMsg s={12} />
-          </button>,
-        );
     } else if (c === E_SEP) {
       flush();
       mk.part = "ins";
+      mk.first = true;
     } else if (c === E_CLOSE) {
       flush();
       const e = mk.edit === null ? null : marks.edits[mk.edit];

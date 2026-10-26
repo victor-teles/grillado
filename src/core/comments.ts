@@ -14,11 +14,15 @@ export interface CommentMessage {
 
 export interface CommentRun {
   kind: "reply" | "apply";
-  state: "running" | "done" | "error";
+  state: "running" | "done" | "error" | "stopped";
   startedAt: string;
   ms?: number;
-  /** Edits the apply run suggested. */
+  /** Suggestions the apply run produced. */
   edits?: number;
+  /** Suggestions dropped because their text changed while the run was going. */
+  dropped?: number;
+  /** The thread is on a decision block: answers change through the decision, not suggestions (#22). */
+  decision?: string;
   message?: string;
 }
 
@@ -34,12 +38,18 @@ export interface CommentThread {
   run?: CommentRun;
 }
 
+export type SuggestionStatus = "pending" | "accepted" | "rejected";
+
 export interface Suggestion {
   id: string;
   threadId: string;
   before: string;
   after: string;
   at: number;
+  /** Records stay after review, for Undo and the thread's status row ("✓ 2 accepted"). */
+  status: SuggestionStatus;
+  /** Hash of the plan text the run read when Apply was pressed. */
+  baseHash?: string;
 }
 
 export interface ReviewUndo {
@@ -105,7 +115,7 @@ export function addComment(s: CommentState & { plan?: { markdown: string } }, in
   if (!s.plan) throw new Error("There's no plan yet.");
   const quote = typeof input.quote === "string" ? input.quote : "";
   const text = typeof input.text === "string" ? input.text.trim() : "";
-  if (!quote.trim() || quote.length > MAX_QUOTE || quote.includes("\n\n")) throw new Error("Select some text in one passage first.");
+  if (!quote.trim() || quote.length > MAX_QUOTE) throw new Error("Select some text in the plan first.");
   if (!text) throw new Error("Write a comment first.");
   const at = locate(s.plan.markdown, quote, Number(input.at) || 0);
   if (at < 0) throw new Error("The text you selected isn't in the plan anymore.");
@@ -133,12 +143,27 @@ export function startRun(s: CommentState, threadId: string, kind: CommentRun["ki
   return t;
 }
 
-export function finishRun(t: CommentThread, outcome: { ok: true; edits?: number } | { ok: false; message: string }): void {
+export function finishRun(
+  t: CommentThread,
+  outcome: { ok: true; edits?: number; dropped?: number; decision?: string } | { ok: false; message: string; stopped?: boolean },
+): void {
   if (!t.run) return;
   const ms = Date.now() - Date.parse(t.run.startedAt);
-  t.run = outcome.ok
-    ? { ...t.run, state: "done", ms, ...(outcome.edits === undefined ? {} : { edits: outcome.edits }) }
-    : { ...t.run, state: "error", ms, message: outcome.message };
+  if (outcome.ok) {
+    const { ok: _ok, ...rest } = outcome;
+    t.run = { ...t.run, state: "done", ms, ...rest };
+  } else t.run = { ...t.run, state: outcome.stopped ? "stopped" : "error", ms, message: outcome.message };
+}
+
+/** Pending suggestions, in document order. */
+export const pending = (s: CommentState) => (s.suggestions ?? []).filter((x) => x.status === "pending").sort((a, b) => a.at - b.at);
+
+/** The decision block a position sits in, or null. */
+export function decisionAt(md: string, at: number): string | null {
+  for (const m of md.matchAll(/^```decision\n([\s\S]*?)^```/gm)) {
+    if (at >= m.index! && at < m.index! + m[0].length) return /^key:\s*(.+)$/m.exec(m[1])?.[1].trim() ?? "";
+  }
+  return null;
 }
 
 export interface EditProposal {
@@ -157,7 +182,6 @@ export function normalizeEdit(e: EditProposal): EditProposal {
 
 /** Why a set of proposed edits can't be shown as suggestions, or null. */
 export function checkEdits(md: string, edits: EditProposal[]): string | null {
-  if (!edits.length) return "suggest at least one edit";
   if (edits.length > MAX_EDITS) return `suggest at most ${MAX_EDITS} edits`;
   const taken: [number, number][] = [];
   for (const raw of edits) {
@@ -174,11 +198,47 @@ export function checkEdits(md: string, edits: EditProposal[]): string | null {
   return null;
 }
 
-export function addSuggestions(s: CommentState & { plan?: { markdown: string } }, threadId: string, edits: EditProposal[], hint: number): Suggestion[] {
+/**
+ * Suggestions from one Apply run, written against the text as it was when Apply was pressed
+ * (`baseHash`). They land together, placed in the current text; one whose text changed while the
+ * run was going is dropped.
+ */
+export function addSuggestions(
+  s: CommentState & { plan?: { markdown: string } },
+  threadId: string,
+  edits: EditProposal[],
+  hint: number,
+  baseHash?: string,
+): { added: Suggestion[]; dropped: number } {
   const md = s.plan?.markdown ?? "";
-  const out = edits.map(normalizeEdit).map((e) => ({ id: newId(), threadId, before: e.before, after: e.after, at: locate(md, e.before, hint, true) }));
-  s.suggestions = [...(s.suggestions ?? []), ...out];
-  return out;
+  const placed = edits.map(normalizeEdit).map((e) => ({ e, at: locate(md, e.before, hint, true) }));
+  const added: Suggestion[] = placed
+    .filter((p) => p.at >= 0)
+    .map(({ e, at }) => ({ id: newId(), threadId, before: e.before, after: e.after, at, status: "pending" as const, ...(baseHash ? { baseHash } : {}) }));
+  s.suggestions = [...(s.suggestions ?? []), ...added];
+  return { added, dropped: placed.length - added.length };
+}
+
+/**
+ * After a hand edit (§4.7): a pending suggestion whose removal text is gone no longer fits and is
+ * dropped; its thread counts it ("1 suggestion no longer fits the text · Ask again").
+ */
+export function pruneSuggestions(s: CommentState & { plan?: { markdown: string } }): number {
+  const md = s.plan?.markdown ?? "";
+  let n = 0;
+  s.suggestions = (s.suggestions ?? []).filter((x) => {
+    if (x.status !== "pending") return true;
+    const at = locate(md, x.before, x.at, true);
+    if (at >= 0) {
+      x.at = at;
+      return true;
+    }
+    n++;
+    const t = s.comments?.find((c) => c.id === x.threadId);
+    if (t?.run) t.run.dropped = (t.run.dropped ?? 0) + 1;
+    return false;
+  });
+  return n;
 }
 
 /** Apply suggestions to the text, last first so earlier positions hold. Ones whose text is gone are skipped. */
@@ -200,23 +260,27 @@ function applyAll(md: string, list: Suggestion[], dir: "forward" | "back"): { md
 export function review(s: CommentState & { plan?: { markdown: string } }, action: "accept" | "reject", ids: unknown): { done: number; stale: number } {
   if (!s.plan) throw new Error("There's no plan yet.");
   const want = new Set(Array.isArray(ids) ? ids.map(String) : []);
-  const pick = (s.suggestions ?? []).filter((x) => want.has(x.id));
-  if (!pick.length) throw new Error("Those edits were already reviewed.");
-  s.suggestions = (s.suggestions ?? []).filter((x) => !want.has(x.id));
+  const pick = (s.suggestions ?? []).filter((x) => want.has(x.id) && x.status === "pending");
+  if (!pick.length) throw new Error("Those suggestions were already reviewed.");
   if (action === "reject") {
-    s.reviewUndo = { action, items: pick };
+    for (const x of pick) x.status = "rejected";
+    s.reviewUndo = { action, items: pick.map((x) => ({ ...x })) };
     return { done: pick.length, stale: 0 };
   }
   const r = applyAll(s.plan.markdown, pick, "forward");
   s.plan.markdown = r.md;
-  s.reviewUndo = r.done.length ? { action, items: r.done } : undefined;
+  const done = new Map(r.done.map((x) => [x.id, x]));
+  const stale = new Set(r.stale.map((x) => x.id));
+  // A suggestion whose text changed under it can't land any more: it's dropped, not forced in.
+  s.suggestions = (s.suggestions ?? []).filter((x) => !stale.has(x.id)).map((x) => (done.has(x.id) ? { ...done.get(x.id)!, status: "accepted" as const } : x));
+  s.reviewUndo = r.done.length ? { action, items: r.done.map((x) => ({ ...x, status: "accepted" as const })) } : undefined;
   return { done: r.done.length, stale: r.stale.length };
 }
 
 /** ⌘Z after an accept or reject: the suggestions come back as they were. */
-export function undoReview(s: CommentState & { plan?: { markdown: string } }): boolean {
+export function undoReview(s: CommentState & { plan?: { markdown: string } }): { ids: string[] } | null {
   const u = s.reviewUndo;
-  if (!u || !s.plan) return false;
+  if (!u || !s.plan) return null;
   s.reviewUndo = undefined;
   let items = u.items;
   if (u.action === "accept") {
@@ -224,8 +288,9 @@ export function undoReview(s: CommentState & { plan?: { markdown: string } }): b
     s.plan.markdown = r.md;
     items = r.done;
   }
-  s.suggestions = [...(s.suggestions ?? []), ...items];
-  return items.length > 0;
+  const back = new Map(items.map((x) => [x.id, x]));
+  s.suggestions = (s.suggestions ?? []).map((x) => (back.has(x.id) ? { ...back.get(x.id)!, status: "pending" as const } : x));
+  return items.length ? { ids: items.map((x) => x.id) } : null;
 }
 
 /** Plain words of a quote, for the thread's quote bar and prompts: no Markdown marks or citations. */

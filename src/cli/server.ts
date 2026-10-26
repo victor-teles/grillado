@@ -4,7 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { nextRound, replyToComment, suggestEdits, synthesize } from "../core/engine.ts";
-import { addComment, addMessage, addSuggestions, finishRun, resolveThread, review, startRun, undoReview } from "../core/comments.ts";
+import { addComment, addMessage, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, startRun, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
@@ -462,7 +462,7 @@ export class GrilladoServer {
     });
   }
 
-  /** "Apply feedback" is running on one of this session's threads: the plan is read-only meanwhile. */
+  /** "Apply feedback" is running on one of this session's threads (one at a time; the plan stays editable). */
   private applying(s: Session) {
     return (s.comments ?? []).some((t) => t.run?.kind === "apply" && t.run.state === "running" && this.commentRuns.has(t.id));
   }
@@ -484,12 +484,12 @@ export class GrilladoServer {
         return;
       case "apply":
         if (live(t.id)) throw new Error("The agent is still on this thread.");
-        if (busy || this.applying(s)) throw new Error("The agent is already editing the plan.");
+        if (busy || this.applying(s)) throw new Error("Waiting for the current run.");
         this.startComment(s, t.id, "apply");
         return;
       case "retry":
         if (live(t.id) || !t.run) return;
-        if (t.run.kind === "apply" && (busy || this.applying(s))) throw new Error("The agent is already editing the plan.");
+        if (t.run.kind === "apply" && (busy || this.applying(s))) throw new Error("Waiting for the current run.");
         this.startComment(s, t.id, t.run.kind);
         return;
       case "stop":
@@ -506,11 +506,11 @@ export class GrilladoServer {
 
   private reviewRoute(s: Session, body: any) {
     const op = String(body?.op ?? "");
-    if (this.applying(s)) throw new Error("The agent is still editing the plan.");
     if (op === "undo") {
       if (!undoReview(s)) throw new Error("Nothing to undo.");
     } else if (op === "accept" || op === "reject") {
-      review(s, op, body?.ids);
+      // "all" takes every pending suggestion (Accept all / Reject all).
+      review(s, op, body?.ids === "all" ? pending(s).map((x) => x.id) : body?.ids);
     } else throw new Error("Not found");
     if (op !== "reject") {
       // plan.md only ever holds accepted text (N3).
@@ -529,16 +529,22 @@ export class GrilladoServer {
     const work = async () => {
       if (kind === "reply") {
         const r = await replyToComment(s, t, this.adapterFor(s), opts);
-        if (controller.signal.aborted) return finishRun(t, { ok: false, message: "Stopped." });
+        if (controller.signal.aborted) return finishRun(t, { ok: false, stopped: true, message: "Stopped." });
         if (!r.ok) return finishRun(t, { ok: false, message: redact(r.message, userText(s)) });
         addMessage(s, t.id, "agent", r.value.text);
         return finishRun(t, { ok: true });
       }
-      const r = await suggestEdits(s, t, this.adapterFor(s), opts);
-      if (controller.signal.aborted) return finishRun(t, { ok: false, message: "Stopped. Nothing changed in the plan." });
+      // Suggestions are written against the plan as it is now; the plan stays editable (§4.1).
+      const base = s.plan?.markdown ?? "";
+      const r = await suggestEdits(s, t, this.adapterFor(s), opts, base);
+      // Stop keeps nothing (§4.1).
+      if (controller.signal.aborted) return finishRun(t, { ok: false, stopped: true, message: "Stopped · nothing changed" });
       if (!r.ok) return finishRun(t, { ok: false, message: redact(r.message, userText(s)) });
-      const added = addSuggestions(s, t.id, r.value.edits, t.at);
-      finishRun(t, { ok: true, edits: added.length });
+      const { added, dropped } = addSuggestions(s, t.id, r.value.edits, t.at, textHash(base));
+      // A thread on a decision block: answers change through the decision (#22), never a suggestion.
+      const at = locate(base, t.quote, t.at);
+      const decision = added.length ? null : decisionAt(base, at);
+      finishRun(t, { ok: true, edits: added.length, ...(dropped ? { dropped } : {}), ...(decision ? { decision } : {}) });
     };
     work()
       .catch((err) => finishRun(t, { ok: false, message: String(err?.message ?? err) }))
@@ -647,7 +653,6 @@ export class GrilladoServer {
       }
       case "plan": {
         if (busy) throw new Error("The agent is still working.");
-        if (this.applying(s)) return this.json(res, 409, { error: "The agent is editing the plan. Your edit wasn't saved." });
         // Saves name the version they were edited from. If plan.md moved on meanwhile (edited in
         // another editor), refuse so the browser can ask which version to keep (Q5).
         if (typeof body?.base === "string" && s.plan && textHash(s.plan.markdown) !== body.base && body.markdown !== s.plan.markdown)
@@ -665,6 +670,7 @@ export class GrilladoServer {
           return this.json(res, 200, { ok: true, savedAt: s.plan!.editedAt, reasked: deps, markdown: s.plan!.markdown });
         }
         editPlan(s, body?.markdown);
+        pruneSuggestions(s);
         this.opts.store.writePlan(s.id, s.plan!.markdown);
         this.changed(s);
         return this.json(res, 200, { ok: true, savedAt: s.plan!.editedAt });

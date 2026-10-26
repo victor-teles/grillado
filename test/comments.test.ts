@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
-import { addComment, addSuggestions, checkEdits, fenceRanges, locate, normalizeEdit, plainQuote, review, sectionAt, undoReview } from "../src/core/comments.ts";
+import { addComment, addSuggestions, checkEdits, decisionAt, fenceRanges, locate, normalizeEdit, pending, plainQuote, pruneSuggestions, review, sectionAt, undoReview } from "../src/core/comments.ts";
 import { buildCommentPrompt, replyToComment, suggestEdits } from "../src/core/engine.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
 import type { ProviderAdapter, RunRequest } from "../src/core/providers/types.ts";
@@ -54,7 +54,8 @@ describe("anchors", () => {
     const s = plated();
     expect(() => addComment(s, { quote: "not there", at: 0, text: "hi" })).toThrow("isn't in the plan");
     expect(() => addComment(s, { quote: "Families", at: 0, text: "  " })).toThrow("Write a comment");
-    expect(() => addComment(s, { quote: "a\n\nb", at: 0, text: "x" })).toThrow("one passage");
+    // A selection may span blocks (handoff §2).
+    expect(addComment(s, { quote: "Problem\nFamilies", at: 0, text: "x" }).quote).toBe("Problem\nFamilies");
     const t = addComment(s, { quote: "lose recipes", at: 999, text: "Which chats?" });
     expect(t.at).toBe(PLAN.indexOf("lose recipes"));
     expect(t.messages).toMatchObject([{ by: "you", text: "Which chats?" }]);
@@ -68,7 +69,8 @@ describe("suggestions", () => {
     expect(checkEdits(PLAN, [{ before: "Web first", after: "Web and iOS" }])).toBeNull();
     expect(checkEdits(PLAN, [{ before: "- Web first", after: "- Web and iOS" }])).toBeNull();
     expect(normalizeEdit({ before: "- Web first", after: "- Web and iOS" })).toEqual({ before: "Web first", after: "Web and iOS" });
-    expect(checkEdits(PLAN, [])).toContain("at least one");
+    // "No changes needed" is a valid answer.
+    expect(checkEdits(PLAN, [])).toBeNull();
     expect(checkEdits(PLAN, [{ before: "Nope", after: "x" }])).toContain("copied exactly");
     expect(checkEdits(PLAN, [{ before: "Web first", after: "Web first" }])).toContain("must change");
     expect(checkEdits(PLAN, [{ before: "Web first", after: "a\nb" }])).toContain("line breaks");
@@ -79,35 +81,69 @@ describe("suggestions", () => {
   test("plan.md text changes only on accept; reject and undo restore the review", () => {
     const s = plated();
     const t = addComment(s, { quote: "lose recipes", at: 0, text: "Say where" });
-    const [a, b] = addSuggestions(s, t.id, [{ before: "lose recipes", after: "lose recipes they cooked" }, { before: "Web first", after: "Web and iOS" }], t.at);
+    const { added } = addSuggestions(s, t.id, [{ before: "lose recipes", after: "lose recipes they cooked" }, { before: "Web first", after: "Web and iOS" }], t.at);
+    const [a, b] = added;
     expect(s.plan!.markdown).toBe(PLAN);
+    expect(pending(s).map((x) => x.id)).toEqual([a.id, b.id]);
 
     expect(review(s, "accept", [a.id])).toEqual({ done: 1, stale: 0 });
     expect(s.plan!.markdown).toContain("lose recipes they cooked in group chats");
-    expect(s.suggestions!.map((x) => x.id)).toEqual([b.id]);
-    expect(undoReview(s)).toBe(true);
+    expect(pending(s).map((x) => x.id)).toEqual([b.id]);
+    // The accepted one keeps its record (Undo, the thread's "✓ 1 accepted").
+    expect(s.suggestions!.find((x) => x.id === a.id)!.status).toBe("accepted");
+    expect(undoReview(s)).toEqual({ ids: [a.id] });
     expect(s.plan!.markdown).toBe(PLAN);
-    expect(s.suggestions!.map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
+    expect(pending(s)).toHaveLength(2);
 
     review(s, "reject", [b.id]);
     expect(s.plan!.markdown).toBe(PLAN);
+    expect(s.suggestions!.find((x) => x.id === b.id)!.status).toBe("rejected");
     undoReview(s);
-    expect(s.suggestions).toHaveLength(2);
+    expect(pending(s)).toHaveLength(2);
 
     review(s, "accept", [a.id, b.id]);
     expect(s.plan!.markdown).toContain("Web and iOS [R1:platform]");
     expect(s.plan!.markdown).toContain("they cooked");
-    expect(s.suggestions).toEqual([]);
+    expect(pending(s)).toEqual([]);
     expect(() => review(s, "accept", [a.id])).toThrow("already reviewed");
+    // Accepting everything never resolves the thread by itself (#28).
+    expect(s.comments![0].resolved).toBeUndefined();
   });
 
   test("an edit whose text changed under it is dropped, not forced in", () => {
     const s = plated();
     const t = addComment(s, { quote: "Web first", at: 0, text: "iOS too" });
-    const [x] = addSuggestions(s, t.id, [{ before: "Web first", after: "Web and iOS" }], t.at);
+    const [x] = addSuggestions(s, t.id, [{ before: "Web first", after: "Web and iOS" }], t.at).added;
     s.plan!.markdown = PLAN.replace("Web first", "Web only");
     expect(review(s, "accept", [x.id])).toEqual({ done: 0, stale: 1 });
     expect(s.plan!.markdown).toBe(PLAN.replace("Web first", "Web only"));
+  });
+
+  test("suggestions written against the text at Apply land in the current text, or are dropped", () => {
+    const s = plated();
+    const t = addComment(s, { quote: "Web first", at: 0, text: "iOS too" });
+    t.run = { kind: "apply", state: "running", startedAt: new Date().toISOString() };
+    // The user kept editing while the run was going: one passage moved, one changed.
+    s.plan!.markdown = `Intro line.\n\n${PLAN.replace("lose recipes", "misplace recipes")}`;
+    const r = addSuggestions(s, t.id, [{ before: "Web first", after: "Web and iOS" }, { before: "lose recipes", after: "x" }], t.at, "h1");
+    expect(r.dropped).toBe(1);
+    expect(r.added).toMatchObject([{ before: "Web first", at: s.plan!.markdown.indexOf("Web first"), baseHash: "h1", status: "pending" }]);
+  });
+
+  test("a hand edit drops suggestions that no longer fit, and counts them on the thread", () => {
+    const s = plated();
+    const t = addComment(s, { quote: "Web first", at: 0, text: "iOS too" });
+    t.run = { kind: "apply", state: "done", startedAt: new Date().toISOString() };
+    addSuggestions(s, t.id, [{ before: "Web first", after: "Web and iOS" }, { before: "lose recipes", after: "lose them" }], t.at);
+    s.plan!.markdown = PLAN.replace("Web first", "Web only");
+    expect(pruneSuggestions(s)).toBe(1);
+    expect(pending(s).map((x) => x.before)).toEqual(["lose recipes"]);
+    expect(t.run.dropped).toBe(1);
+  });
+
+  test("decisionAt finds the decision block a comment is on", () => {
+    expect(decisionAt(PLAN, PLAN.indexOf("question: One core flow?"))).toBe("scope");
+    expect(decisionAt(PLAN, PLAN.indexOf("Web first"))).toBeNull();
   });
 });
 
@@ -215,18 +251,20 @@ describe("routes", () => {
     expect(readFileSync(file, "utf8")).toBe(PLAN);
     expect(v.plan.markdown).toBe(PLAN);
 
-    const [first, second] = v.suggestions;
+    const [first, second] = v.suggestions.filter((x: any) => x.status === "pending");
     v = (await call("POST", "/suggestions", { op: "accept", ids: [first.id] })).json;
     expect(readFileSync(file, "utf8")).toContain("group chats, shared by everyone at home");
     v = (await call("POST", "/suggestions", { op: "reject", ids: [second.id] })).json;
-    expect(v.suggestions).toEqual([]);
+    expect(v.suggestions.filter((x: any) => x.status === "pending")).toEqual([]);
     expect(readFileSync(file, "utf8")).not.toContain("shipped first");
     v = (await call("POST", "/suggestions", { op: "undo" })).json;
-    expect(v.suggestions).toHaveLength(1);
-    v = (await call("POST", "/suggestions", { op: "accept", ids: [second.id] })).json;
+    expect(v.suggestions.filter((x: any) => x.status === "pending")).toHaveLength(1);
+    v = (await call("POST", "/suggestions", { op: "accept", ids: "all" })).json;
     expect(readFileSync(file, "utf8")).toContain("Yes, one core flow, shipped first [R1:scope]");
     expect(readFileSync(file, "utf8")).toContain("answer: Yes, one core flow\n");
 
+    // All accepted: the thread stays open until you press Resolve (#28).
+    expect(v.comments[0].resolved).toBeFalsy();
     v = (await call("POST", `/comments/${tid}/resolve`, { resolved: true })).json;
     expect(v.comments[0].resolved).toBe(true);
     expect((await call("POST", "/comments/nope/reply", { text: "x" })).status).toBe(400);
@@ -240,17 +278,50 @@ describe("routes", () => {
     expect(v.comments[0].messages).toHaveLength(2);
   });
 
-  test("the plan can't be saved while the agent is applying feedback", async () => {
-    const { call, settle } = await serve(fakeEnv(fakeBinDir(["claude"]), { FAKE_DELAY_MS: "600" }));
+  test("Apply doesn't lock the plan; one run at a time; Stop keeps nothing", async () => {
+    const { call, settle, file } = await serve(fakeEnv(fakeBinDir(["claude"]), { FAKE_COMMENT_DELAY_MS: "700" }));
     const tid = (await call("POST", "/comments", { quote: "Web first", at: 0, text: "iOS too" })).json.comments[0].id;
+    const other = (await call("POST", "/comments", { quote: "lose recipes", at: 0, text: "Which chats?" })).json.comments[1].id;
     await settle(tid);
+    await settle(other);
     const a = await call("POST", `/comments/${tid}/apply`);
     expect(a.json.applying).toBe(true);
-    expect((await call("POST", "/plan", { markdown: PLAN + "x" })).status).toBe(409);
-    expect((await call("POST", `/comments/${tid}/apply`)).status).toBe(400);
+    // The plan stays editable while suggestions are written (§4.1).
+    const edited = PLAN.replace("## Problem", "## The problem");
+    expect((await call("POST", "/plan", { markdown: edited })).status).toBe(200);
+    expect(readFileSync(file, "utf8")).toBe(edited);
+    expect((await call("POST", `/comments/${other}/apply`)).json.error).toContain("Waiting for the current run");
     await call("POST", `/comments/${tid}/stop`);
-    const v = await settle(tid);
-    expect(v.comments[0].run).toMatchObject({ state: "error", message: "Stopped. Nothing changed in the plan." });
+    let v = await settle(tid);
+    expect(v.comments[0].run).toMatchObject({ state: "stopped", message: "Stopped · nothing changed" });
     expect(v.suggestions ?? []).toEqual([]);
+
+    // Run again: suggestions land together, placed in the edited text.
+    await call("POST", `/comments/${tid}/apply`);
+    v = await settle(tid);
+    expect(v.comments[0].run).toMatchObject({ kind: "apply", state: "done", edits: 2 });
+    expect(v.suggestions.every((x: any) => x.status === "pending" && x.baseHash)).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe(edited);
+  });
+
+  test("Apply on a decision block never suggests an answer change", async () => {
+    const { call, settle, file } = await serve();
+    const tid = (await call("POST", "/comments", { quote: "answer: Yes, one core flow", at: 0, text: "Make it the full vision" })).json.comments[0].id;
+    await settle(tid);
+    await call("POST", `/comments/${tid}/apply`);
+    const v = await settle(tid);
+    expect(v.comments[0].run).toMatchObject({ state: "done", edits: 0, decision: "scope" });
+    expect(v.suggestions ?? []).toEqual([]);
+    expect(readFileSync(file, "utf8")).toBe(PLAN);
+  });
+
+  test("every follow-up reply gets an agent answer", async () => {
+    const { call, settle } = await serve();
+    const tid = (await call("POST", "/comments", { quote: "Web first", at: 0, text: "Why web?" })).json.comments[0].id;
+    await settle(tid);
+    await call("POST", `/comments/${tid}/reply`, { text: "And offline?" });
+    const v = await settle(tid);
+    expect(v.comments[0].messages.map((m: any) => m.by)).toEqual(["you", "agent", "you", "agent"]);
+    expect(v.comments[0].messages[3].text).toContain("Sure");
   });
 });

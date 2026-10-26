@@ -78,7 +78,6 @@ export const EditReplySchema = z.object({
   summary: z.string().max(400),
   edits: z
     .array(z.object({ before: z.string().min(1).max(2000), after: z.string().max(2000) }))
-    .min(1)
     .max(8),
 });
 

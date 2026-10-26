@@ -190,8 +190,7 @@ export function commentUserText(s: Session, t: CommentThread): string {
 }
 
 /** The thread and the plan, for a reply or for "Apply feedback". The plan is data, not instructions. */
-export function buildCommentPrompt(s: Session, t: CommentThread, ask: "reply" | "edits"): string {
-  const md = s.plan?.markdown ?? "";
+export function buildCommentPrompt(s: Session, t: CommentThread, ask: "reply" | "edits", md = s.plan?.markdown ?? ""): string {
   const thread = {
     section: sectionAt(md, t.at) || undefined,
     quote: t.quote,
@@ -223,12 +222,19 @@ export async function replyToComment(s: Session, t: CommentThread, adapter: Prov
 }
 
 /** "Apply feedback": edits checked against the current plan text, to show as suggestions (N4). */
-export async function suggestEdits(s: Session, t: CommentThread, adapter: ProviderAdapter, opts: RunOptions): Promise<Validated<EditReply>> {
+export async function suggestEdits(
+  s: Session,
+  t: CommentThread,
+  adapter: ProviderAdapter,
+  opts: RunOptions,
+  base = s.plan?.markdown ?? "",
+): Promise<Validated<EditReply>> {
+  // `base` is the plan as it was when Apply was pressed: the user keeps editing meanwhile (§4.1).
   return runValidated<EditReply>(
     adapter,
-    { kind: "edit", systemPrompt: editSystemPrompt(), userPrompt: buildCommentPrompt(s, t, "edits"), jsonSchema: editJsonSchema() },
+    { kind: "edit", systemPrompt: editSystemPrompt(), userPrompt: buildCommentPrompt(s, t, "edits", base), jsonSchema: editJsonSchema() },
     EditReplySchema,
-    (reply) => checkEdits(s.plan?.markdown ?? "", reply.edits),
+    (reply) => checkEdits(base, reply.edits),
     opts,
     commentUserText(s, t),
   );
