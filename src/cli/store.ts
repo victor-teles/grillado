@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderId } from "../core/providers/types.ts";
@@ -51,6 +51,24 @@ export class Store {
       return JSON.parse(readFileSync(path.join(this.sessionDir(id), "session.json"), "utf8"));
     } catch {
       return null;
+    }
+  }
+
+  /** The activity log (item 6): append-only, one JSON object per line. */
+  activityPath(id: string) {
+    return path.join(this.sessionDir(id), "activity.jsonl");
+  }
+
+  appendActivity(id: string, lines: unknown[]) {
+    mkdirSync(this.sessionDir(id), { recursive: true });
+    appendFileSync(this.activityPath(id), lines.map((l) => `${JSON.stringify(l)}\n`).join(""));
+  }
+
+  readActivity(id: string): string {
+    try {
+      return readFileSync(this.activityPath(id), "utf8");
+    } catch {
+      return "";
     }
   }
 

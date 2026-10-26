@@ -41,6 +41,8 @@ export interface RunOptions {
   model?: string;
   signal: AbortSignal;
   onProgress?: (label: string) => void;
+  /** The first reply didn't validate and the agent is asked again (the activity log's repair step). */
+  onRepair?: (problem: string) => void;
 }
 
 export type Validated<T> = { ok: true; value: T } | { ok: false; code: FailureCode; message: string };
@@ -116,6 +118,7 @@ export async function runValidated<T>(
 ): Promise<Validated<T>> {
   let problem = "";
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt === 2) opts.onRepair?.(problem);
     const userPrompt =
       attempt === 1
         ? base.userPrompt
