@@ -107,7 +107,8 @@ export function App() {
 
   const ready = app.providers.filter((p) => p.status === "ready");
   const provider = app.providers.find((p) => p.id === (session?.provider ?? app.selected));
-  const canSwitch = ready.length > 1 && !session?.busy;
+  // The header name always opens the picker when the agent is idle (▾, v1.2), even with one agent found.
+  const canSwitch = ready.length > 0 && !session?.busy;
   const onSwitch = canSwitch ? () => setPicking(true) : undefined;
   const pick = async (id: ProviderId, remember: boolean) => {
     setApp(await api.selectProvider(id, remember));

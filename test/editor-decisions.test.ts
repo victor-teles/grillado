@@ -10,7 +10,7 @@ import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
 import { answerEdits, decisionProblems, findDecisionBlocks, parseDecisionBody, revertAnswerEdits, serializeDecision, updateDecisionBlock } from "../src/core/decision-block.ts";
 import { agentNameFrom } from "../src/core/providers/base.ts";
-import { type Session, OTHER_OPTION, answerOpenDecision, changeDecision, createSession, planAnswerEdits, renderPlanMarkdown, restateAnswer, saveAnswerEdits, swapAnswer } from "../src/core/session.ts";
+import { type Session, OTHER_OPTION, adoptExternalPlan, answerOpenDecision, confirmExternal, dismissExternal, reaskStale, changeDecision, createSession, planAnswerEdits, renderPlanMarkdown, restateAnswer, saveAnswerEdits, swapAnswer } from "../src/core/session.ts";
 import { textHash } from "../src/core/text-hash.ts";
 import { passages, sentences } from "../web/src/app/editor/blocks.ts";
 import { diagramLabel, explainDiagramError } from "../web/src/app/editor/diagram.ts";
@@ -287,6 +287,65 @@ describe("hand-edited answers count as a Change (DECISIONS #22)", () => {
     expect(s.rounds[0].answers!.find((a) => a.questionId === "scope")).toMatchObject({ optionId: OTHER_OPTION, text: "Just the two of us" });
     expect(s.plan!.markdown).toContain("## Shape (edited)");
     expect(s.plan!.markdown).toContain("answer: Just the two of us");
+  });
+});
+
+describe("answer: edited outside Grillado (DECISIONS #26)", () => {
+  const edited = (s: Session) => s.plan!.markdown.replace("answer: platform a", "answer: Platform B");
+
+  test("a changed answer with dependents waits for the user; nothing reruns", () => {
+    const s = platedSession();
+    adoptExternalPlan(s, edited(s));
+    expect(s.status).toBe("plated");
+    expect(s.plan!.external).toEqual([{ key: "platform", from: "platform a", to: "Platform B", deps: ["storage", "sync"] }]);
+    expect(s.decisions.platform.answer).toBe("platform a");
+    expect(s.plan!.waiting).toBeUndefined();
+    // Pending edits aren't held again by the autosave's answer check.
+    expect(planAnswerEdits(s, s.plan!.markdown)).toEqual([]);
+  });
+
+  test("confirming re-asks the dependents, as the card's Change does", () => {
+    const s = platedSession();
+    adoptExternalPlan(s, edited(s));
+    const deps = confirmExternal(s);
+    expect(deps.sort()).toEqual(["storage", "sync"]);
+    expect(s.status).toBe("asking");
+    expect(s.plan!.waiting).toEqual(deps);
+    expect(s.decisions.platform.answer).toBe("platform b");
+    expect(s.plan!.external).toBeUndefined();
+  });
+
+  test("dismissing keeps the new answer and marks the dependents stale; Re-ask asks one again", () => {
+    const s = platedSession();
+    adoptExternalPlan(s, edited(s));
+    dismissExternal(s);
+    expect(s.status).toBe("plated");
+    expect(s.decisions.platform.answer).toBe("platform b");
+    expect(s.plan!.markdown).toContain("answer: platform b");
+    expect(Object.keys(s.stale ?? {}).sort()).toEqual(["storage", "sync"]);
+    expect(s.decisions.storage).toBeUndefined();
+    expect(s.plan!.waiting).toBeUndefined();
+    expect(reaskStale(s, ["storage"])).toEqual(["storage"]);
+    expect(s.status).toBe("asking");
+    expect(s.plan!.waiting).toEqual(["storage"]);
+  });
+
+  test("whitespace- or casing-only edits change nothing", () => {
+    const s = platedSession();
+    const md = s.plan!.markdown.replace("answer: platform a", "answer:   PLATFORM   A ");
+    adoptExternalPlan(s, md);
+    expect(s.plan!.external).toBeUndefined();
+    expect(s.decisions.platform.answer).toBe("platform a");
+    expect(s.status).toBe("plated");
+    expect(planAnswerEdits(s, md)).toEqual([]);
+  });
+
+  test("an edit nothing depends on is just recorded", () => {
+    const s = platedSession();
+    adoptExternalPlan(s, s.plan!.markdown.replace("answer: scope a", "answer: scope c"));
+    expect(s.plan!.external).toBeUndefined();
+    expect(s.decisions.scope.answer).toBe("scope c");
+    expect(s.status).toBe("plated");
   });
 });
 

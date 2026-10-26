@@ -141,6 +141,8 @@ export interface SessionView {
     waiting?: string[];
     /** Set when plan.md was reloaded after a change made outside Grillado. */
     reloadedAt?: string;
+    /** `answer:` lines changed outside Grillado, waiting for the user (DECISIONS #26). */
+    external?: { key: string; from: string; to: string; deps: string[] }[];
   };
   busy: boolean;
   /** "Apply feedback" is running: the plan is read-only until it's done. */

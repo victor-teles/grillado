@@ -136,6 +136,23 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
       await snap("s-plating");
       await pg.getByTestId("plan").waitFor({ timeout: 15000 });
       await snap("e");
+      // Item 2 (plan text ↔ decisions): hover a passage, hover a card, preview a cite, jump.
+      if (vp === "d") {
+        const ps = pg.locator("[data-testid=plan] .ps[data-keys]").first();
+        await ps.hover();
+        await snap("i2-phover", { hover: true });
+        await pg.locator("[data-testid=plan] .dz").nth(1).hover();
+        await snap("i2-dhover", { hover: true });
+        const cite = pg.locator("[data-testid=plan] .gut-cite").first();
+        await ps.hover();
+        await cite.hover();
+        await pg.getByRole("tooltip").waitFor();
+        await snap("i2-peek", { hover: true });
+        await cite.click();
+        await pg.waitForTimeout(50);
+        await snap("i2-jump", { hover: true });
+        await pg.waitForTimeout(1500);
+      }
       // keyboard Edit: Tab onto the first paragraph's Edit button
       const act = pg.locator("[data-testid=plan] .blk[data-block=para] .blk-act").first();
       await act.focus();
@@ -168,10 +185,31 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
       await pg.locator(".cm-content").waitFor();
       await snap("e-raw");
       // Decisions tab
+      await pg.getByRole("tab", { name: /Decisions/ }).click();
+      await snap("e-decisions");
       if (vp === "d") {
-        await pg.getByRole("tab", { name: /Decisions/ }).click();
-        await snap("e-decisions");
+        await pg.locator(".drow").nth(1).hover();
+        await snap("i2-tabrow", { hover: true });
+        await pg.locator(".drow").nth(1).getByRole("button", { name: /^Change/ }).click();
+        await snap("i2-tabchange");
+        await pg.getByRole("button", { name: "Cancel" }).click();
       }
+      // Change an answer with a dependent: the re-ask line under the block.
+      await pg.getByRole("tab", { name: /Document/ }).click();
+      if ((await pg.locator(".cm-content").count()) > 0) {
+        if (vp === "d") await pg.getByRole("radio", { name: "Rich" }).click();
+        else {
+          await pg.getByRole("button", { name: "Plan actions" }).click();
+          await pg.getByRole("menuitemradio", { name: "Rich" }).click();
+        }
+      }
+      const plat = pg.locator(".dz[data-key=platform]");
+      await plat.hover();
+      await plat.getByRole("button", { name: /^Change/ }).click();
+      await plat.locator(".dz-opt[aria-checked=false]").first().click();
+      await plat.getByRole("button", { name: /Save and re-ask/ }).click();
+      await pg.locator(".fb.wait").first().waitFor({ timeout: 5000 }).catch(() => {});
+      await snap("i2-reasked");
       await ctx.close();
       await s.stop();
       // Landing with recent sessions, same home.
@@ -203,6 +241,8 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
       await pg.getByRole("button", { name: /Yes, plate it/ }).click();
       await pg.getByTestId("plan").waitFor({ timeout: 15000 });
       await snap("e-early");
+      await pg.getByRole("tab", { name: /Decisions/ }).click();
+      await snap("i2-tabopen");
       await ctx.close();
       await s.stop();
     }
