@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { FailureCode } from "./classify.ts";
 import { extractCandidate } from "./extract.ts";
+import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { commentSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, sectionAt } from "./comments.ts";
@@ -57,7 +58,14 @@ export function stateFor(s: Session) {
     })),
     reopened: s.reopened.length ? s.reopened : undefined,
     keepGoing: s.keepGoing || undefined,
+    ...userState(s),
   };
+}
+
+/** Decisions and open Questions you added to the plan yourself (U ids, item 4 #34). */
+function userState(s: Session) {
+  const { asked, answered } = userBlocks(s.plan?.markdown ?? "", s.decisions);
+  return { userQuestions: asked.length ? asked : undefined, userDecisions: answered.length ? answered : undefined };
 }
 
 export function buildRoundPrompt(s: Session): string {
@@ -68,6 +76,14 @@ export function buildRoundPrompt(s: Session): string {
   else if (state.keepGoing)
     lines.push("The user wants to keep going: look for branches that were left shallow and ask the next frontier there.");
   else lines.push("Recompute the frontier from the settled decisions and ask the next round, or reply frontier_empty.");
+  if (state.userQuestions)
+    lines.push(
+      "The user added open questions to the plan (userQuestions). Ask each of them in this round with its key as the question key and its question copied word for word as the title. Never rewrite, shorten or merge them; you may add one short line of context, the options and your recommended answer.",
+    );
+  if (state.userDecisions)
+    lines.push(
+      "The user answered their own decisions in the plan (userDecisions). Those answers are final: never ask them again and never change them. If a later answer conflicts with one, say so in the question's context and offer to change it (an option that keeps their answer and one that changes it); the user decides.",
+    );
   return lines.join("\n");
 }
 

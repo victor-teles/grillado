@@ -38,7 +38,8 @@ export type DecisionParse =
   | { ok: false; /** 0-based line inside the body; -1 means the opening fence. */ line: number; message: string; entries: DecisionEntry[] };
 
 const LINE = /^([A-Za-z_][\w-]*)\s*:\s?(.*)$/;
-const ID = /^R\d+[·.:]\S+$/;
+// Round ids (R3·1) or a decision you added yourself (U1, item 4; never collides with a round).
+const ID = /^(R\d+[·.:]\S+|U\d+)$/;
 const KNOWN = ["id", "key", "question", "answer", "note", "by", "kept_suggestion", "at", "status"];
 
 const unquote = (v: string) => {
@@ -64,7 +65,7 @@ export function parseDecisionBody(body: string): DecisionParse {
   const get = (n: string) => entries.find((e) => e.name === n);
   const id = get("id");
   if (!id || !id.value) return { ok: false, line: id?.line ?? -1, message: "the block needs an id, like “id: R3·1”.", entries };
-  if (!ID.test(id.value)) return { ok: false, line: id.line, message: `the id should look like R3·1, not “${id.value}”.`, entries };
+  if (!ID.test(id.value)) return { ok: false, line: id.line, message: `the id should look like R3·1 or U1, not “${id.value}”.`, entries };
   const question = get("question");
   if (!question || !question.value) return { ok: false, line: question?.line ?? -1, message: "the block needs a question.", entries };
   const status = get("status");
@@ -246,4 +247,56 @@ export function revertAnswerEdits(md: string, answers: Record<string, string>): 
     out = out.slice(0, b.bodyStart) + lines.join("\n") + out.slice(b.bodyStart + b.body.length);
   }
   return out;
+}
+
+/**
+ * The save path for decisions you add yourself (item 4, slash menu): every block with a question
+ * and no id gets the next `U{n}` id, `key: u{n}`, `by: you` and `at`; an empty answer makes it
+ * open (`status: open`), a Question the agent asks in the next round. Other lines are kept.
+ */
+export function fillUserDecisions(md: string, now: string): string {
+  const blocks = findDecisionBlocks(md);
+  let n = 0;
+  for (const b of blocks) {
+    const m = /^U(\d+)$/.exec(b.parsed.entries.find((e) => e.name === "id")?.value ?? "");
+    if (m) n = Math.max(n, Number(m[1]));
+  }
+  const todo = blocks
+    .filter((b) => {
+      const get = (k: string) => b.parsed.entries.find((x) => x.name === k)?.value;
+      return !get("id") && !!get("question");
+    })
+    .map((b) => ({ b, id: ++n }));
+  let out = md;
+  // Last first, so earlier offsets stay valid.
+  for (const { b, id } of todo.reverse()) {
+    const e = b.parsed.entries;
+    const get = (k: string) => e.find((x) => x.name === k);
+    const lines = b.body.split("\n").filter((l) => !/^id\s*:\s*$/.test(l));
+    while (lines.length && !lines.at(-1)!.trim()) lines.pop();
+    const add = [`by: you`, `at: ${now}`];
+    if (!get("answer")?.value && !get("status")?.value) add.push("status: open");
+    const body = [`id: U${id}`, `key: u${id}`, ...lines.filter((l) => !/^key\s*:/.test(l)), ...add.filter((l) => !get(l.split(":")[0]))].join("\n");
+    out = out.slice(0, b.bodyStart) + body + out.slice(b.bodyStart + b.body.length);
+  }
+  return out;
+}
+
+/**
+ * Decisions and Questions you added to the plan yourself (U ids, item 4 #34), not yet settled in
+ * the interview. `asked`: open, the next round asks them word for word. `answered`: you answered
+ * them in the plan, so the answer is final and they are never asked (PO, #5).
+ */
+export function userBlocks(md: string, settled: Record<string, unknown> = {}) {
+  const asked: { key: string; question: string }[] = [];
+  const answered: { key: string; question: string; answer: string }[] = [];
+  for (const b of findDecisionBlocks(md)) {
+    if (!b.parsed.ok || !/^U\d+$/.test(b.parsed.fields.id)) continue;
+    const key = blockKey(b.parsed);
+    if (!key || settled[key]) continue;
+    const f = b.parsed.fields;
+    if (f.answer) answered.push({ key, question: f.question, answer: f.answer });
+    else if (f.status === "open") asked.push({ key, question: f.question });
+  }
+  return { asked, answered };
 }

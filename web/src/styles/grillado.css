@@ -22,11 +22,14 @@
 :root{
   --t-meta:12px;--t-body:14px;--t-h:17px;--t-title:24px;
   --ease-out:cubic-bezier(0.23,1,0.32,1);--ease-in-out:cubic-bezier(0.77,0,0.175,1);
+  /* --d-sheet: the 300ms sheet slide sits outside the 150–220ms band on purpose (#21; item 6 §18 J). */
   --d-press:120ms;--d-quick:160ms;--d-base:220ms;--d-sheet:300ms;
   --sans:"Inter Variable",ui-sans-serif,system-ui,sans-serif;--mono:"Geist Mono Variable",ui-monospace,monospace;
 }
 /* Light inks a step darker than the board tokens so small text on --sel clears 4.5:1. */
-html.light{--success-ink:oklch(0.47 0.14 153);--warning-ink:oklch(0.5 0.15 55)}
+html.light{--success-ink:oklch(0.47 0.14 153);--warning-ink:oklch(0.5 0.1 90)}
+/* dark: the warning ink moves to amber-yellow so it never reads as ember (heat, open, the agent at work) */
+html:not(.light){--warning-ink:oklch(0.84 0.15 92)}
 
 html,body,#root{height:100%}
 body{margin:0;font-family:var(--sans);font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;font-size:var(--t-body);line-height:20px;background:var(--background);color:var(--foreground)}
@@ -434,7 +437,10 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 .dz-n,.dz-h{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
 .dz-n{margin-top:4px}
 .dz-h{display:flex;gap:0;flex-wrap:wrap;max-height:0;opacity:0;overflow:hidden;transition:opacity var(--d-quick) var(--ease-out)}
-.dz-h>*+*::before{content:" · ";white-space:pre}
+/* the "·" sits in the gap, so a wrapped line never starts with one (it is clipped at the edge) */
+.dz-h{column-gap:15px}
+.dz-h>*{position:relative}
+.dz-h>*+*::before{content:"·";position:absolute;left:-10px}
 .dz-lbl{display:none}
 .dz-h>.dz-lbl+*::before{content:none}
 .dz-aff{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}
@@ -586,7 +592,10 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   *,*::before,*::after{transition-property:opacity,background-color,color!important;animation:none!important}
   @starting-style{
     .pbanner,.banner,.nudge,.plate section,.scrim,.sheet-scrim,.dialog{opacity:0}
+    .rail[data-sheet],.csheet{opacity:0}
   }
+  /* Sheets fade in 160ms instead of sliding (item 6 §18 F). */
+  .rail[data-sheet],.csheet{transition:opacity var(--d-quick) var(--ease-out)}
 }
 
 /* v1.2 review: rings only after keyboard use (see main.tsx); text fields keep their focus look. */
@@ -713,3 +722,128 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .mbar .r2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .mbar .r2 .btn{height:44px;border-radius:12px}
 .planv[data-reviewing] .doc{padding-bottom:180px}
+
+/* ---------- v1.1 item 4: slash menu (HANDOFF-ENGINEER-item4; mock item4.css) ----------
+   Uai's CommandMenu, wrapped locally (components/ui/uai/command-menu.tsx), driven by the editor.
+   Hooks: .slm/.slm.np (desktop), .msm (mobile), .sm-l .sm-g .sm-i .sm-f .sm-e .sm-p, .blk-add, .acc4,
+   .blk[data-fields] .blk-bd .ph(.on), .cal4, .tbl4, .diff4, .tabs4, .ck4. Item 4 adds no blue (§18 C). */
+:root{--sm-list-w:300px;--sm-prev-w:264px;--sm-max-h:320px;--sm-row:36px}
+.dark{--sm-shadow:0 0 0 1px var(--hair),0 12px 32px -6px rgb(0 0 0/.5);--ph-a:9%}
+.light{--sm-shadow:0 0 0 1px var(--hair),0 12px 32px -8px rgb(20 24 32/.18);--ph-a:7%}
+/* Key chips are Inter; only Markdown shortcut chips (```, ##) are Geist Mono (§18 D, #17). */
+.kb4{font:500 12px/16px var(--sans);padding:1px 5px;border-radius:5px;background:color-mix(in oklab,var(--foreground) 6%,transparent);color:var(--muted-foreground)}
+.slm,.msm{position:fixed;z-index:70;background:var(--popover);color:var(--popover-foreground);box-shadow:var(--sm-shadow);overflow:hidden}
+.slm{display:grid;grid-template-columns:var(--sm-list-w) var(--sm-prev-w);border-radius:12px}
+.slm.np{grid-template-columns:var(--sm-list-w)}
+.slm .sm-c,.msm .sm-c{display:grid;grid-template-rows:auto auto;min-width:0;border-radius:0!important;box-shadow:none!important;background:transparent!important}
+.sm-l{max-height:var(--sm-max-h)!important;transition:none!important}
+.sm-l [data-slot=command-menu-list-content]{padding:4px}
+.sm-l [data-slot=command-menu-highlight]{border-radius:8px;inset-inline:4px}
+.sm-g{padding:8px 10px 4px!important;font:400 var(--t-meta)/16px var(--sans)!important;color:var(--muted-foreground)!important;letter-spacing:0!important;text-transform:none!important}
+.sm-i{min-height:var(--sm-row)!important;gap:10px!important;padding:0 10px!important;border-radius:8px!important;font:500 var(--t-body)/20px var(--sans)!important}
+.sm-i .lb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sm-i .lb b,.sm-i .al b{font-weight:600;color:var(--foreground)}
+.sm-i .al{margin-left:6px;font-size:var(--t-meta);font-weight:400;color:var(--muted-foreground)}
+.sm-i .sc{font:500 12px/18px var(--mono);padding:0 5px;border-radius:6px;background:color-mix(in oklab,var(--foreground) 6%,transparent);color:var(--muted-foreground)}
+/* "Runs the agent": an outline dot, never ember until it is actually working. */
+.sm-i .ag{width:7px;height:7px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--muted-foreground);flex:none}
+.sm-f{display:flex;align-items:center;gap:14px;height:36px;padding:0 12px;border-top:1px solid var(--hair);font-size:var(--t-meta);color:var(--muted-foreground);white-space:nowrap}
+.sm-f>span{display:inline-flex;align-items:center;gap:5px}
+.sm-e{display:grid;justify-items:center;gap:4px;padding:22px 16px 24px;text-align:center}
+.sm-e .ei{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--muted);color:var(--muted-foreground);margin-bottom:6px}
+.sm-e b{font-size:var(--t-body);font-weight:500}
+.sm-e>span:not(.ei){font-size:var(--t-meta);color:var(--muted-foreground)}
+.sm-p{border-left:1px solid var(--hair);padding:14px;display:grid;align-content:start;gap:10px;min-width:0}
+.sm-p h4{margin:0;font-size:var(--t-body);font-weight:600;line-height:20px}
+.sm-p .pd{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);margin-top:2px}
+.sm-p .pv{border-radius:10px;background:var(--background);padding:12px;font-size:13px;line-height:19px;overflow:hidden}
+.pv .pdz{border-radius:8px;background:var(--sel);padding:8px 10px}
+.pv .pvq{color:var(--muted-foreground);font-size:var(--t-meta);line-height:16px}
+.pv .pva{font-weight:600}
+.pv .pva .yc{margin-left:6px;font-size:11px}
+.pv .pvq.open{color:var(--foreground);font-weight:500;font-size:13px;display:flex;align-items:center;gap:6px}
+.pv .pvq.open::before{content:"";width:7px;height:7px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--gr-ember-ink);flex:none}
+.pv .pvans{margin-top:6px;display:inline-flex;height:24px;align-items:center;padding:0 8px;border-radius:7px;font-size:var(--t-meta);font-weight:500;color:var(--muted-foreground);background:var(--muted)}
+.pv .cal{display:flex;gap:8px;border-radius:8px;background:var(--sel);padding:8px 10px}
+.pv .cal svg{width:14px;height:14px;margin-top:2.5px;color:var(--muted-foreground);flex:none}
+.pv .cal b{font-weight:600}
+.pv .mono,.sm-p .snip{font:12px/18px var(--mono);white-space:pre}
+.pv .mono{border-radius:8px;background:var(--sel);padding:8px 10px}
+.pv .dl,.diff4 .dl{color:var(--destructive-ink)}.pv .dd,.diff4 .dd{color:var(--success-ink)}
+.pv table{border-collapse:collapse;width:100%;font-size:var(--t-meta)}
+.pv th,.pv td{border-bottom:1px solid var(--hair);padding:4px 6px;text-align:left}
+.pv th{font-weight:600}
+.pv .tabs4{display:flex;gap:2px;border-bottom:1px solid var(--hair);margin-bottom:6px;font-size:var(--t-meta)}
+.pv .tabs4 span{padding:2px 8px 5px;color:var(--muted-foreground)}
+.pv .tabs4 span.on{color:var(--foreground);font-weight:500;box-shadow:inset 0 -2px 0 var(--foreground)}
+.pv svg.dg{display:block;width:100%;height:auto}
+.dg .nb{fill:var(--background);stroke:var(--border-strong);stroke-width:1}
+.dg .e{fill:none;stroke:var(--subtle-foreground);stroke-width:1.25}
+.dg text{font:500 11px var(--sans);fill:var(--foreground)}
+.pv .pvh{font-size:var(--t-h);font-weight:600;line-height:24px}
+.pv .pvli{padding-left:14px;position:relative}.pv .pvli::before{content:"";position:absolute;left:3px;top:8px;width:4px;height:4px;border-radius:50%;background:var(--muted-foreground)}
+.pv .pvck{display:flex;gap:8px;align-items:center}.pv .pvck i{width:12px;height:12px;border-radius:3px;box-shadow:inset 0 0 0 1.5px var(--muted-foreground)}
+.pv .agp{display:flex;gap:8px;color:var(--muted-foreground);font-size:var(--t-meta);line-height:17px}
+.pv .agp svg{flex:none}
+.sm-p .ins{display:grid;gap:4px}
+.sm-p .ins .pt{font-size:var(--t-meta);color:var(--muted-foreground)}
+.sm-p .snip{color:var(--muted-foreground);max-height:90px;overflow:hidden}
+/* Typed "/" opens at once; a pointer open ("+", "+ Block") scales in from .97 (mobile: an 8px rise). */
+@media (prefers-reduced-motion:no-preference){
+  .slm[data-pointer]{transition:opacity var(--d-quick) var(--ease-out),scale var(--d-quick) var(--ease-out)}
+  .msm[data-pointer]{transition:opacity var(--d-quick) var(--ease-out),translate var(--d-quick) var(--ease-out)}
+  @starting-style{.slm[data-pointer]{opacity:0;scale:.97}.msm[data-pointer]{opacity:0;translate:0 8px}}
+}
+@media (prefers-reduced-motion:reduce){
+  .slm[data-pointer],.msm[data-pointer]{transition:opacity var(--d-quick) var(--ease-out)}
+  @starting-style{.slm[data-pointer],.msm[data-pointer]{opacity:0}}
+}
+/* the block editor: placeholder, field chips under a transparent textarea */
+.blk-ed{position:relative;display:grid}
+.blk-edit::placeholder{color:var(--subtle-foreground)}
+.blk[data-fields] .blk-edit:not(.blk-bd){position:relative;background:transparent;z-index:1}
+/* the mirror's .ph.on chip is the selection while fields are on, not the browser's own */
+.blk[data-fields] .blk-edit::selection{background:transparent}
+.blk-bd{position:absolute;inset:0;height:auto!important;white-space:pre-wrap;overflow-wrap:break-word;color:transparent;pointer-events:none;user-select:none}
+.blk-bd .ph{border-radius:4px;background:color-mix(in oklab,var(--foreground) var(--ph-a),transparent)}
+.blk-bd .ph.on{background:color-mix(in oklab,var(--primary) 30%,transparent)}
+/* rich view: "+" adds a block below; its tooltip shows after 300ms */
+.blk-add{position:absolute;left:-40px;top:-2px;width:28px;height:28px;border:0;border-radius:8px;padding:0;display:grid;place-items:center;background:transparent;color:var(--muted-foreground);opacity:0;transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-quick) var(--ease-out),color var(--d-quick) var(--ease-out)}
+.blk:focus-within>.blk-add{opacity:1}
+@media (hover:hover) and (pointer:fine){.blk:hover>.blk-add{opacity:1}.blk-add:hover{background:var(--muted);color:var(--foreground)}}
+@media (hover:none),(max-width:767px){.blk-add{display:none}}
+.blk-add .tip4{position:absolute;left:auto;right:calc(100% + 6px);top:50%;translate:0 -50%;z-index:9;display:flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 10px;border-radius:8px;background:var(--popover);box-shadow:var(--sm-shadow);font:400 var(--t-meta)/1 var(--sans);color:var(--foreground);white-space:nowrap;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--d-quick) var(--ease-out),visibility 0s var(--d-quick)}
+.blk-add:hover:not([data-used]) .tip4{opacity:1;visibility:visible;transition-delay:300ms,300ms}
+/* the new block's flash after an insert: 120 in, 1200 hold, 220 out (background only) */
+.doc .blk[data-fl]{background:color-mix(in oklab,var(--primary) var(--link-blk-a),var(--sel));transition-duration:120ms}
+.doc .blk:not([data-fl]){transition:background-color var(--d-base) var(--ease-out)}
+.doc .blk[data-fl] .dz{background:color-mix(in oklab,var(--primary) var(--link-blk-a),var(--sel))}
+/* mobile: accessory row on the keyboard + docked list */
+.acc4{position:fixed;left:0;right:0;bottom:0;z-index:69;height:48px;display:flex;align-items:center;gap:4px;padding:0 8px;background:var(--popover);box-shadow:0 -1px 0 var(--hair)}
+.acc4 .btn{height:40px;border-radius:10px}
+.acc4 .sp{flex:1}
+.msm{left:8px;right:8px;border-radius:14px}
+.msm .sm-l{max-height:236px!important;height:auto!important}
+.msm .sm-i{min-height:52px!important;gap:12px!important;padding:6px 12px!important;border-radius:10px!important}
+.msm .sm-i .tx2{flex:1;min-width:0;display:grid}
+.msm .sm-i .tx2 .d{font-size:var(--t-meta);font-weight:400;line-height:16px;color:var(--muted-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msm [data-slot=command-menu-highlight]{border-radius:10px}
+.msm .sm-g{padding:8px 12px 4px!important}
+/* rendered blocks */
+.cal4{display:flex;gap:10px;margin:12px 0;padding:12px 16px;border-radius:12px;background:var(--sel)}
+.cal4>svg{margin-top:2px;color:var(--muted-foreground);flex:none}
+.cal4[data-kind=warning]>svg{color:var(--warning-ink)}
+.cal4 p b.k{font-weight:600}
+.tbl4{overflow-x:auto;margin:12px 0}
+.tbl4 table{border-collapse:collapse;width:100%;font-size:var(--t-body)}
+.tbl4 th,.tbl4 td{border-bottom:1px solid var(--hair);padding:6px 10px;text-align:left;vertical-align:top}
+.tbl4 th{font-weight:600}
+.doc pre.diff4 .dl,.doc pre.diff4 .dd{display:block}
+.tabs4{margin:12px 0}
+.tabs4 [role=tablist]{display:flex;gap:2px;border-bottom:1px solid var(--hair);margin-bottom:8px}
+.tabs4 [role=tab]{border:0;background:none;padding:6px 10px 8px;font:500 var(--t-body)/20px var(--sans);color:var(--muted-foreground);border-radius:6px 6px 0 0}
+.tabs4 [role=tab][aria-selected=true]{color:var(--foreground);box-shadow:inset 0 -2px 0 var(--foreground)}
+.doc ul.ck4{list-style:none;padding-left:0}
+.ck4 li{display:flex;gap:8px;align-items:flex-start}
+.ck4 .bx{width:14px;height:14px;margin-top:3px;border-radius:4px;box-shadow:inset 0 0 0 1.5px var(--muted-foreground);flex:none;display:grid;place-items:center}
+.ck4 .bx[data-on]{background:var(--foreground);box-shadow:none;color:var(--background)}

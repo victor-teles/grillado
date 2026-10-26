@@ -40,6 +40,7 @@ export function DecisionCard({
   onActive,
   onSave,
   agentName,
+  own,
   lit,
   was,
   feedback,
@@ -63,6 +64,8 @@ export function DecisionCard({
   onSave: (pick: Pick) => Promise<void>;
   /** The selected agent's display name, for "Picked by …" when `by: agent`. */
   agentName: string;
+  /** A decision you added yourself (U id, item 4): open ones say the agent asks them next round. */
+  own?: boolean;
   /** Lit from a hovered passage (§2.2): background only. */
   lit?: boolean;
   /** The answer before a change made here a moment ago ("Changed just now · was …"). */
@@ -157,7 +160,7 @@ export function DecisionCard({
 
   const view = expanded ? (state === "open" ? "open" : "changing") : state === "stale" ? "stale" : state === "open" ? "open" : "rest";
   const tag = state === "settled" ? restTag(fields, agentName) : null;
-  const who = state === "settled" ? whoLine(fields, agentName, { was }) : null;
+  const who = state === "settled" ? whoLine(fields, agentName, { was }) : own && state === "open" ? fmt(COPY.ownOpen, { agent: agentName }) : null;
   const orphan = state === "settled" && !passages.length;
   const run = async (f: () => Promise<void>) => {
     setBusy(true);
@@ -183,6 +186,8 @@ export function DecisionCard({
       aria-roledescription="decision"
       aria-label={`Decision ${fields.id}: ${fields.question}${fields.answer && state !== "open" ? ` ${fields.answer}` : ""}`}
       aria-describedby={passages.length ? passages.join(" ") : undefined}
+      aria-keyshortcuts={canChange ? "Enter /" : "/"}
+      aria-description="Slash adds a block below"
       contentEditable={false}
       tabIndex={0}
       onMouseEnter={() => !justFocusedElsewhere(ref.current) && activate(true)}

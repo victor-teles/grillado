@@ -21,6 +21,16 @@ export function openKeysIn(session: SessionView, md: string): string[] {
   return keys;
 }
 
+/** Decisions you added yourself (U ids, item 4) and answered in the plan text. */
+export function ownAnsweredIn(session: SessionView, md: string): string[] {
+  const keys: string[] = [];
+  for (const m of md.matchAll(/^```decision\n([\s\S]*?)^```/gm)) {
+    const key = /^key:\s*(u\d+)\s*$/m.exec(m[1])?.[1];
+    if (key && /^id:\s*U\d+\s*$/m.test(m[1]) && /^answer:\s*\S/m.test(m[1]) && !/^status:\s*open\s*$/m.test(m[1]) && !session.decisions[key]) keys.push(key);
+  }
+  return keys;
+}
+
 /** Open items the agent listed in prose that aren't questions we asked. */
 export function extraOpen(session: SessionView): string[] {
   const asked = (t: string) => session.rounds.some((r) => r.questions.some((q) => q.title === t));
@@ -30,7 +40,8 @@ export function extraOpen(session: SessionView): string[] {
 /** Counts for the plan screen. */
 export function planCounts(session: SessionView, md: string): Counts & { openKeys: string[] } {
   const openKeys = openKeysIn(session, md);
-  return { ...count(Object.keys(session.decisions).length, openKeys.length + extraOpen(session).length), openKeys };
+  const resolved = Object.keys(session.decisions).length + ownAnsweredIn(session, md).length;
+  return { ...count(resolved, openKeys.length + extraOpen(session).length), openKeys };
 }
 
 /** Questions the plan will list as open if you wrap up now: the current round's unanswered ones. */
