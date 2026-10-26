@@ -97,6 +97,11 @@ export interface Session {
     waiting?: string[];
     /** Last time plan.md was reloaded after a change made outside Grillado (Q5). */
     reloadedAt?: string;
+    /**
+     * `answer:` lines changed outside Grillado that have dependents (DECISIONS #26). Nothing reruns
+     * until the user confirms (re-ask) or dismisses (keep the answer, dependents go stale).
+     */
+    external?: ExternalEdit[];
   };
 }
 
@@ -588,7 +593,7 @@ function finishChange(s: Session, deps: string[]) {
 
 /** The settled answers a plan.md text changed by hand (DECISIONS #22). */
 export function planAnswerEdits(s: Session, markdown: string): AnswerEdit[] {
-  return answerEdits(markdown, Object.fromEntries(Object.entries(s.decisions).map(([k, d]) => [k, d.answer])));
+  return answerEdits(markdown, settledAnswers(s));
 }
 
 /**
@@ -599,21 +604,80 @@ export function planAnswerEdits(s: Session, markdown: string): AnswerEdit[] {
  */
 export function saveAnswerEdits(s: Session, markdown: unknown): string[] {
   editPlan(s, markdown);
-  const edits = planAnswerEdits(s, s.plan!.markdown);
   const all: string[] = [];
-  for (const e of edits) {
-    if (!s.decisions[e.key]) continue; // asked again because an earlier edit changed what it depends on
-    const q = questionFor(s, e.key)?.question;
-    const option = q?.options.find((o) => o.label.trim().toLowerCase() === e.to.trim().toLowerCase());
-    const deps = setAnswer(s, e.key, option ? { optionId: option.id } : { optionId: OTHER_OPTION, text: e.to });
-    if (!deps) continue;
-    reask(s, e.key, deps);
-    all.push(...deps);
-  }
+  for (const e of planAnswerEdits(s, s.plan!.markdown)) all.push(...applyEdit(s, e, true));
   const deps = [...new Set(all)];
   finishChange(s, deps);
   return deps;
 }
+
+/** Record one edited answer (an option when it matches a label, any case; else your own words). */
+function applyEdit(s: Session, e: AnswerEdit, markStale: boolean): string[] {
+  if (!s.decisions[e.key]) return []; // asked again because an earlier edit changed what it depends on
+  const q = questionFor(s, e.key)?.question;
+  const option = q?.options.find((o) => o.label.trim().toLowerCase() === e.to.trim().toLowerCase());
+  const deps = setAnswer(s, e.key, option ? { optionId: option.id } : { optionId: OTHER_OPTION, text: e.to });
+  if (!deps) return [];
+  if (markStale) reask(s, e.key, deps);
+  return deps;
+}
+
+export interface ExternalEdit extends AnswerEdit {
+  /** Decisions that would be asked again. */
+  deps: string[];
+}
+
+/**
+ * plan.md changed on disk (DECISIONS #26). Adopt the text. A changed answer that nothing depends
+ * on is simply recorded; one with dependents waits in `plan.external` for the user. Edits that only
+ * change whitespace or casing aren't changes (`answerEdits`).
+ */
+export function adoptExternalPlan(s: Session, markdown: string): void {
+  if (!s.plan) return;
+  s.plan.markdown = markdown;
+  s.plan.reloadedAt = new Date().toISOString();
+  const pending: ExternalEdit[] = [];
+  for (const e of answerEdits(markdown, settledAnswers(s))) {
+    const deps = dependentsOf(s, e.key);
+    if (deps.length) pending.push({ ...e, deps });
+    else applyEdit(s, e, false);
+  }
+  s.plan.external = pending.length ? pending : undefined;
+  touch(s);
+}
+
+/** Confirm outside edits: the same path as the card's Change; returns what is asked again. */
+export function confirmExternal(s: Session): string[] {
+  const edits = s.plan?.external ?? [];
+  s.plan!.external = undefined;
+  const deps = [...new Set(edits.flatMap((e) => applyEdit(s, e, true)))];
+  finishChange(s, deps);
+  return deps;
+}
+
+/** Dismiss: keep the new answers, mark their dependents stale (each can be re-asked later). Never reverts. */
+export function dismissExternal(s: Session): void {
+  const edits = s.plan?.external ?? [];
+  s.plan!.external = undefined;
+  for (const e of edits) applyEdit(s, e, true);
+  touch(s);
+}
+
+/** "Re-ask" on a stale decision: ask it again in a new round. */
+export function reaskStale(s: Session, keys: string[]): string[] {
+  if (s.status !== "plated" || !s.plan) throw new Error("There's no plan yet.");
+  const ks = keys.filter((k) => s.stale?.[k] && !s.decisions[k]);
+  if (!ks.length) throw new Error("Nothing to ask again.");
+  finishChange(s, ks);
+  return ks;
+}
+
+const settledAnswers = (s: Session) => {
+  const out = Object.fromEntries(Object.entries(s.decisions).map(([k, d]) => [k, d.answer]));
+  // Outside edits waiting for the user already show their new answer; they aren't new edits.
+  for (const e of s.plan?.external ?? []) if (Object.hasOwn(out, e.key)) out[e.key] = e.to;
+  return out;
+};
 
 /**
  * Answer a decision that was left open when the plan was written early. It's settled with its

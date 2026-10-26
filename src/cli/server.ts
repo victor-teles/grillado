@@ -16,7 +16,11 @@ import {
   createSession,
   dismissNudge,
   editPlan,
+  adoptExternalPlan,
+  confirmExternal,
+  dismissExternal,
   planAnswerEdits,
+  reaskStale,
   saveAnswerEdits,
   keepGoing,
   reopen,
@@ -311,8 +315,9 @@ export class GrilladoServer {
       if (!live?.plan) return;
       const md = this.opts.store.readPlan(s.id);
       if (md === null || md === live.plan.markdown) return; // our own write, or nothing new
-      live.plan.markdown = md;
-      live.plan.reloadedAt = new Date().toISOString();
+      // A changed `answer:` with dependents waits for the user (DECISIONS #26); nothing reruns here.
+      adoptExternalPlan(live, md);
+      this.opts.store.writePlan(live.id, live.plan.markdown);
       this.changed(live);
     });
   }
@@ -564,6 +569,22 @@ export class GrilladoServer {
         this.opts.store.writePlan(s.id, s.plan!.markdown);
         this.changed(s);
         return this.json(res, 200, { ok: true, savedAt: s.plan!.editedAt });
+      }
+      case "external-confirm":
+      case "external-dismiss": {
+        if (busy) throw new Error("The agent is still working.");
+        if (!s.plan?.external?.length) throw new Error("Nothing changed outside Grillado.");
+        const deps = action === "external-confirm" ? confirmExternal(s) : (dismissExternal(s), []);
+        this.opts.store.writePlan(s.id, s.plan!.markdown);
+        if (deps.length) this.startRound(s);
+        else this.changed(s);
+        break;
+      }
+      case "reask": {
+        if (busy) throw new Error("The agent is still working.");
+        reaskStale(s, Array.isArray(body?.keys) ? body.keys.map(String) : [String(body?.key ?? "")]);
+        this.startRound(s);
+        break;
       }
       case "change": {
         if (busy) throw new Error("The agent is still working.");
