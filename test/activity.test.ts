@@ -38,6 +38,10 @@ describe("durations (#53, §18 B)", () => {
   test("number, space, unit; one decimal under a minute", () => {
     expect([fmt(10), fmt(999), fmt(4200), fmt(59_940), fmt(72_000), fmt(3_840_000)]).toEqual(["10 ms", "999 ms", "4.2 s", "59.9 s", "1 min 12 s", "1 h 4 min"]);
   });
+  test("no “0 ms” and no “60.0 s” (#83)", () => {
+    expect([fmt(0), fmt(0.4), fmt(59_949), fmt(59_960), fmt(3_599_700)]).toEqual(["<1 ms", "<1 ms", "59.9 s", "1 min 0 s", "1 h 0 min"]);
+    expect(say(0)).toBe("less than 1 millisecond");
+  });
   test("spoken form for aria-label", () => {
     expect([say(4200), say(1000), say(10), say(72_000)]).toEqual(["4.2 seconds", "1.0 second", "10 milliseconds", "1 minute 12 seconds"]);
   });
@@ -63,6 +67,10 @@ describe("entries (#51)", () => {
     expect(e.length).toBe(3);
     expect(title(e[0])).toBe("You reviewed 2 suggestions");
     expect(meta(e[0], { agent: "A" })).toMatch(/1 accepted · 1 rejected$/);
+    // All one way: the meta lists the sections, not the count the title already says (#82).
+    const one = fold([...base, rv("r2", ["s1", "s2"])]);
+    expect(meta(one[0], { agent: "A", sectionOf: (id) => ({ s1: "Sync", s2: "Hosting" })[id] })).toMatch(/· Sync · Hosting$/);
+    expect(meta(one[0], { agent: "A" })).not.toMatch(/accepted/);
     e = fold([...base, rv("r2", ["s1"]), rv("r2", [], [], ["s1"])]);
     expect(e.length).toBe(2); // all undone: the row goes
     e = fold([...base, rv("r2", ["s1"]), rv("r1", ["s9"])]);
@@ -207,6 +215,18 @@ describe("activity.jsonl from the server (#59)", () => {
     const page = (await call("GET", "/activity?limit=1")).json;
     expect(page.entries.length).toBe(1);
     expect(page.total).toBe(2);
+  });
+
+  test("a plan.md conflict logs which version won (#84 MF4)", async () => {
+    const { call } = await serve();
+    const md = (await call("GET", "")).json.plan.markdown;
+    let v = (await call("POST", "/plan-conflict", { markdown: md, keep: "mine" })).json;
+    v = (await call("GET", "")).json;
+    expect(v.activity.entries[0]).toMatchObject({ type: "file", what: "kept-mine" });
+    await call("POST", "/plan-conflict", { markdown: md, keep: "file" });
+    v = (await call("GET", "")).json;
+    expect(v.activity.entries[0]).toMatchObject({ type: "file", what: "loaded-file" });
+    expect(meta(v.activity.entries[0], { agent: "A" })).toMatch(/you loaded the file$/);
   });
 
   test("a run with no end is written as interrupted at the next launch", async () => {

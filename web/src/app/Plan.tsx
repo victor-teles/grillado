@@ -114,6 +114,21 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
     const el = docRef.current?.querySelector<HTMLElement>(`.dz[data-key="${CSS.escape(key)}"]`) ?? null;
     jumpTo(el, el);
   };
+  // Activity's "Asked" chips open the Decisions tab on that row (item 6 handoff §6).
+  const [rowJump, setRowJump] = useState<{ key: string; n: number } | null>(null);
+  const showDecisionRow = (key: string) => {
+    setTab("decisions");
+    setRowJump((x) => ({ key, n: (x?.n ?? 0) + 1 }));
+  };
+  useEffect(() => {
+    if (tab !== "decisions") setRowJump(null);
+  }, [tab]);
+  const decisionInfo = (key: string) => {
+    const d = session.decisions[key] ?? ownDecisions.find((x) => x.key === key);
+    const q = questionFor(session, key);
+    if (!d && !(q && openKeys.includes(key))) return null;
+    return { label: label(key) || key, title: d?.title ?? q!.title };
+  };
   const showInPlan = (key: string) => {
     setTab("doc");
     setModeRaw("rich");
@@ -151,7 +166,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
   // Item 3: comments, Apply feedback and suggestions.
   const moreRef = useRef<HTMLButtonElement>(null);
   const dg = useDiagrams({ session, draft, agentName, mobile, enabled: !readOnly && tab === "doc", moreRef, setNote });
-  const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, agentNameOf, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
+  const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, decisionInfo, onDecisionRow: showDecisionRow, agentNameOf, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
 
   const renderDecision: DecisionRenderer = (fields, { invalid, setActive, lit }) => {
     const key = fields.key ?? "";
@@ -374,7 +389,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
         </div>
         <div id="ppanel-decisions" role="tabpanel" aria-labelledby="ptab-decisions" hidden={tab !== "decisions"} className="dtab">
           {tab === "decisions" ? (
-            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} />
+            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} jump={rowJump} />
           ) : null}
         </div>
       </div>
@@ -501,6 +516,7 @@ function DecisionsTab({
   onShow,
   renderOpen,
   save,
+  jump,
 }: {
   session: SessionView;
   openKeys: string[];
@@ -514,6 +530,8 @@ function DecisionsTab({
   onShow: (key: string) => void;
   renderOpen: DecisionRenderer;
   save: (key: string, open: boolean, pick: { optionId: string; text?: string }) => Promise<void>;
+  /** Scroll to, flash and focus this decision's row (Activity's Asked chips). */
+  jump: { key: string; n: number } | null;
 }) {
   // With decisions still open they come first and the resolved log starts collapsed (§4).
   const [expanded, setExpanded] = useState(!openKeys.length);
@@ -542,8 +560,24 @@ function DecisionsTab({
     setCur(n);
     rows()[n]?.focus();
   };
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!jump) return;
+    const i = flat.findIndex((d) => d.key === jump.key);
+    if (i >= 0) {
+      setExpanded(true);
+      setCur(i);
+    }
+    // Item 2's jump: center, flash, focus. Wait a frame for the tab and the expanded list to paint.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = rootRef.current?.querySelector<HTMLElement>(i >= 0 ? `.drow[data-key="${CSS.escape(jump.key)}"]` : `.dz[data-key="${CSS.escape(jump.key)}"]`) ?? null;
+        jumpTo(el, el);
+      }),
+    );
+  }, [jump?.n]);
   return (
-    <div className="doc">
+    <div className="doc" ref={rootRef}>
       <h1>Decisions</h1>
       <p className="sub">{COPY.decisionsLead}</p>
       {saved ? (
@@ -613,6 +647,7 @@ function DecisionsTab({
                       key={d.key}
                       className="drow"
                       data-row
+                      data-key={d.key}
                       tabIndex={i === cur ? 0 : -1}
                       aria-label={`${d.title} ${d.answer}${by ? `, ${by}` : ""}`}
                       onFocus={() => setCur(i)}

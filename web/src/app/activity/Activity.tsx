@@ -3,10 +3,10 @@
 // duration. One polite live region, run-level only, mounted only while the tab is visible.
 // Styling hooks: .act6, .grp6 (sticky .gh6), .ev6[data-status][data-open], .evb (row button),
 // .st6 (step), .chip6, .more6, .pill6, .ft6, .empty6.
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type Entry, type Group, accName, copyText, fmt, groupLabel, groupMeta, groups, liveMessage, meta, say, stepText, time, title } from "../../../../src/core/activity.ts";
 import { api } from "../api";
-import { ICheck2, IChev, ICircleAlert, IActivity, IFile, IFileDiff, IFlow, IHelp, IMsg, IOut, IEdit, ISq, IUser } from "../icons";
+import { ICheck2, IChev, ICircleAlert, ICopy, IActivity, IFile, IFileDiff, IFlow, IHelp, IMsg, IOut, IEdit, IRetry, ISq, IUser } from "../icons";
 import type { ActivityView, Suggestion } from "../types";
 
 /** Run bars and status rows open Activity on their run (#66). */
@@ -28,8 +28,12 @@ export interface ActivityProps {
   act: (path: string, body?: unknown) => Promise<boolean>;
   /** Jump to a suggestion still to review (item 3 keys work from there). */
   onSuggestion: (id: string) => void;
-  /** Jump to a section of the plan (accepted text, "Wrote"); false when it's gone. */
-  onSection: (section: string, probe?: boolean) => boolean;
+  /** Jump to a section of the plan (accepted text, "Wrote"); `figure` flashes its diagram instead. False when it's gone. */
+  onSection: (section: string, probe?: boolean, figure?: boolean) => boolean;
+  /** A decision asked in a round: its label ("R2·1") and question, or null when it's gone. */
+  decision: (key: string) => { label: string; title: string } | null;
+  /** Open the Decisions tab on that row (item 2's jump). */
+  onDecision: (key: string) => void;
   onToast: (text: string) => void;
   /** Esc: back to the plan. */
   onLeave: () => void;
@@ -51,7 +55,12 @@ function icon(e: Entry): ReactNode {
 
 export function ActivityPanel(p: ActivityProps) {
   const A = p.agentName;
-  const o = { agent: A, agentId: p.agentId, agentNameOf: p.agentNameOf };
+  const secOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of p.view?.entries ?? []) for (const x of e.suggestions ?? []) if (x.section) m.set(x.id, x.section);
+    return m;
+  }, [p.view]);
+  const o = { agent: A, agentId: p.agentId, agentNameOf: p.agentNameOf, sectionOf: (id: string) => secOf.get(id) };
   const memo = kept.get(p.sessionId) ?? { open: {}, groups: {}, top: 0 };
   kept.set(p.sessionId, memo);
   const [limit, setLimit] = useState(PAGE);
@@ -269,25 +278,58 @@ function Live({ text }: { text: string }) {
   );
 }
 
-function Row({ e, p, o, open, tab, setOpen, onKey, onFocus }: { e: Entry; p: ActivityProps; o: { agent: string; agentId: string; agentNameOf: (id: string) => string }; open: boolean; tab: boolean; setOpen: (v: boolean) => void; onKey: (e: React.KeyboardEvent) => void; onFocus: () => void }) {
+type MetaOpts = Parameters<typeof meta>[1] & { agent: string };
+const reduced = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+const EASE = "cubic-bezier(0.23,1,0.32,1)";
+
+/** The meta line as parts; the "·" is drawn between parts and clipped at a line start (#83). */
+function Meta({ text }: { text: string }) {
+  return (
+    <span className="m mt6">
+      {text.split(" · ").map((x, i) => (
+        <span key={i}>{x}</span>
+      ))}
+    </span>
+  );
+}
+
+function Row({ e, p, o, open, tab, setOpen, onKey, onFocus }: { e: Entry; p: ActivityProps; o: MetaOpts; open: boolean; tab: boolean; setOpen: (v: boolean) => void; onKey: (e: React.KeyboardEvent) => void; onFocus: () => void }) {
   const A = o.agent;
   const running = e.status === "running";
   const hasBody = e.type === "run";
   const bodyId = `evb-${e.id}`;
+  const tipId = `tip-${e.id}`;
+  // Only a pointer toggle animates the body; default-open, restored and keyboard opens don't (#81).
+  const [anim, setAnim] = useState(false);
+  useEffect(() => {
+    if (!open) setAnim(false);
+  }, [open]);
+  const toggle = (ev: React.MouseEvent) => {
+    if (!hasBody) return;
+    setAnim(!open && ev.detail > 0 && !document.documentElement.hasAttribute("data-kbd"));
+    setOpen(!open);
+  };
   const stop = running ? (e.kind === "diagrams" ? () => p.act("diagrams", { op: "stop" }) : e.kind === "apply" && e.target?.comment ? () => p.act(`comments/${e.target!.comment}/stop`) : null) : null;
+  const done = e.type === "run" && e.ms !== undefined && !running;
   return (
     <li className="ev6" data-entry={e.id} data-status={e.status ?? e.type} data-open={open && hasBody ? "" : undefined}>
       <div className="evh">
         <span className="ic">{icon(e)}</span>
         <span className="tx" aria-hidden="true">
           <b>{title(e)}</b>
-          <span className="m">{meta(e, o)}</span>
+          <Meta text={meta(e, o)} />
         </span>
-        {e.type === "run" && e.ms !== undefined && !running ? (
-          <span className="dur" aria-label={say(e.ms)}>
-            {fmt(e.ms)}
-            <span className="tip6" role="tooltip">
-              Started {time(e.at, true)} · took {fmt(e.ms)}
+        {stop ? (
+          <button type="button" className="btn quiet sm stop6" onClick={() => void stop()}>
+            <ISq s={12} />
+            Stop
+          </button>
+        ) : done ? (
+          // The visible number is hidden: the row's name already says it; the tip is its description (#80).
+          <span className="dur" aria-hidden="true" onClick={toggle}>
+            {fmt(e.ms!)}
+            <span className="tip6" id={tipId} role="tooltip">
+              Started {time(e.at, true)} · took {fmt(e.ms!)}
             </span>
           </span>
         ) : (
@@ -299,21 +341,16 @@ function Row({ e, p, o, open, tab, setOpen, onKey, onFocus }: { e: Entry; p: Act
           className="evb"
           data-id={e.id}
           aria-label={accName(e, o)}
+          aria-describedby={done ? tipId : undefined}
           aria-expanded={hasBody ? open : undefined}
           aria-controls={hasBody && open ? bodyId : undefined}
           tabIndex={tab ? 0 : -1}
-          onClick={() => hasBody && setOpen(!open)}
+          onClick={toggle}
           onKeyDown={onKey}
           onFocus={onFocus}
         />
-        {stop ? (
-          <button type="button" className="btn quiet sm stop6" onClick={() => void stop()}>
-            <ISq s={14} />
-            Stop
-          </button>
-        ) : null}
       </div>
-      {hasBody && open ? <Body id={bodyId} e={e} p={p} A={A} /> : null}
+      {hasBody && open ? <Body id={bodyId} e={e} p={p} A={A} animate={anim} /> : null}
     </li>
   );
 }
@@ -321,36 +358,74 @@ function Row({ e, p, o, open, tab, setOpen, onKey, onFocus }: { e: Entry; p: Act
 function Steps({ e, A }: { e: Entry; A: string }) {
   const [all, setAll] = useState(false);
   const s = e.steps;
+  // Steps already there when the body opened don't move; only ones that arrive while it's open fade in (#81).
+  const base = useRef(s.length);
   const long = s.length > 12 && !all;
-  const shown = long ? [...s.slice(0, 6), null, ...s.slice(-4)] : s;
+  const idx = s.map((_, i) => i);
+  const shown = long ? [...idx.slice(0, 6), -1, ...idx.slice(-4)] : idx;
   return (
     <ul className="steps6">
-      {shown.map((x, i) =>
-        x === null ? (
-          <li key="more" className="more6">
-            <button type="button" className="lnk" onClick={() => setAll(true)}>
-              Show {s.length - 10} more steps
-            </button>
-          </li>
-        ) : (
-          <li key={i} className="st6" data-state={x.state}>
+      {shown.map((i) => {
+        if (i < 0)
+          return (
+            <li key="more" className="more6">
+              <button type="button" className="lnk" onClick={() => setAll(true)}>
+                Show {s.length - 10} more steps
+              </button>
+            </li>
+          );
+        const x = s[i];
+        const fresh = i >= base.current;
+        return (
+          <li
+            key={i}
+            className="st6"
+            data-state={x.state}
+            data-new={fresh ? "" : undefined}
+            ref={(el) => {
+              if (!el || !fresh || el.dataset.in) return;
+              el.dataset.in = "1";
+              // Not user-initiated, so it fades from the keyboard too; reduced motion: opacity only.
+              el.animate(reduced() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, translate: "0 4px" }, { opacity: 1, translate: "0 0" }], { duration: 160, easing: EASE });
+            }}
+          >
             <span className="g" aria-hidden="true">
-              {x.state === "running" ? <i className="live s6" /> : x.state === "failed" ? <ICircleAlert s={14} /> : x.state === "stopped" ? <ISq s={14} /> : null}
+              {x.state === "running" ? <i className="live s6" /> : x.state === "failed" ? <ICircleAlert s={14} /> : x.state === "stopped" ? <ISq s={12} /> : null}
             </span>
             <span className="l">{stepText(x.label, A)}</span>
             {x.ms !== undefined ? (
-              <span className="dur" aria-label={say(x.ms)}>
-                {fmt(x.ms)}
-              </span>
+              <>
+                <span className="dur" aria-hidden="true">
+                  {fmt(x.ms)}
+                </span>
+                <span className="sr-only">{say(x.ms)}</span>
+              </>
             ) : null}
           </li>
-        ),
-      )}
+        );
+      })}
     </ul>
   );
 }
 
-function Body({ id, e, p, A }: { id: string; e: Entry; p: ActivityProps; A: string }) {
+function Chips({ label, children }: { label: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <div className="chips6" role="group" aria-labelledby={id} data-k={label}>
+      <span className="k" id={id}>
+        {label}
+      </span>
+      <div className="cl6">{children}</div>
+    </div>
+  );
+}
+
+function Body({ id, e, p, A, animate }: { id: string; e: Entry; p: ActivityProps; A: string; animate: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!animate || !ref.current) return;
+    ref.current.animate(reduced() ? [{ opacity: 0 }, { opacity: 1 }] : [{ gridTemplateRows: "0fr", opacity: 0 }, { gridTemplateRows: "1fr", opacity: 1 }], { duration: 220, easing: EASE });
+  }, []);
   const statusOf = (sid: string) => {
     const s = p.suggestions.find((x) => x.id === sid);
     return s?.status === "accepted" ? "accepted" : s?.status === "rejected" ? "rejected" : s ? "to review" : "no longer in the plan";
@@ -358,7 +433,7 @@ function Body({ id, e, p, A }: { id: string; e: Entry; p: ActivityProps; A: stri
   const done = e.status !== "running";
   const retry = e.status === "failed" ? (e.kind === "diagrams" ? () => p.act("diagrams", { op: "retry" }) : e.kind === "apply" && e.target?.comment ? () => p.act(`comments/${e.target!.comment}/retry`) : null) : null;
   return (
-    <div className="evbody" id={id}>
+    <div className="evbody" id={id} ref={ref} data-anim={animate ? "" : undefined}>
       <div>
         <Steps e={e} A={A} />
         {done ? (
@@ -374,31 +449,38 @@ function Body({ id, e, p, A }: { id: string; e: Entry; p: ActivityProps; A: stri
               </p>
             ) : null}
             {e.status === "failed" && (e.kind === "apply" || e.kind === "reply") ? <p className="why">Your comment and {A}’s reply are kept. Try again later, or switch agent from the top bar.</p> : null}
+            {e.asked?.length ? (
+              <Chips label="Asked">
+                {e.asked.map((k) => {
+                  const d = p.decision(k);
+                  return (
+                    <button key={k} type="button" className="chip6" data-key={k} disabled={!d} onClick={() => p.onDecision(k)}>
+                      {d ? <b>{d.label}</b> : null}
+                      <span className="m">{d ? d.title : "no longer in the plan"}</span>
+                      {d ? <IOut s={14} /> : null}
+                    </button>
+                  );
+                })}
+              </Chips>
+            ) : null}
             {e.suggestions?.length ? (
-              <div className="chips6" role="group" aria-label="Suggestions">
-                <span className="k">Suggestions</span>
+              <Chips label="Suggestions">
                 {e.suggestions.map((s) => {
                   const st = statusOf(s.id);
-                  const gone = st === "no longer in the plan" || (st === "accepted" && !!s.section && !p.onSection(s.section, true));
+                  const fig = e.kind === "diagrams";
+                  const gone = st === "no longer in the plan" || (st === "accepted" && !!s.section && !p.onSection(s.section, true, fig));
                   return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      className="chip6"
-                      disabled={gone}
-                      onClick={() => (st === "to review" ? p.onSuggestion(s.id) : s.section && p.onSection(s.section))}
-                    >
+                    <button key={s.id} type="button" className="chip6" disabled={gone} onClick={() => (st === "to review" ? p.onSuggestion(s.id) : s.section && p.onSection(s.section, false, fig && st === "accepted"))}>
                       <b>{s.section ?? "Plan"}</b>
                       <span className="m">{gone ? "no longer in the plan" : st}</span>
                       {gone ? null : <IOut s={14} />}
                     </button>
                   );
                 })}
-              </div>
+              </Chips>
             ) : null}
             {e.wrote?.length ? (
-              <div className="chips6" role="group" aria-label="Wrote">
-                <span className="k">Wrote</span>
+              <Chips label="Wrote">
                 {e.wrote.map((w) => {
                   const gone = !p.onSection(w, true);
                   return (
@@ -408,9 +490,15 @@ function Body({ id, e, p, A }: { id: string; e: Entry; p: ActivityProps; A: stri
                     </button>
                   );
                 })}
-              </div>
+              </Chips>
             ) : null}
             <div className="acts6">
+              {retry ? (
+                <button type="button" className="btn soft sm" onClick={() => void retry()}>
+                  <IRetry s={14} />
+                  Try again
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="btn quiet sm"
@@ -419,13 +507,9 @@ function Body({ id, e, p, A }: { id: string; e: Entry; p: ActivityProps; A: stri
                   p.onToast(`Copied the log of “${title(e).replace(/[“”]/g, "")}”`);
                 }}
               >
+                <ICopy s={14} />
                 Copy log
               </button>
-              {retry ? (
-                <button type="button" className="btn soft sm" onClick={() => void retry()}>
-                  Try again
-                </button>
-              ) : null}
             </div>
           </div>
         ) : null}

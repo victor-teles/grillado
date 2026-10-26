@@ -74,6 +74,9 @@ interface Opts {
   docRef: RefObject<HTMLDivElement | null>;
   editRef: MutableRefObject<((start: number, end: number) => void) | null>;
   onShowDecision: (key: string) => void;
+  /** Item 6 Asked chips: a decision's label and question (null when gone), and the jump to its Decisions row. */
+  decisionInfo?: (key: string) => { label: string; title: string } | null;
+  onDecisionRow?: (key: string) => void;
   setNote: (t: string) => void;
   /** Item 5: extra block rows (the "{agent} is drawing…" row) and a bar that takes the review bar's slot. */
   inserts?: { key: string; at: number; node: ReactNode }[];
@@ -396,13 +399,25 @@ export function useComments(o: Opts) {
           leaveSheet();
           setFocus(id);
         }}
-        onSection={(section, probe) => {
+        onSection={(section, probe, figure) => {
           if (probe) return hasHeading(section);
           const el = headingAt(section);
           if (!el) return false;
+          // A diagram chip flashes the figure itself, the first one in that section (#83).
+          let fig: HTMLElement | null = null;
+          if (figure)
+            for (let n = el.nextElementSibling as HTMLElement | null; n && n.dataset.block !== "heading"; n = n.nextElementSibling as HTMLElement | null) {
+              fig = n.querySelector<HTMLElement>("figure.mm5");
+              if (fig) break;
+            }
           leaveSheet();
-          requestAnimationFrame(() => jumpTo(el, el.querySelector<HTMLElement>(".blk-act")));
+          requestAnimationFrame(() => (fig ? jumpTo(fig, fig) : jumpTo(el, el.querySelector<HTMLElement>(".blk-act"))));
           return true;
+        }}
+        decision={(key) => o.decisionInfo?.(key) ?? null}
+        onDecision={(key) => {
+          leaveSheet();
+          o.onDecisionRow?.(key);
         }}
         onLeave={() => {
           if (mobile) setRail(false);
@@ -440,7 +455,8 @@ export function useComments(o: Opts) {
         <div className="csheet" role="dialog" aria-label={railTab === "activity" ? "Activity" : "Comments"} aria-modal="true">
           <div className="grab" />
           <div className="sh">
-            <b>{railTab === "activity" ? "Activity" : "Comments"}</b>
+            {/* On Activity the tabs are the header (#83). */}
+            {railTab === "activity" ? <span /> : <b>Comments</b>}
             <button type="button" className="icon-btn" aria-label={railTab === "activity" ? "Close activity" : "Close comments"} onClick={() => setRail(false)}>
               <IX s={18} />
             </button>
@@ -560,7 +576,15 @@ export function useComments(o: Opts) {
   useEffect(() => {
     if (!backPill) return;
     const t = setTimeout(() => setBackPill(false), 8000);
-    return () => clearTimeout(t);
+    // Scrolling the plan yourself dismisses it; the jump's own scroll (first 900ms) doesn't (#83).
+    const from = Date.now();
+    const wrap = o.docRef.current?.closest(".docwrap") ?? window;
+    const off = () => Date.now() - from > 900 && setBackPill(false);
+    wrap.addEventListener("scroll", off, { passive: true });
+    return () => {
+      clearTimeout(t);
+      wrap.removeEventListener("scroll", off);
+    };
   }, [backPill]);
   const back = backPill && mobile && !railOpen ? (
     <button

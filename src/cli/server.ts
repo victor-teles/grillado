@@ -722,7 +722,7 @@ export class GrilladoServer {
         const sec = planSections(md).find((x) => x.title === title);
         run.current = title;
         repaired = false;
-        rec.running(`Drawing ${title}`);
+        rec.running(`${title}: drawing a diagram`);
         this.changed(s);
         const r = sec ? await suggestDiagram(s, md, sec, kinds, focus, this.adapterFor(s), opts) : null;
         if (controller.signal.aborted) {
@@ -995,6 +995,11 @@ export class GrilladoServer {
         if (!s.plan) throw new Error("There's no plan yet.");
         if (typeof body?.markdown !== "string" || body.markdown.length > 500_000) throw new Error("Expected the plan as Markdown text.");
         const file = this.opts.store.writeConflict(s.id, body.markdown);
+        // Which version won is the file event you audit later ("did I overwrite it?", #84 MF4).
+        if (body?.keep === "mine" || body?.keep === "file") {
+          this.log(s, { v: 1, type: "file", what: body.keep === "mine" ? "kept-mine" : "loaded-file", at: new Date().toISOString() });
+          this.changed(s);
+        }
         return this.json(res, 200, { ok: true, path: file });
       }
       case "reveal": {

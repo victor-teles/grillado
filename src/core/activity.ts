@@ -168,11 +168,14 @@ export function interrupted(lines: ActivityLine[]): string[] {
 /** `10 ms` · `4.2 s` (one decimal under a minute) · `1 min 12 s` · `1 h 4 min`. Number, space, unit. */
 export function fmt(ms: number): string {
   const n = Math.max(0, Math.round(ms));
+  if (n < 1) return "<1 ms";
   if (n < 1000) return `${n} ms`;
-  if (n < 60_000) return `${(Math.round(n / 100) / 10).toFixed(1)} s`;
+  // Rounding never shows "60.0 s" or "60 min": 59,960 ms is "1 min 0 s" (#77).
+  if (Math.round(n / 100) < 600) return `${(Math.round(n / 100) / 10).toFixed(1)} s`;
   if (n < 3_600_000) {
     const m = Math.floor(n / 60_000);
     const s = Math.round((n % 60_000) / 1000);
+    if (s === 60 && m === 59) return "1 h 0 min";
     return s === 60 ? `${m + 1} min 0 s` : `${m} min ${s} s`;
   }
   const h = Math.floor(n / 3_600_000);
@@ -185,6 +188,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** The spoken form of `fmt`, for aria-label: "4.2 seconds". */
 export function say(ms: number): string {
   const t = fmt(ms);
+  if (t === "<1 ms") return "less than 1 millisecond";
   const [a, b, c, d] = t.split(" ");
   const unit = (n: string, u: string) => {
     const one = n === "1" || n === "1.0";
@@ -257,7 +261,7 @@ export function time(iso: string, seconds = false): string {
 }
 
 /** Why the run happened and what it made, without the time: "from your comment · 1 suggestion". */
-export function metaParts(e: Entry, o: { agent: string; agentId?: string; agentNameOf?: (id: string) => string }): string[] {
+export function metaParts(e: Entry, o: { agent: string; agentId?: string; agentNameOf?: (id: string) => string; sectionOf?: (suggestion: string) => string | undefined }): string[] {
   const out: string[] = [];
   const s = e.status;
   const A = o.agent;
@@ -278,9 +282,14 @@ export function metaParts(e: Entry, o: { agent: string; agentId?: string; agentN
     // The agent's name only when it differs from the current one (#65).
     if (e.agent && o.agentId && e.agent !== o.agentId) out.push(o.agentNameOf?.(e.agent) ?? e.agent);
   } else if (e.type === "review") {
+    // The title already counts them: list the sections when it's all one way, counts only when mixed (#82).
     const a = e.accepted?.length ?? 0;
     const j = e.rejected?.length ?? 0;
-    out.push([a ? `${a} accepted` : "", j ? `${j} rejected` : ""].filter(Boolean).join(" · "));
+    if (a && j) out.push(`${a} accepted · ${j} rejected`);
+    else {
+      const secs = [...new Set([...(e.accepted ?? []), ...(e.rejected ?? [])].map((id) => o.sectionOf?.(id)).filter((x): x is string => !!x))];
+      if (secs.length) out.push(secs.join(" · "));
+    }
   } else if (e.type === "user") {
     if (e.what === "confirmed") out.push(e.open?.length ? `${e.open.length} still open: ${e.open.join(", ")}` : "nothing open");
     else out.push([plural(e.answers ?? 0, "answer"), e.yourCall ? `${e.yourCall} your call` : ""].filter(Boolean).join(" · "));

@@ -173,7 +173,7 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
       const s = saver.current!;
       const mine = textRef.current;
       // The version that loses is kept next to plan.md as plan.conflict.md.
-      await api.action(sessionId, "plan-conflict", { markdown: keep === "mine" ? c.disk : mine }).catch(() => undefined);
+      await api.action(sessionId, "plan-conflict", { markdown: keep === "mine" ? c.disk : mine, keep }).catch(() => undefined);
       setConflict(null);
       conflictRef.current = false;
       clearAnswerHold();

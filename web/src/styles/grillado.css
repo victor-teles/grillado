@@ -709,7 +709,7 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .csheet{position:fixed;left:0;right:0;bottom:0;z-index:46;max-height:85dvh;background:var(--popover);border-radius:16px 16px 0 0;box-shadow:0 -1px 0 var(--hair);display:flex;flex-direction:column}
 .csheet .grab{width:36px;height:4px;border-radius:2px;background:var(--border-strong);margin:8px auto 4px;flex:none}
 .csheet .sh{display:flex;align-items:center;gap:8px;padding:4px 8px 4px 20px;min-height:44px;flex:none}
-.csheet .sh b{flex:1;font-weight:600}
+.csheet .sh b,.csheet .sh>span:empty{flex:1;font-weight:600}
 .csheet .sh .icon-btn{width:44px;height:44px}
 .csheet .crail{width:auto;border-left:0;min-height:0;flex:1;background:transparent}
 .csheet .btn{height:44px;border-radius:12px}
@@ -817,6 +817,7 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .blk-add .tip4{position:absolute;left:auto;right:calc(100% + 6px);top:50%;translate:0 -50%;z-index:9;display:flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 10px;border-radius:8px;background:var(--popover);box-shadow:var(--sm-shadow);font:400 var(--t-meta)/1 var(--sans);color:var(--foreground);white-space:nowrap;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--d-quick) var(--ease-out),visibility 0s var(--d-quick)}
 .blk-add:hover:not([data-used]) .tip4{opacity:1;visibility:visible;transition-delay:300ms,300ms}
 /* the new block's flash after an insert: 120 in, 1200 hold, 220 out (background only) */
+.doc .drow[data-fl]{background:color-mix(in oklab,var(--primary) var(--link-blk-a),var(--sel));transition-duration:120ms}
 .doc .blk[data-fl]{background:color-mix(in oklab,var(--primary) var(--link-blk-a),var(--sel));transition-duration:120ms}
 .doc .blk:not([data-fl]){transition:background-color var(--d-base) var(--ease-out)}
 .doc .blk[data-fl] .dz{background:color-mix(in oklab,var(--primary) var(--link-blk-a),var(--sel))}
@@ -1030,14 +1031,15 @@ html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{transition:no
 .grp6{display:block}
 .gh6{position:sticky;top:0;z-index:2;height:36px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--background);border-bottom:1px solid var(--hair);font-size:var(--t-meta)}
 .csheet .gh6{background:var(--popover)}
-.gh6 b{font-weight:600}
+.gh6 b{font-weight:500}
 .gh6 button{display:flex;align-items:center;gap:8px;width:100%;height:32px;margin:0 -4px;padding:0 4px;border:0;border-radius:7px;background:none;color:inherit;font:inherit;text-align:left}
 .gh6 button .chev{color:var(--muted-foreground);transform:none;transition:transform var(--d-base) var(--ease-out)}
 .gh6 button[aria-expanded=true] .chev{transform:rotate(90deg)}
 .grp6 ol{list-style:none;margin:0;padding:4px 0}
 .ev6{position:relative}
 .act6.virt .ev6{content-visibility:auto;contain-intrinsic-size:auto 52px}
-.evh{position:relative;display:grid;grid-template-columns:16px minmax(0,1fr) auto 14px;column-gap:8px;align-items:start;padding:8px 10px;border-radius:8px;margin:0 4px}
+/* Row grid (#77): 8px pad + 16px icon + 8px gap puts the title column at 32px; the body hangs off it. */
+.evh{position:relative;display:grid;grid-template-columns:16px minmax(0,1fr) auto 14px;column-gap:8px;align-items:start;padding:8px;border-radius:8px}
 .evh .ic{height:20px;display:grid;place-items:center;color:var(--muted-foreground)}
 .evh .ic .bad,.st6[data-state=failed] .g{color:var(--destructive-ink)}
 .ev6 .live{width:8px;height:8px;border-radius:50%;background:var(--gr-ember)}
@@ -1048,55 +1050,66 @@ html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{transition:no
 .ev6[data-open] .evh .tx b{white-space:normal}
 .dur{position:relative;font-size:var(--t-meta);line-height:20px;color:var(--muted-foreground);font-variant-numeric:tabular-nums}
 .tip6{position:absolute;right:0;bottom:calc(100% + 4px);z-index:3;white-space:nowrap;padding:4px 8px;border-radius:6px;background:var(--popover);color:var(--popover-foreground);box-shadow:0 4px 16px -4px oklch(0 0 0/.35);opacity:0;pointer-events:none;transition:opacity var(--d-quick) var(--ease-out) 0s}
-@media (hover:hover){.evh:hover .tip6{opacity:1;transition-delay:400ms}}
-.evh .chev{margin-top:3px;color:var(--muted-foreground);transform:none;transition:transform var(--d-base) var(--ease-out)}
-.ev6[data-open] .evh .chev{transform:rotate(90deg)}
+/* On the duration only, after 400ms; at once when the row has keyboard focus (#80). */
+@media (hover:hover){.evh .dur:hover .tip6{opacity:1;transition-delay:400ms}}
+.evh:has(.evb:focus-visible) .tip6{opacity:1;transition:none}
+/* Opening turns the chevron; closing jumps (#83). */
+.evh .chev{margin-top:3px;color:var(--muted-foreground);transform:none;transition:none}
+.ev6[data-open] .evh .chev{transform:rotate(90deg);transition:transform var(--d-base) var(--ease-out)}
+html[data-kbd] .ev6[data-open] .evh .chev{transition:none}
 .evb{position:absolute;inset:0;border:0;border-radius:8px;background:transparent;padding:0;cursor:pointer;transition:background-color var(--d-quick) var(--ease-out)}
 .ev6:not([data-status=running]):not([data-status=done]):not([data-status=failed]):not([data-status=stopped]):not([data-status=interrupted]) .evb{cursor:default}
-@media (hover:hover){.evb:hover{background:color-mix(in oklab,var(--muted) 60%,transparent)}}
+@media (hover:hover){.evb:hover{background:var(--sel)}}
 .evb:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
 .evh>:not(.evb):not(.stop6){pointer-events:none;position:relative;z-index:1}
-.stop6{grid-column:2/-1;justify-self:start;margin-top:6px;position:relative;z-index:1}
-.evbody{display:grid;grid-template-rows:1fr;opacity:1;transition:grid-template-rows var(--d-base) var(--ease-out),opacity var(--d-base) var(--ease-out)}
-@starting-style{.evbody{grid-template-rows:0fr;opacity:0}}
-html[data-kbd] .evbody,html[data-kbd] .st6{transition:none}
-.evbody>div{min-height:0;overflow:hidden;padding:0 14px 10px 34px}
+.evh>.dur:not(.evb):not(.stop6){pointer-events:auto;cursor:pointer}
+/* Stop sits in the duration slot, top right before the chevron (#77). */
+.stop6{grid-column:3;align-self:start;margin:-3px 0;height:26px;position:relative;z-index:2}
+/* Motion is el.animate() from Activity.tsx, only on a pointer open and on steps that stream in (#81). */
+.evbody{display:grid;grid-template-rows:1fr}
+.evbody>div{min-height:0;overflow:hidden;padding:0 30px 10px 32px}
 .steps6{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:4px}
-.st6{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:var(--t-meta);line-height:18px;color:var(--muted-foreground);transition:opacity var(--d-quick) var(--ease-out),translate var(--d-quick) var(--ease-out)}
-@starting-style{.st6{opacity:0;translate:0 4px}}
+/* The glyph hangs in the gutter left of the text column (#77). */
+.st6{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;font-size:var(--t-meta);line-height:18px;color:var(--muted-foreground)}
 .st6[data-state=running] .l{color:var(--foreground)}
-.st6 .g{display:grid;place-items:center}
-.more6{padding-left:22px}
+.st6[data-state=failed] .l{color:var(--destructive-ink)}
+.st6 .g{position:absolute;left:-18px;top:0;width:12px;height:18px;display:grid;place-items:center}
 .more6 .lnk,.act6 .lnk{font-size:var(--t-meta);color:var(--muted-foreground);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair);background:none;border:0;padding:0;cursor:pointer}
 .fin6{display:grid;gap:8px}
 .fin6 p{margin:0;font-size:var(--t-meta);line-height:18px;color:var(--muted-foreground)}
 .fin6 .k{color:var(--foreground);font-weight:500;margin-right:6px}
 .fin6 .why{color:var(--foreground)}
-.chips6{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.chips6 .k{font-size:var(--t-meta)}
+.chips6{display:grid;gap:4px}
+.chips6 .k{font-size:var(--t-meta);line-height:18px}
+.cl6{display:flex;flex-wrap:wrap;gap:6px}
+.chip6 .m{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .chip6{display:inline-flex;align-items:center;gap:6px;height:26px;max-width:100%;padding:0 8px;border:0;border-radius:7px;background:var(--muted);color:var(--foreground);font:400 var(--t-meta)/1 var(--sans)}
 .chip6 b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip6 svg{color:var(--muted-foreground)}
 .chip6:disabled{background:transparent;box-shadow:inset 0 0 0 1px var(--hair);cursor:default}
-@media (hover:hover){.chip6:not(:disabled):hover{background:color-mix(in oklab,var(--foreground) 12%,var(--muted))}}
+@media (hover:hover){.chip6:not(:disabled):hover{background:color-mix(in oklab,var(--foreground) 8%,var(--muted))}}
+.chip6:not(:disabled):active{background:color-mix(in oklab,var(--foreground) 12%,var(--muted))}
+/* The meta line: "·" sits in the gap and is clipped at a line start (#83, like .dz-h). */
+.mt6{display:flex;flex-wrap:wrap;column-gap:15px;overflow:hidden}
+.mt6>span{position:relative}
+.mt6>span+span::before{content:"·";position:absolute;left:-10px}
 .acts6{display:flex;gap:6px}
 .ft6{display:grid;justify-items:center;gap:4px;padding:12px 16px 0;margin:0;text-align:center}
 .empty6{padding:56px 32px;text-align:center;color:var(--muted-foreground);display:grid;gap:8px;justify-items:center}
 .empty6 svg{color:var(--subtle-foreground)}
 .empty6 b{color:var(--foreground);font-weight:500}
 .empty6 p{max-width:280px;margin:0}
-.pill6{position:sticky;top:44px;z-index:3;display:flex;align-items:center;gap:6px;margin:-28px auto 0;height:28px;padding:0 12px;border:0;border-radius:14px;background:var(--popover);color:var(--foreground);font:500 var(--t-meta)/1 var(--sans);box-shadow:0 4px 16px -4px oklch(0 0 0/.35)}
-.back6{position:fixed;top:auto;bottom:calc(16px + env(safe-area-inset-bottom));left:50%;translate:-50% 0;margin:0;height:36px;z-index:44}
+.pill6{position:sticky;top:44px;z-index:3;display:flex;align-items:center;gap:6px;margin:-30px auto 0;height:30px;padding:0 12px;border:0;border-radius:15px;background:var(--popover);color:var(--foreground);font:500 var(--t-meta)/1 var(--sans);box-shadow:0 4px 16px -4px oklch(0 0 0/.35)}
+.back6{position:fixed;top:auto;bottom:calc(16px + env(safe-area-inset-bottom));left:50%;translate:-50% 0;margin:0;height:44px;border-radius:22px;padding:0 16px;z-index:44}
 .toast.up6{bottom:76px}
+/* Over a run bar or the review bar, the pill sits above it. */
+body:has([data-testid=diagram-run],[data-testid=diagram-failed],.review) .back6{bottom:calc(76px + env(safe-area-inset-bottom))}
 .dot6{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gr-ember);margin-left:auto}
 .tolog{border:0;background:none;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-color:transparent;text-underline-offset:3px;transition:text-decoration-color var(--d-quick) var(--ease-out)}
 @media (hover:hover){.tolog:hover{text-decoration-color:currentColor}}
-.csheet .evh{padding:12px 10px}
+.csheet .evh{padding:12px 8px}
 .csheet .chip6{height:32px}
 .csheet .act6 .btn{height:36px}
 @media (prefers-reduced-motion:reduce){
-  .evbody{transition:opacity var(--d-base) var(--ease-out)}
-  .st6{transition:opacity var(--d-quick) var(--ease-out)}
-  @starting-style{.st6{translate:none}}
-  .evh .chev,.gh6 button .chev{transition:none}
+  .evh .chev,.ev6[data-open] .evh .chev,.gh6 button .chev{transition:none}
 }
