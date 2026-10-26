@@ -1,18 +1,19 @@
-// 6 · Plan (v1.1 editor): slim run summary, Document | Decisions tabs, the plan editor with
-// inline decision blocks, and the "plan.md changed outside Grillado" banner.
+// 6 · Plan (v1.2): one toolbar row (Document | Decisions, save status, Rich | Markdown, Copy
+// Markdown, ⋯ Plan actions), the plan editor with inline decision blocks, and neutral banners:
+// waiting, "plan.md changed outside Grillado", and "You changed the answer to …" (DECISIONS #22).
 //
-// Styling hooks (visuals are being redesigned; structure only):
-//   .planv[data-waiting]  .runsum  .ptabs[role=tablist] .ptab[aria-selected] .ptab-ct[data-open]
-//   .pbanner[data-tone=info|warn]  .dtab (Decisions tab) .dgrp .drow .acc .acc-h[aria-expanded]
+// Styling hooks: .planv[data-waiting] .dtb .ptabs[role=tablist] .ptab[aria-selected] .ptab-ct
+//   .pbanner[data-tone] .dtab .dgrp .drow .acc .acc-h[aria-expanded] .copy-md
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { useMobile } from "./chrome";
 import { COPY, fmt } from "./copy";
 import { CopyButton, copy } from "./CopyButton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DecisionCard } from "./editor/DecisionCard";
 import { passages as findPassages } from "./editor/blocks";
-import { type DecisionRenderer, type EditorMode, PlanEditor, usePlanDraft } from "./editor/PlanEditor";
-import { IDl, IFolder, IPlate } from "./icons";
+import { type DecisionRenderer, type EditorMode, ModeToggle, PlanEditor, SaveStatus, usePlanDraft } from "./editor/PlanEditor";
+import { IAlert, IDl, IFolder, IInfo, IMore } from "./icons";
 import { type Act, dependentsOf } from "./Session";
 import type { Decision, Question, SessionView } from "./types";
 
@@ -33,15 +34,19 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   const mobile = useMobile();
   const waiting = session.status !== "plated" ? (plan.waiting ?? []) : [];
   const readOnly = session.status !== "plated" || session.busy;
-  const draft = usePlanDraft(session.id, plan.markdown, plan.reloadedAt);
-  const [mode, setMode] = useState<EditorMode>("rich");
+  const answers = useMemo(() => Object.fromEntries(Object.entries(session.decisions).map(([k, d]) => [k, d.answer])), [session.decisions]);
+  const draft = usePlanDraft(session.id, plan.markdown, plan.reloadedAt, answers);
+  const [mode, setModeRaw] = useState<EditorMode>("rich");
+  // Switching views saves first (the editor closes any open block on a mode change).
+  const setMode = (m: EditorMode) => {
+    void draft.flush();
+    setModeRaw(m);
+  };
   const [tab, setTab] = useState<Tab>("doc");
   const [flash, setFlash] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const docRef = useRef<HTMLDivElement>(null);
   const decisions = Object.values(session.decisions);
-  const early = plan.openDecisions.length > 0;
-  const risks = decisions.filter((d) => d.kind === "unknown").length;
   const qIndex = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of session.rounds) r.questions.forEach((q, i) => m.set(`${r.n}:${q.key}`, i));
@@ -78,7 +83,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   };
   const showInPlan = (key: string) => {
     setTab("doc");
-    setMode("rich");
+    setModeRaw("rich");
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
         const id = psg.find((p) => p.keys.includes(key))?.id;
@@ -133,117 +138,135 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
 
   return (
     <div className="planv" data-waiting={waiting.length ? "" : undefined}>
-      <div className="runsum">
-        <span className={`plate${early ? " early" : ""}`} aria-hidden="true">
-          <IPlate s={18} />
-        </span>
-        <div style={{ minWidth: 0 }}>
-          <h1 style={{ fontSize: 15, lineHeight: "20px", fontWeight: 620, margin: 0 }}>{early ? "Plan written early" : "Plated"}</h1>
-          {mobile ? null : (
-            <div className="sub mono" style={{ fontSize: 11.5, display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
-              <IFolder s={12} />
-              <code data-testid="plan-path" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "none" }}>
-                {plan.path}
-              </code>
-            </div>
-          )}
-        </div>
-        <div className="acts">
-          <dl className="st" style={{ margin: "0 12px 0 0" }}>
-            <div>
-              <dt className="k" style={{ display: "inline" }}>Decisions</dt> <dd className="v" style={{ display: "inline" }}>{decisions.length}</dd>
-            </div>
-            <div>
-              <dt className="k" style={{ display: "inline" }}>{early ? "Open" : "Risks"}</dt>{" "}
-              <dd className="v" style={{ display: "inline" }}>{early ? openCount : risks}</dd>
-            </div>
-          </dl>
-          <CopyButton text={draft.text} label="Copy Markdown" kind={mobile ? "icon" : "pill"} />
-          <a
-            className={mobile ? "btnico" : "pill secondary sm"}
-            href={`/api/sessions/${session.id}/plan.md`}
-            download
-            aria-label={mobile ? "Download .md" : undefined}
-            onPointerDown={() => void draft.flush()}
-          >
-            <IDl s={14} />
-            {mobile ? null : "Download .md"}
-          </a>
-          {mobile ? null : (
-            <button type="button" className="pill secondary sm" onClick={() => void reveal()}>
-              <IFolder s={14} />
-              Show file location
+      <div className="dtb">
+        <div className="ptabs" role="tablist" aria-label="Plan">
+          {tabs.map((t, i) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              id={`ptab-${t.id}`}
+              className="ptab"
+              aria-selected={tab === t.id}
+              aria-controls={`ppanel-${t.id}`}
+              tabIndex={tab === t.id ? 0 : -1}
+              onClick={() => setTab(t.id)}
+              onKeyDown={(e) => {
+                // Manual activation (§6): arrows and Home/End move focus; Enter/Space selects.
+                const list = e.currentTarget.parentElement!.querySelectorAll<HTMLElement>("[role=tab]");
+                let n = -1;
+                if (e.key === "ArrowRight") n = (i + 1) % tabs.length;
+                else if (e.key === "ArrowLeft") n = (i - 1 + tabs.length) % tabs.length;
+                else if (e.key === "Home") n = 0;
+                else if (e.key === "End") n = tabs.length - 1;
+                if (n >= 0) {
+                  e.preventDefault();
+                  list[n]?.focus();
+                }
+              }}
+            >
+              {t.label}
+              {t.count ? (
+                <span className="ptab-ct" data-open={t.hot ? "" : undefined}>
+                  {t.count}
+                </span>
+              ) : null}
             </button>
+          ))}
+        </div>
+        <div className="dtb-r">
+          {mobile ? null : (
+            <SaveStatus
+              save={draft.save}
+              onRetry={() => void draft.flush()}
+              conflict={!!draft.conflict}
+              answerChange={!!draft.answerChange}
+              edited={!!plan.editedAt}
+              open={openCount}
+            />
           )}
+          {mobile || tab !== "doc" ? null : <ModeToggle mode={mode} onMode={setMode} />}
+          <CopyButton
+            text={draft.text}
+            label={mobile ? "Copy" : "Copy Markdown"}
+            ariaLabel={mobile ? "Copy Markdown" : undefined}
+            tone="primary"
+            className="copy-md"
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="icon-btn" aria-label="Plan actions" onPointerDown={() => void draft.flush()}>
+                <IMore s={16} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="pmenu">
+              {mobile && tab === "doc" ? (
+                <>
+                  <DropdownMenuRadioGroup value={mode} onValueChange={(v) => setMode(v as EditorMode)}>
+                    <DropdownMenuRadioItem value="rich">Rich</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="raw">Markdown</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+              <DropdownMenuItem asChild>
+                <a href={`/api/sessions/${session.id}/plan.md`} download>
+                  <IDl s={16} />
+                  Download .md
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void reveal()}>
+                <IFolder s={16} />
+                Show file location
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="pmenu-path">
+                <span data-testid="plan-path">{plan.path}</span>
+              </DropdownMenuLabel>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {banner}
       {waiting.length ? (
         <div className="pbanner" data-tone="info" role="status">
-          {fmt(COPY.waiting, { list: waiting.map((k) => session.stale?.[k]?.label ?? k).join(", "), agent: agentName })}
+          <IInfo s={16} />
+          <span>{fmt(COPY.waiting, { list: waiting.map((k) => session.stale?.[k]?.label ?? k).join(", "), agent: agentName })}</span>
         </div>
       ) : null}
+      {draft.answerChange ? <AnswerChangeBanner session={session} edits={draft.answerChange} onCancel={draft.cancelAnswerChange} onSave={draft.applyAnswerChange} /> : null}
       {draft.conflict ? (
-        <div className="pbanner" data-tone="info" role="alert" aria-labelledby="conflict-t" aria-describedby="conflict-d">
-          <strong id="conflict-t">plan.md changed outside Grillado</strong>
-          <span id="conflict-d">You have edits here too. Pick which version to keep; the other is saved as plan.conflict.md.</span>
+        <div className="pbanner" data-tone="warn" role="alert" aria-labelledby="conflict-t" aria-describedby="conflict-d">
+          <IAlert s={16} />
+          <span>
+            <strong id="conflict-t">plan.md changed outside Grillado</strong>
+            <span id="conflict-d">You have edits here too. Pick which version to keep; the other is saved as plan.conflict.md.</span>
+          </span>
           <span className="pbanner-acts">
-            <button type="button" className="pill secondary sm" onClick={() => void draft.resolve("mine")}>
+            <button type="button" className="btn quiet" onClick={() => void draft.resolve("mine")}>
               Keep mine
             </button>
-            <button type="button" className="pill primary sm" onClick={() => void draft.resolve("file")}>
+            <button type="button" className="btn primary" onClick={() => void draft.resolve("file")}>
               Load the file
             </button>
           </span>
         </div>
       ) : null}
-      {mobile && draft.save.state === "error" && !draft.conflict ? (
+      {mobile && draft.save.state === "error" && !draft.conflict && !draft.answerChange ? (
         <div className="pbanner" data-tone="warn">
-          Couldn't save to plan.md.{" "}
-          <button type="button" className="ro" onClick={() => void draft.flush()}>
-            Retry
-          </button>
+          <IAlert s={16} />
+          <span>Couldn't save to plan.md.</span>
+          <span className="pbanner-acts">
+            <button type="button" className="btn quiet" onClick={() => void draft.flush()}>
+              Retry
+            </button>
+          </span>
         </div>
       ) : null}
       <span className="sr-only" role="status">
         {draft.notice || note}
       </span>
-      {note ? <span className="sub pnote">{note}</span> : null}
-      <div className="ptabs" role="tablist" aria-label="Plan">
-        {tabs.map((t, i) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            id={`ptab-${t.id}`}
-            className="ptab"
-            aria-selected={tab === t.id}
-            aria-controls={`ppanel-${t.id}`}
-            tabIndex={tab === t.id ? 0 : -1}
-            onClick={() => setTab(t.id)}
-            onKeyDown={(e) => {
-              // Manual activation (§6): arrows and Home/End move focus; Enter/Space selects.
-              const list = e.currentTarget.parentElement!.querySelectorAll<HTMLElement>("[role=tab]");
-              let n = -1;
-              if (e.key === "ArrowRight") n = (i + 1) % tabs.length;
-              else if (e.key === "ArrowLeft") n = (i - 1 + tabs.length) % tabs.length;
-              else if (e.key === "Home") n = 0;
-              else if (e.key === "End") n = tabs.length - 1;
-              if (n >= 0) {
-                e.preventDefault();
-                list[n]?.focus();
-              }
-            }}
-          >
-            {t.label}
-            {t.count ? (
-              <span className="ptab-ct mono" data-open={t.hot ? "" : undefined}>
-                {t.count}
-              </span>
-            ) : null}
-          </button>
-        ))}
-      </div>
+      {note ? <span className="pnote">{note}</span> : null}
       <div className="docwrap" ref={docRef}>
         <div id="ppanel-doc" role="tabpanel" aria-labelledby="ptab-doc" hidden={tab !== "doc"}>
           <PlanEditor
@@ -255,10 +278,10 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
             highlight={flash}
             afterTitle={
               <p className="sub">
-                Plan · {decisions.length} decisions{plan.editedAt ? " · edited" : ""}
+                {decisions.length} decisions{plan.editedAt ? " · edited" : ""}
               </p>
             }
-            openBadge={openCount ? <span className="badge2">Still open · {openCount}</span> : null}
+            openBadge={openCount ? <span className="ct">{openCount}</span> : null}
             cite={(round, key, n) => {
               const i = qIndex.get(`${round}:${key}`);
               const label = `R${round}·${i === undefined ? "?" : i + 1}`;
@@ -336,15 +359,15 @@ function DecisionsTab({
         <div id="acc-resolved" hidden={!expanded}>
           {byRound.map(([round, ds]) => (
             <div key={round} className="dgrp">
-              <h3 className="mono sub">Round {round}</h3>
+              <h3>Round {round}</h3>
               <ul className="dlist">
                 {ds.map((d) => (
                   <li key={d.key} className="drow">
-                    <span className="mono sub">{label(d)}</span>
+                    <span className="drow-id">{label(d)}</span>
                     <span className="drow-t">{nameOf(d)}</span>
                     <span className="drow-a">{d.answer}</span>
-                    <span className="sub">{d.accepted_recommendation ? "Kept the suggestion" : "Your call"}</span>
-                    <button type="button" className="ro" aria-label={`Show in plan: ${nameOf(d)}`} onClick={() => onShow(d.key)}>
+                    <span className={d.accepted_recommendation ? "drow-by" : "drow-by yc"}>{d.accepted_recommendation ? "Kept the suggestion" : "Your call"}</span>
+                    <button type="button" className="btn quiet sm" aria-label={`Show in plan: ${nameOf(d)}`} onClick={() => onShow(d.key)}>
                       Show in plan
                     </button>
                   </li>
@@ -356,4 +379,69 @@ function DecisionsTab({
       </section>
     </div>
   );
+}
+
+/** DECISIONS #22: a hand-edited `answer:` is a Change — warn with what depends on it, then save and re-ask. */
+function AnswerChangeBanner({
+  session,
+  edits,
+  onCancel,
+  onSave,
+}: {
+  session: SessionView;
+  edits: { key: string; from: string; to: string }[];
+  onCancel: () => void;
+  onSave: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const deps = [...new Set(edits.flatMap((e) => dependentsOf(session, e.key)))].filter((k) => !edits.some((e) => e.key === k));
+  const depNames = deps.map((k) => (session.decisions[k] ? nameOf(session.decisions[k]) : k));
+  const one = edits.length === 1 ? edits[0] : null;
+  const name = (key: string) => (session.decisions[key] ? nameOf(session.decisions[key]) : key);
+  const title = one ? `You changed the answer to ${name(one.key)}` : `You changed ${edits.length} answers`;
+  const what = one ? `${one.from} → ${one.to}. ` : "";
+  const then = depNames.length
+    ? `${listOf(depNames)} ${depNames.length === 1 ? "depends" : "depend"} on it, so ${depNames.length === 1 ? "it" : "they"} will be asked again in a new round.`
+    : "Nothing depends on it.";
+  return (
+    <div className="pbanner" data-tone="warn" role="alert" aria-labelledby="answer-t" aria-describedby="answer-d" data-testid="answer-change">
+      <IAlert s={16} />
+      <span>
+        <strong id="answer-t">{title}</strong>
+        <span id="answer-d">
+          {what}
+          {then}
+        </span>
+        {error ? <span className="pbanner-err">{error}</span> : null}
+      </span>
+      <span className="pbanner-acts">
+        <button type="button" className="btn quiet" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await onSave();
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {deps.length ? `Save and re-ask ${deps.length}` : "Save answer"}
+        </button>
+      </span>
+    </div>
+  );
+}
+
+function listOf(names: string[]): string {
+  return names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }

@@ -8,9 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
-import { decisionProblems, findDecisionBlocks, parseDecisionBody, serializeDecision, updateDecisionBlock } from "../src/core/decision-block.ts";
+import { answerEdits, decisionProblems, findDecisionBlocks, parseDecisionBody, revertAnswerEdits, serializeDecision, updateDecisionBlock } from "../src/core/decision-block.ts";
 import { agentNameFrom } from "../src/core/providers/base.ts";
-import { type Session, OTHER_OPTION, answerOpenDecision, changeDecision, createSession, renderPlanMarkdown } from "../src/core/session.ts";
+import { type Session, OTHER_OPTION, answerOpenDecision, changeDecision, createSession, planAnswerEdits, renderPlanMarkdown, saveAnswerEdits } from "../src/core/session.ts";
 import { textHash } from "../src/core/text-hash.ts";
 import { passages, sentences } from "../web/src/app/editor/blocks.ts";
 import { diagramLabel, explainDiagramError } from "../web/src/app/editor/diagram.ts";
@@ -187,6 +187,69 @@ describe("changing a decision inline (Q2)", () => {
   });
 });
 
+
+describe("hand-edited answers count as a Change (DECISIONS #22)", () => {
+  const answersOf = (s: Session) => Object.fromEntries(Object.entries(s.decisions).map(([k, d]) => [k, d.answer]));
+
+  test("only a settled answer that differs is an edit; prose, notes and open blocks aren't", () => {
+    const s = platedSession();
+    const md = s.plan!.markdown;
+    expect(answerEdits(md, answersOf(s))).toEqual([]);
+    const prose = md.replace("## Shape", "## Shape and size").replace("answer: platform a\n", "answer: platform a\nnote: checked twice\n");
+    expect(answerEdits(prose, answersOf(s))).toEqual([]);
+    // Whitespace and case-only spacing differences aren't a change of mind.
+    expect(answerEdits(md.replace("answer: platform a", "answer:   platform a  "), answersOf(s))).toEqual([]);
+    const edited = md.replace("answer: platform a", "answer: platform b");
+    expect(answerEdits(edited, answersOf(s))).toEqual([{ key: "platform", from: "platform a", to: "platform b" }]);
+    // A removed block isn't an answer change either.
+    expect(answerEdits(md.replace(/```decision\n[^`]*key: platform[^`]*```\n?/, ""), answersOf(s))).toEqual([]);
+  });
+
+  test("the same key typed twice (e.g. pasted into a paragraph) is reported once", () => {
+    const s = platedSession();
+    const fence = "```decision\nid: R1·2\nkey: platform\nquestion: Which platform?\nanswer: Desktop app\n```";
+    const md = s.plan!.markdown.replace("## Later", `${fence}\n\n${fence}\n\n## Later`);
+    expect(answerEdits(md, answersOf(s))).toEqual([{ key: "platform", from: "platform a", to: "Desktop app" }]);
+  });
+
+  test("cancel puts back only the answer lines; every other edit survives", () => {
+    const s = platedSession();
+    const md = s.plan!.markdown;
+    const edited = md.replace("answer: platform a", "answer: platform b").replace("## Shape", "## Shape, edited");
+    const back = revertAnswerEdits(edited, answersOf(s));
+    expect(back).toBe(md.replace("## Shape", "## Shape, edited"));
+    expect(answerEdits(back, answersOf(s))).toEqual([]);
+  });
+
+  test("saving an edited answer re-asks its dependents, exactly like the card's Change", () => {
+    const viaCard = platedSession();
+    const viaText = platedSession();
+    const cardDeps = changeDecision(viaCard, "platform", { optionId: "b" });
+    const md = viaText.plan!.markdown.replace("answer: platform a", "answer: Platform B");
+    expect(planAnswerEdits(viaText, md)).toHaveLength(1);
+    const deps = saveAnswerEdits(viaText, md);
+    expect(deps.sort()).toEqual(cardDeps.sort());
+    // Matching an option label (any case) picks that option, not a free-text answer.
+    expect(viaText.decisions.platform).toMatchObject({ answer: "platform b", kind: viaCard.decisions.platform.kind });
+    expect(viaText.status).toBe("asking");
+    expect(viaText.plan?.waiting).toEqual(deps);
+    expect(viaText.stale?.storage.reason).toBe("Platform changed");
+    expect(viaText.decisions.storage).toBeUndefined();
+    expect(viaText.plan!.markdown).toContain("key: platform\nquestion: Which platform?\nanswer: platform b\nby: you\nkept_suggestion: false");
+  });
+
+  test("an answer that isn't an option is saved as your own words; no dependents keeps it plated", () => {
+    const s = platedSession();
+    const md = s.plan!.markdown.replace("answer: scope a", "answer: Just the two of us").replace("## Shape", "## Shape (edited)");
+    expect(saveAnswerEdits(s, md)).toEqual([]);
+    expect(s.status).toBe("plated");
+    expect(s.decisions.scope).toMatchObject({ answer: "Just the two of us", kind: "other" });
+    expect(s.rounds[0].answers!.find((a) => a.questionId === "scope")).toMatchObject({ optionId: OTHER_OPTION, text: "Just the two of us" });
+    expect(s.plan!.markdown).toContain("## Shape (edited)");
+    expect(s.plan!.markdown).toContain("answer: Just the two of us");
+  });
+});
+
 // ---------------------------------------------------------------- server
 
 const servers: GrilladoServer[] = [];
@@ -257,6 +320,24 @@ describe("server: change, conflicts, outside edits", () => {
     expect(readFileSync(file, "utf8")).toBe(outside);
     const fresh = await call("POST", `/api/sessions/${id}/plan`, { markdown: `${outside}Mine.\n`, base: textHash(outside) });
     expect(fresh.status).toBe(200);
+  });
+
+  test("saving plan.md with a changed answer is held until re-ask is confirmed (DECISIONS #22)", async () => {
+    const { store, id, file, md } = storeWithPlan();
+    const { call } = await serve(store);
+    const edited = md.replace("answer: storage a", "answer: storage c");
+    const held = await call("POST", `/api/sessions/${id}/plan`, { markdown: edited, base: textHash(md) });
+    expect(held.status).toBe(409);
+    expect(held.json.answerEdits).toEqual([{ key: "storage", from: "storage a", to: "storage c" }]);
+    expect(held.json.markdown).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(md);
+    const ok = await call("POST", `/api/sessions/${id}/plan`, { markdown: edited, base: textHash(md), reask: true });
+    expect(ok.status).toBe(200);
+    expect(ok.json.reasked).toEqual(["sync"]);
+    expect(readFileSync(file, "utf8")).toContain("answer: storage c\nby: you\nkept_suggestion: false");
+    const s = store.load(id)!;
+    expect(s.status).toBe("asking");
+    expect(s.plan!.waiting).toEqual(["sync"]);
   });
 
   test("outside edits are picked up live and marked as a reload", async () => {

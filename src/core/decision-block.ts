@@ -199,3 +199,49 @@ export function decisionProblems(md: string): { line: number; message: string }[
     return [{ line, message: `This decision block can't be read: ${b.parsed.message}` }];
   });
 }
+
+/** A settled answer that a hand edit of plan.md changed (DECISIONS #22). */
+export interface AnswerEdit {
+  key: string;
+  /** The settled answer. */
+  from: string;
+  /** What the block now says. */
+  to: string;
+}
+
+const same = (a: string, b: string) => clean(a) === clean(b);
+
+/**
+ * Settled answers that hand edits changed: every valid block whose `key` is settled in `answers`
+ * and whose `answer:` no longer matches it (once per key). Open, stale and unknown keys, and
+ * blocks that don't parse, are ignored; an edit to `answer:` counts as a Change and is saved
+ * only through "Save and re-ask".
+ */
+export function answerEdits(md: string, answers: Record<string, string>): AnswerEdit[] {
+  const out: AnswerEdit[] = [];
+  for (const b of findDecisionBlocks(md)) {
+    if (!b.parsed.ok || b.parsed.fields.status === "open") continue;
+    const key = blockKey(b.parsed);
+    if (!key || !Object.hasOwn(answers, key) || out.some((e) => e.key === key)) continue;
+    const to = b.parsed.fields.answer ?? "";
+    if (!same(to, answers[key])) out.push({ key, from: answers[key], to: clean(to) });
+  }
+  return out;
+}
+
+/** Cancel hand edits of settled answers: put each changed `answer:` line back, nothing else. */
+export function revertAnswerEdits(md: string, answers: Record<string, string>): string {
+  let out = md;
+  // Last block first, so earlier offsets stay valid.
+  for (const b of findDecisionBlocks(md).reverse()) {
+    if (!b.parsed.ok || b.parsed.fields.status === "open") continue;
+    const key = blockKey(b.parsed);
+    if (!key || !Object.hasOwn(answers, key) || same(b.parsed.fields.answer ?? "", answers[key])) continue;
+    const lines = b.body.split("\n");
+    const i = b.parsed.entries.find((e) => e.name === "answer")?.line;
+    if (i === undefined) continue;
+    lines[i] = `answer: ${clean(answers[key])}`;
+    out = out.slice(0, b.bodyStart) + lines.join("\n") + out.slice(b.bodyStart + b.body.length);
+  }
+  return out;
+}

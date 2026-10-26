@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
-import { blockKey, findDecisionBlocks, serializeDecision, updateDecisionBlock } from "./decision-block.ts";
+import { type AnswerEdit, answerEdits, blockKey, findDecisionBlocks, serializeDecision, updateDecisionBlock } from "./decision-block.ts";
 
 export type SessionStatus =
   | "asking" // waiting for the agent's next round
@@ -465,34 +465,82 @@ function answerFor(q: Question, pick: Pick): { answer: string; kind: Decision["k
  */
 export function changeDecision(s: Session, key: string, pick: Pick): string[] {
   if (s.status !== "plated" || !s.plan) throw new Error("Change answers from the plan once it's written.");
+  const deps = setAnswer(s, key, pick);
+  if (deps === null) return [];
+  reask(s, key, deps);
+  finishChange(s, deps);
+  return deps;
+}
+
+/** The new answer, its round's record and its block; null when nothing changed. Returns the dependents. */
+function setAnswer(s: Session, key: string, pick: Pick): string[] | null {
   const d = s.decisions[key];
   if (!d) throw new Error("Unknown decision.");
   const found = questionFor(s, key);
   if (!found) throw new Error("Unknown decision.");
   const next = answerFor(found.question, pick);
-  if (next.answer === d.answer && next.kind === d.kind) return [];
+  if (next.answer === d.answer && next.kind === d.kind) return null;
   const deps = dependentsOf(s, key);
   s.decisions[key] = { ...d, answer: next.answer, kind: next.kind, accepted_recommendation: next.accepted };
   const ans = found.round.answers?.find((a) => a.questionId === key);
   if (ans) Object.assign(ans, { optionId: pick.optionId, text: next.kind === "other" ? next.answer : undefined, accepted_recommendation: next.accepted });
   const now = new Date().toISOString();
-  s.plan.markdown = updateDecisionBlock(s.plan.markdown, key, { answer: next.answer, by: "you", kept_suggestion: next.accepted, at: now });
-  s.plan.editedAt = now;
+  s.plan!.markdown = updateDecisionBlock(s.plan!.markdown, key, { answer: next.answer, by: "you", kept_suggestion: next.accepted, at: now });
+  s.plan!.editedAt = now;
+  return deps;
+}
+
+/** Mark what depends on a changed decision as "will be asked again". */
+function reask(s: Session, key: string, deps: string[]) {
+  const d = s.decisions[key];
+  const rootLabel = d ? d.label || d.title : key;
+  s.stale ??= {};
+  for (const k of deps) {
+    const x = s.decisions[k];
+    if (!x) continue;
+    s.stale[k] = { key: k, label: x.label || x.title, title: x.title, answer: x.answer, round: x.round, dependsOn: x.dependsOn, reason: `${rootLabel} changed` };
+    delete s.decisions[k];
+  }
+}
+
+/** After a change: a new round when anything is asked again; the plan stays, marked, until the next plan. */
+function finishChange(s: Session, deps: string[]) {
   if (deps.length) {
-    const rootLabel = d.label || d.title;
-    s.stale ??= {};
-    for (const k of deps) {
-      const x = s.decisions[k];
-      s.stale[k] = { key: k, label: x.label || x.title, title: x.title, answer: x.answer, round: x.round, dependsOn: x.dependsOn, reason: `${rootLabel} changed` };
-      delete s.decisions[k];
-    }
     s.reopened = [...new Set([...s.reopened, ...deps])];
-    s.plan.waiting = deps;
+    s.plan!.waiting = deps;
     s.status = "asking";
     s.wrappedUp = false;
   }
   s.error = undefined;
   touch(s);
+}
+
+/** The settled answers a plan.md text changed by hand (DECISIONS #22). */
+export function planAnswerEdits(s: Session, markdown: string): AnswerEdit[] {
+  return answerEdits(markdown, Object.fromEntries(Object.entries(s.decisions).map(([k, d]) => [k, d.answer])));
+}
+
+/**
+ * Save a hand-edited plan whose `answer:` lines changed settled decisions (DECISIONS #22): the
+ * same path as the card's Change. Each typed answer is matched to an option by its label, else
+ * kept as the user's own words; what depends on a changed answer is re-asked in a new round.
+ * Returns the decisions that will be asked again.
+ */
+export function saveAnswerEdits(s: Session, markdown: unknown): string[] {
+  editPlan(s, markdown);
+  const edits = planAnswerEdits(s, s.plan!.markdown);
+  const all: string[] = [];
+  for (const e of edits) {
+    if (!s.decisions[e.key]) continue; // asked again because an earlier edit changed what it depends on
+    const q = questionFor(s, e.key)?.question;
+    const option = q?.options.find((o) => o.label.trim().toLowerCase() === e.to.trim().toLowerCase());
+    const deps = setAnswer(s, e.key, option ? { optionId: option.id } : { optionId: OTHER_OPTION, text: e.to });
+    if (!deps) continue;
+    reask(s, e.key, deps);
+    all.push(...deps);
+  }
+  const deps = [...new Set(all)];
+  finishChange(s, deps);
   return deps;
 }
 

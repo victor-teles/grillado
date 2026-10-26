@@ -1,13 +1,27 @@
 import { Fragment, type ReactNode } from "react";
 import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
 import { Diagram } from "./editor/Diagram";
+import { IEdit } from "./icons";
+
+const KIND = { para: "paragraph", heading: "heading", list: "list", fence: "code block" } as const;
+/** "Edit paragraph: A weekend MVP for the four…" — the first few words, without Markdown marks or citations. */
+export function editLabel(b: Block): string {
+  const words = b.raw
+    .replace(/^```.*$/gm, "")
+    .replace(/\[R\d+:[^\]]*\]/g, "")
+    .replace(/[#*_`>]|^\s*([-+]|\d+[.)])\s+/gm, "")
+    .split(/\s+/)
+    .filter(Boolean);
+  const head = words.slice(0, 6).join(" ");
+  return `Edit ${KIND[b.kind]}${head ? `: ${head}${words.length > 6 ? "…" : ""}` : ""}`;
+}
 
 export type CiteRenderer = (round: number, key: string, n: number) => ReactNode;
 export type FenceBlock = Extract<Block, { kind: "fence" }>;
 
 /**
  * Minimal, safe Markdown → React (no raw HTML): headings, lists, paragraphs, code fences, **bold**, `code`.
- * `[R2:key]` citations become chips via `cite`; an "Open decisions" section is wrapped for the hatched style.
+ * `[R2:key]` citations render via `cite`; an "Open decisions" section is wrapped in `section.open`.
  * ```mermaid fences render as diagrams.
  *
  * Editing (plan editor): with `onBlock`, every top-level block is wrapped in
@@ -78,6 +92,7 @@ export function Markdown({
         key={b.start}
         className="blk"
         data-block={b.kind}
+        data-start={b.start}
         onClick={(e) => {
           // Chips, links and other controls inside a block keep their own behavior.
           if ((e.target as HTMLElement).closest("button,a,input,textarea,select")) return;
@@ -85,6 +100,13 @@ export function Markdown({
           onBlock(b);
         }}
       >
+        {/* The keyboard way in (v1.2 §1): one Tab stop per block, shown on focus or hover. Mermaid keeps "Edit source". */}
+        {b.kind === "fence" && b.lang === "mermaid" ? null : (
+          <button type="button" className="blk-act" aria-label={editLabel(b)} onClick={() => onBlock(b)}>
+            <IEdit s={14} />
+            Edit
+          </button>
+        )}
         {node}
       </div>
     ) : (

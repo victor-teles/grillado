@@ -36,8 +36,13 @@ export const api = {
   createSession: (idea: string, context: string) => call<SessionView>("POST", "/api/sessions", { idea, context }),
   session: (id: string) => call<SessionView>("GET", `/api/sessions/${encodeURIComponent(id)}`),
   /** Autosave of the edited plan. Small bodies use `keepalive` so a save started while leaving the page still lands. */
-  savePlan: (id: string, markdown: string, base?: string) =>
-    call<{ ok: true; savedAt: string }>("POST", `/api/sessions/${encodeURIComponent(id)}/plan`, { markdown, base }, { keepalive: markdown.length < 60_000 }),
+  savePlan: (id: string, markdown: string, base?: string, reask?: boolean) =>
+    call<{ ok: true; savedAt: string; reasked?: string[]; markdown?: string }>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(id)}/plan`,
+      { markdown, base, ...(reask ? { reask: true } : {}) },
+      { keepalive: markdown.length < 60_000 },
+    ),
   action: (id: string, action: string, body?: unknown) =>
     call<SessionView>("POST", `/api/sessions/${encodeURIComponent(id)}/${action}`, body),
 };

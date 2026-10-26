@@ -16,6 +16,8 @@ import {
   createSession,
   dismissNudge,
   editPlan,
+  planAnswerEdits,
+  saveAnswerEdits,
   keepGoing,
   reopen,
   setError,
@@ -546,6 +548,18 @@ export class GrilladoServer {
         // another editor), refuse so the browser can ask which version to keep (Q5).
         if (typeof body?.base === "string" && s.plan && textHash(s.plan.markdown) !== body.base && body.markdown !== s.plan.markdown)
           return this.json(res, 409, { error: "plan.md changed outside Grillado", conflict: true, markdown: s.plan.markdown });
+        // A hand edit of a settled `answer:` is a Change (DECISIONS #22): it's saved only through
+        // "Save and re-ask" (`reask: true`), never by the autosave.
+        const edits = typeof body?.markdown === "string" && s.plan ? planAnswerEdits(s, body.markdown) : [];
+        if (edits.length && body?.reask !== true)
+          return this.json(res, 409, { error: "That changes a settled answer. Save it with Save and re-ask, or cancel.", answerEdits: edits });
+        if (edits.length) {
+          const deps = saveAnswerEdits(s, body.markdown);
+          this.opts.store.writePlan(s.id, s.plan!.markdown);
+          if (deps.length) this.startRound(s);
+          else this.changed(s);
+          return this.json(res, 200, { ok: true, savedAt: s.plan!.editedAt, reasked: deps, markdown: s.plan!.markdown });
+        }
         editPlan(s, body?.markdown);
         this.opts.store.writePlan(s.id, s.plan!.markdown);
         this.changed(s);

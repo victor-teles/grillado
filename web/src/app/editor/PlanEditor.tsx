@@ -1,17 +1,12 @@
 // The plan editor: a rich view (click a block to edit its Markdown in place) and a raw Markdown
 // view, both editing the same text, autosaved to plan.md.
 //
-// Styling hooks for Designer (no final visuals yet):
-//   .ped[data-mode=rich|raw]                 editor root
-//   .ped-bar, .ped-modes[role=radiogroup], .ped-mode[aria-checked]   Rich | Markdown toggle
-//   .ped-save[data-save=idle|pending|saving|saved|error]   autosave status
-//   .blk[data-block=heading|list|fence|para], .blk[data-editing]   blocks in the rich view
-//   .blk-edit (textarea), .blk-preview (live diagram under a ```mermaid block being edited)
-//   .doc-raw .ced (CodeMirror Markdown view; see CodeEditor.tsx)
-//   .dz (decision blocks; see DecisionCard.tsx), mark.ctx (passages citing the active decision)
-//   .mmd[data-state=loading|ok|error], .mmd-svg, .mmd-err   diagrams
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { type DecisionFields, decisionProblems, parseDecisionBody } from "../../../../src/core/decision-block.ts";
+// Hooks (v1.2): .ped[data-mode], .ped-modes (segmented Rich | Markdown, lives in the plan toolbar),
+// .ped-save[data-save], .blk[data-block][data-start] with .blk-act (keyboard Edit), .blk[data-editing]
+// .blk-edit (.mono only for fences) and .blk-hint, .doc-raw .ced, .dz, mark.ctx, .mmd.
+import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ICheck } from "../icons";
+import { type AnswerEdit, type DecisionFields, answerEdits, decisionProblems, parseDecisionBody, revertAnswerEdits } from "../../../../src/core/decision-block.ts";
 import { textHash } from "../../../../src/core/text-hash.ts";
 import { ApiError, api } from "../api";
 import { reconcile } from "./reconcile";
@@ -35,18 +30,32 @@ export interface PlanDraft {
   resolve: (keep: "mine" | "file") => Promise<void>;
   /** Polite announcement ("Reloaded plan.md"), cleared after a while. */
   notice: string;
+  /**
+   * Hand edits changed settled answers (DECISIONS #22). Saving holds until the user picks:
+   * `applyAnswerChange` saves through the Change path ("Save and re-ask n"), `cancelAnswerChange`
+   * puts the answers back and saves everything else.
+   */
+  answerChange: AnswerEdit[] | null;
+  applyAnswerChange: () => Promise<void>;
+  cancelAnswerChange: () => void;
 }
 
 /**
  * Local draft of the plan, autosaved. Server updates are adopted when nothing is unsaved here;
  * when both sides changed, saving stops and `conflict` asks which version to keep.
  */
-export function usePlanDraft(sessionId: string, serverMarkdown: string, reloadedAt?: string): PlanDraft {
+export function usePlanDraft(sessionId: string, serverMarkdown: string, reloadedAt?: string, answers?: Record<string, string>): PlanDraft {
   const [text, setText] = useState(serverMarkdown);
   const [epoch, setEpoch] = useState(0);
   const [save, setSave] = useState<PlanDraft["save"]>({ state: "idle" });
   const [conflict, setConflict] = useState<{ disk: string } | null>(null);
   const [notice, setNotice] = useState("");
+  const [answerChange, setAnswerChange] = useState<AnswerEdit[] | null>(null);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  // Saving is held for a changed answer (DECISIONS #22), separately from a disk conflict.
+  const answerHold = useRef(false);
+  const conflictRef = useRef(false);
   const textRef = useRef(serverMarkdown);
   // The server version our edits start from; sent with every save so the server can refuse a
   // save made on top of an older plan.md.
@@ -56,7 +65,17 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
   const saver = useRef<Autosaver | null>(null);
   const openConflict = useCallback((disk: string) => {
     saver.current!.hold();
+    conflictRef.current = true;
     setConflict({ disk });
+  }, []);
+  const holdForAnswers = useCallback((edits: AnswerEdit[]) => {
+    answerHold.current = true;
+    saver.current!.hold();
+    setAnswerChange(edits);
+  }, []);
+  const clearAnswerHold = useCallback(() => {
+    answerHold.current = false;
+    setAnswerChange(null);
   }, []);
   saver.current ??= new Autosaver(serverMarkdown, {
     save: async (t) => {
@@ -67,6 +86,7 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
         base.current = t;
       } catch (err) {
         if (err instanceof ApiError && err.status === 409 && typeof err.data.markdown === "string") openConflict(err.data.markdown);
+        else if (err instanceof ApiError && err.status === 409 && Array.isArray(err.data.answerEdits)) holdForAnswers(err.data.answerEdits);
         throw err;
       }
     },
@@ -86,12 +106,13 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
     if (what === "conflict") return openConflict(serverMarkdown);
     base.current = serverMarkdown;
     s.reset(serverMarkdown);
+    clearAnswerHold();
     textRef.current = serverMarkdown;
     setText(serverMarkdown);
     setEpoch((n) => n + 1);
     setSave({ state: "idle" });
     if (external) setNotice("Reloaded plan.md");
-  }, [serverMarkdown, reloadedAt, openConflict]);
+  }, [serverMarkdown, reloadedAt, openConflict, clearAnswerHold]);
 
   useEffect(() => {
     if (!notice) return;
@@ -109,11 +130,25 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
     };
   }, []);
 
-  const change = useCallback((t: string) => {
-    textRef.current = t;
-    setText(t);
-    saver.current!.change(t);
-  }, []);
+  const change = useCallback(
+    (t: string) => {
+      textRef.current = t;
+      setText(t);
+      const s = saver.current!;
+      const edits = answersRef.current ? answerEdits(t, answersRef.current) : [];
+      if (edits.length) {
+        holdForAnswers(edits);
+        s.change(t);
+      } else {
+        s.change(t);
+        if (answerHold.current) {
+          clearAnswerHold();
+          if (!conflictRef.current) s.release();
+        }
+      }
+    },
+    [holdForAnswers, clearAnswerHold],
+  );
   const flush = useCallback(() => saver.current!.flush(), []);
   const resolve = useCallback(
     async (keep: "mine" | "file") => {
@@ -124,6 +159,8 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
       // The version that loses is kept next to plan.md as plan.conflict.md.
       await api.action(sessionId, "plan-conflict", { markdown: keep === "mine" ? c.disk : mine }).catch(() => undefined);
       setConflict(null);
+      conflictRef.current = false;
+      clearAnswerHold();
       base.current = c.disk;
       s.reset(c.disk);
       if (keep === "file") {
@@ -132,17 +169,60 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
         setEpoch((n) => n + 1);
         setSave({ state: "idle" });
       } else {
-        s.change(mine);
+        change(mine);
         await s.flush();
       }
     },
-    [conflict, sessionId],
+    [conflict, sessionId, change, clearAnswerHold],
   );
-  return { text, change, flush, save, epoch, conflict, resolve, notice };
+  const applyAnswerChange = useCallback(async () => {
+    const s = saver.current!;
+    const t = textRef.current;
+    try {
+      const r = await api.savePlan(sessionId, t, textHash(base.current), true);
+      const md = r.markdown ?? t;
+      clearAnswerHold();
+      base.current = md;
+      s.reset(md);
+      textRef.current = md;
+      setText(md);
+      setEpoch((n) => n + 1);
+      setSave({ state: "saved", savedAt: Date.now() });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && typeof err.data.markdown === "string") openConflict(err.data.markdown);
+      throw err;
+    }
+  }, [sessionId, clearAnswerHold, openConflict]);
+  const cancelAnswerChange = useCallback(() => {
+    if (!answersRef.current) return;
+    setEpoch((n) => n + 1); // closes a block editor showing the old text
+    change(revertAnswerEdits(textRef.current, answersRef.current));
+  }, [change]);
+  return { text, change, flush, save, epoch, conflict, resolve, notice, answerChange, applyAnswerChange, cancelAnswerChange };
 }
 
-/** Inline Feedback save status (v1.1 §2). The live region only speaks up for failures and recovery. */
-function SaveStatus({ save, onRetry, conflict }: { save: PlanDraft["save"]; onRetry: () => void; conflict: boolean }) {
+/**
+ * Save status in the plan toolbar (v1.2 §3): muted meta text. The live region only speaks up for
+ * failures and recovery.
+ */
+export function SaveStatus({
+  save,
+  onRetry,
+  conflict,
+  answerChange,
+  edited,
+  open,
+}: {
+  save: PlanDraft["save"];
+  onRetry: () => void;
+  conflict: boolean;
+  /** Saving is held for a changed answer (DECISIONS #22). */
+  answerChange?: boolean;
+  /** The plan was edited at some point (otherwise it's the plan as plated). */
+  edited?: boolean;
+  /** Decisions still open in the plan. */
+  open?: number;
+}) {
   const [slow, setSlow] = useState(false);
   const failedRef = useRef(false);
   const [announce, setAnnounce] = useState("");
@@ -152,30 +232,35 @@ function SaveStatus({ save, onRetry, conflict }: { save: PlanDraft["save"]; onRe
     return () => clearTimeout(t);
   }, [save.state]);
   useEffect(() => {
-    if (save.state === "error" && !conflict) {
+    if (save.state === "error" && !conflict && !answerChange) {
       failedRef.current = true;
       setAnnounce("Couldn't save");
     } else if (save.state === "saved" && failedRef.current) {
       failedRef.current = false;
       setAnnounce("Saved again");
     }
-  }, [save.state, conflict]);
-  const state = conflict ? "pending" : save.state === "saving" && !slow ? "pending" : save.state;
-  const label =
-    state === "idle" || state === "saved"
-      ? "Saved to plan.md"
-      : state === "pending"
-        ? "Edited · saving soon"
-        : state === "saving"
-          ? "Saving…"
-          : "Couldn't save to plan.md";
+  }, [save.state, conflict, answerChange]);
+  const state = answerChange ? "held" : conflict ? "pending" : save.state === "saving" && !slow ? "pending" : save.state;
+  const fresh = state === "idle" && !edited;
+  const label = answerChange
+    ? "Answer changed · not saved"
+    : fresh
+      ? "Plated · saved to plan.md"
+      : state === "idle" || state === "saved"
+        ? `Saved${open ? ` · ${open} open` : ""}`
+        : state === "pending"
+          ? "Edited · saving soon"
+          : state === "saving"
+            ? "Saving…"
+            : "Couldn't save to plan.md";
   return (
-    <span className="ped-save sub" data-save={state} data-testid="save-status">
+    <span className="ped-save" data-save={state} data-fresh={fresh ? "" : undefined} data-testid="save-status">
+      {fresh ? <ICheck s={14} /> : null}
       <span>{label}</span>
       {state === "error" ? (
         <>
           <span className="sr-only">{save.error}</span>
-          <button type="button" className="ro" onClick={onRetry}>
+          <button type="button" className="btn quiet sm" onClick={onRetry}>
             Retry
           </button>
         </>
@@ -184,6 +269,35 @@ function SaveStatus({ save, onRetry, conflict }: { save: PlanDraft["save"]; onRe
         {announce}
       </span>
     </span>
+  );
+}
+
+/** Rich | Markdown, a segmented radio group (⌘⇧M toggles it too). */
+export function ModeToggle({ mode, onMode }: { mode: EditorMode; onMode: (m: EditorMode) => void }) {
+  return (
+    <div className="ped-modes" role="radiogroup" aria-label="Plan view">
+      {(["rich", "raw"] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          role="radio"
+          className="ped-mode"
+          aria-checked={mode === m}
+          tabIndex={mode === m ? 0 : -1}
+          onClick={() => onMode(m)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
+              e.preventDefault();
+              const group = e.currentTarget.parentElement;
+              onMode(m === "rich" ? "raw" : "rich");
+              requestAnimationFrame(() => (group?.querySelector(`[aria-checked="true"]`) as HTMLElement | null)?.focus());
+            }
+          }}
+        >
+          {m === "rich" ? "Rich" : "Markdown"}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -204,8 +318,9 @@ export function autosize(el: HTMLTextAreaElement | null) {
   if (window.scrollY !== winY) window.scrollTo({ top: winY });
 }
 
-function BlockEditor({ text, onChange, onDone }: { text: string; onChange: (t: string) => void; onDone: () => void }) {
+function BlockEditor({ text, kind, onChange, onDone }: { text: string; kind: Block["kind"]; onChange: (t: string) => void; onDone: (refocus: boolean) => void }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const hint = useId();
   useLayoutEffect(() => autosize(ref.current), [text]);
   useEffect(() => {
     const el = ref.current;
@@ -214,24 +329,30 @@ function BlockEditor({ text, onChange, onDone }: { text: string; onChange: (t: s
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
+  const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
   return (
-    <div className="blk" data-editing="">
+    <div className="blk" data-editing="" data-block={kind}>
       <textarea
         ref={ref}
-        className="blk-edit mono"
+        // Prose is edited in Inter at its own size so nothing jumps; only fences are mono (#17).
+        className={kind === "fence" ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`}
         aria-label="Edit block as Markdown. Escape to finish."
+        aria-describedby={hint}
         spellCheck
         value={text}
         onChange={(e) => onChange(e.target.value)}
-        onBlur={onDone}
+        onBlur={() => onDone(false)}
         onKeyDown={(e) => {
           if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
             e.preventDefault();
             e.stopPropagation();
-            onDone();
+            onDone(true);
           }
         }}
       />
+      <p className="blk-hint" id={hint} aria-hidden="true">
+        Markdown · Esc to finish
+      </p>
       {preview && preview.kind === "fence" ? (
         <div className="blk-preview" aria-label="Live preview">
           <Diagram code={preview.body} />
@@ -268,30 +389,33 @@ export function PlanEditor({
   highlight?: string | null;
 }) {
   // The block being edited, as a range of the draft. `len` follows the edited text's length.
-  const [editing, setEditing] = useState<{ start: number; len: number; text: string } | null>(null);
+  const [editing, setEditing] = useState<{ start: number; len: number; text: string; kind: Block["kind"] } | null>(null);
   const [active, setActive] = useState<string | null>(null);
   const articleRef = useRef<HTMLDivElement>(null);
   // Rich mode shows the last valid version of a decision block that doesn't parse (§5).
   const lastValid = useRef(new Map<string, DecisionFields>());
-  useEffect(() => setEditing(null), [draft.epoch]);
+  useEffect(() => setEditing(null), [draft.epoch, mode]);
   const problems = useMemo(() => decisionProblems(draft.text), [draft.text]);
 
-  const startEdit = (b: Block) => !readOnly && setEditing({ start: b.start, len: b.end - b.start, text: b.raw });
+  const startEdit = (b: Block) => !readOnly && setEditing({ start: b.start, len: b.end - b.start, text: b.raw, kind: b.kind });
   const editBlock = (t: string) => {
     if (!editing) return;
     draft.change(splice(draft.text, editing.start, editing.start + editing.len, t));
     setEditing({ ...editing, len: t.length, text: t });
   };
-  const doneEditing = () => {
+  const doneEditing = (refocus = false) => {
+    const start = editing?.start;
     setEditing(null);
     void draft.flush();
+    if (!refocus) return;
+    // Back to the block's Edit button (v1.2 §1), or the document when the block is gone.
+    requestAnimationFrame(() => {
+      const btn = start === undefined ? null : articleRef.current?.querySelector<HTMLElement>(`.blk[data-start="${start}"] > .blk-act`);
+      (btn ?? articleRef.current)?.focus({ preventScroll: true });
+    });
   };
-  const switchMode = (m: EditorMode) => {
-    if (m === mode) return;
-    setEditing(null);
-    void draft.flush();
-    setMode(m);
-  };
+  // `setMode` flushes; the effect above closes the block editor.
+  const switchMode = (m: EditorMode) => m !== mode && setMode(m);
   // ⌘⇧M toggles the view, ⌘S saves now (§6).
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -329,46 +453,26 @@ export function PlanEditor({
 
   return (
     <div className="ped" data-mode={mode} data-readonly={readOnly ? "" : undefined}>
-      <div className="ped-bar">
-        <div className="ped-modes" role="radiogroup" aria-label="Plan view">
-          {(["rich", "raw"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="radio"
-              className="ped-mode"
-              aria-checked={mode === m}
-              tabIndex={mode === m ? 0 : -1}
-              onClick={() => switchMode(m)}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
-                  e.preventDefault();
-                  const next = m === "rich" ? "raw" : "rich";
-                  switchMode(next);
-                  requestAnimationFrame(() => (e.currentTarget.parentElement?.querySelector(`[aria-checked="true"]`) as HTMLElement | null)?.focus());
-                }
-              }}
-            >
-              {m === "rich" ? "Rich" : "Markdown"}
-            </button>
-          ))}
-        </div>
-        {readOnly ? null : <SaveStatus save={draft.save} conflict={!!draft.conflict} onRetry={() => void draft.flush()} />}
-      </div>
       {mode === "rich" ? (
         <div
           ref={articleRef}
           className="doc"
           data-testid="plan"
-          role="textbox"
-          aria-multiline="true"
-          aria-readonly={readOnly ? "true" : undefined}
+          role="document"
           aria-label="Plan document"
           tabIndex={-1}
           onKeyDown={(e) => {
-            if (e.key === "Escape" && editing) {
-              doneEditing();
-              articleRef.current?.focus();
+            if (e.key === "Escape" && editing) doneEditing(true);
+            // ↑/↓ from a block's Edit button or a decision card moves to the previous or next stop.
+            const t = e.target as HTMLElement;
+            if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.altKey && !e.metaKey && (t.matches(".blk-act") || t.matches(".dz:not([data-state=changing])"))) {
+              const stops = [...(articleRef.current?.querySelectorAll<HTMLElement>(".blk-act, .dz") ?? [])];
+              const next = stops[stops.indexOf(t) + (e.key === "ArrowDown" ? 1 : -1)];
+              if (next) {
+                e.preventDefault();
+                next.focus();
+                next.scrollIntoView({ block: "nearest" });
+              }
             }
           }}
         >
@@ -386,14 +490,7 @@ export function PlanEditor({
                     start: editing.start,
                     end: editing.start + editing.len,
                     node: (
-                      <BlockEditor
-                        text={editing.text}
-                        onChange={editBlock}
-                        onDone={() => {
-                          doneEditing();
-                          requestAnimationFrame(() => articleRef.current?.focus({ preventScroll: true }));
-                        }}
-                      />
+                      <BlockEditor key={editing.start} text={editing.text} kind={editing.kind} onChange={editBlock} onDone={doneEditing} />
                     ),
                   }
                 : undefined
