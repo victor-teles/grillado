@@ -4,6 +4,7 @@
 import { type ReactNode, type RefObject, useEffect, useId, useMemo, useRef, useState } from "react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { type DiagramKind, DIAGRAM_KINDS, planSections, suggestedCode } from "../../../../src/core/diagrams.ts";
+import { openActivity } from "../activity/Activity";
 import { api } from "../api";
 import type { PlanDraft } from "../editor/PlanEditor";
 import type { MermaidLike } from "../editor/diagram";
@@ -174,7 +175,9 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
       <div className="mbar run5" role="status" data-testid="diagram-run">
         <div className="r1">
           <i className="live" aria-hidden="true" />
-          <b>{A(DCOPY.running)}</b>
+          <button type="button" className="tolog" onClick={() => openActivity({ kind: "diagrams" })}>
+            <b>{A(DCOPY.running)}</b>
+          </button>
           <span className="dt">{count}</span>
           <button type="button" className="btn quiet" onClick={() => void post({ op: "stop" })}>
             <ISq s={14} />
@@ -185,7 +188,9 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
     ) : (
       <div className="review run5" role="status" data-testid="diagram-run">
         <i className="live" aria-hidden="true" />
-        <span className="lb5">{A(DCOPY.running)}</span>
+        <button type="button" className="lb5 tolog" title="Open in Activity" onClick={() => openActivity({ kind: "diagrams" })}>
+          {A(DCOPY.running)}
+        </button>
         <span className="dt">{count}</span>
         <button type="button" className="btn quiet" onClick={() => void post({ op: "stop" })}>
           <ISq s={14} />
@@ -199,7 +204,9 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
         <span className="fi">
           <IAlert s={16} />
         </span>
-        <span className="lb5">{A(DCOPY.failed)}</span>
+        <button type="button" className="lb5 tolog" title="Open in Activity" onClick={() => openActivity({ kind: "diagrams" })}>
+          {A(DCOPY.failed)}
+        </button>
         <span className="dt">{run?.added ? `${run.added} ${run.added === 1 ? "suggestion" : "suggestions"} kept` : DCOPY.nothing}</span>
         <button type="button" className="btn quiet" onClick={() => setDismissed(runKey)}>
           Dismiss

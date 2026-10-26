@@ -1,4 +1,5 @@
 import type { CommentThread, Suggestion } from "../../../src/core/comments.ts";
+import type { Entry } from "../../../src/core/activity.ts";
 import type { DiagramRun } from "../../../src/core/diagrams.ts";
 // Mirrors of what the local server sends. Kept separate from server code on purpose.
 export type ProviderId = "claude" | "codex" | "grok" | "pi";
@@ -155,12 +156,21 @@ export interface SessionView {
   diagramRun?: DiagramRun;
   drawing?: boolean;
   progress?: string;
+  /** The activity log (item 6): the latest entries, newest first. */
+  activity?: ActivityView;
   tree: TreeState;
   acceptStreak: number;
   nudge: boolean;
 }
 
 export type { CommentThread, DiagramRun, Suggestion };
+export type { Entry as ActivityEntry };
+export interface ActivityView {
+  entries: Entry[];
+  total: number;
+  /** The session started before 1.1: earlier work wasn't logged. */
+  legacy: boolean;
+}
 
 export const UNKNOWN_OPTION = "__unknown";
 export const OTHER_OPTION = "__other";

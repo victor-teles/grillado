@@ -29,8 +29,6 @@ export const CCOPY = {
   notInFile: (n: number) => `${n} ${n === 1 ? "suggestion is" : "suggestions are"} not in plan.md`,
   toReview: (n: number) => `${n} to review`,
   bulk: (n: number, a: "accepted" | "rejected") => `${n} ${n === 1 ? "suggestion" : "suggestions"} ${a}`,
-  activityEmpty: "No activity yet",
-  activityBody: "Runs and what you accepted show up here.",
   rtfHint: "Switch to Rich to comment",
 };
 

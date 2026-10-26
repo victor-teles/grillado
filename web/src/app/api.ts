@@ -1,4 +1,4 @@
-import type { AppState, SessionView } from "./types";
+import type { ActivityView, AppState, SessionView } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -43,6 +43,7 @@ export const api = {
       { markdown, base, ...(reask ? { reask: true } : {}) },
       { keepalive: markdown.length < 60_000 },
     ),
+  activity: (id: string, limit: number) => call<ActivityView>("GET", `/api/sessions/${encodeURIComponent(id)}/activity?limit=${limit}`),
   action: (id: string, action: string, body?: unknown) =>
     call<SessionView>("POST", `/api/sessions/${encodeURIComponent(id)}/${action}`, body),
 };

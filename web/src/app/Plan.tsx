@@ -42,7 +42,7 @@ function questionRound(s: SessionView, key: string): number | undefined {
 
 type Tab = "doc" | "decisions";
 
-export function PlanView({ session, act, agentName, banner }: { session: SessionView; act: Act; agentName: string; banner?: ReactNode }) {
+export function PlanView({ session, act, agentName, agentNameOf, banner }: { session: SessionView; act: Act; agentName: string; agentNameOf?: (id: string) => string; banner?: ReactNode }) {
   const plan = session.plan!;
   const mobile = useMobile();
   const waiting = session.status !== "plated" ? (plan.waiting ?? []) : [];
@@ -151,7 +151,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   // Item 3: comments, Apply feedback and suggestions.
   const moreRef = useRef<HTMLButtonElement>(null);
   const dg = useDiagrams({ session, draft, agentName, mobile, enabled: !readOnly && tab === "doc", moreRef, setNote });
-  const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
+  const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, agentNameOf, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
 
   const renderDecision: DecisionRenderer = (fields, { invalid, setActive, lit }) => {
     const key = fields.key ?? "";
