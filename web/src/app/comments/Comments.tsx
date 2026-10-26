@@ -203,6 +203,26 @@ export function useComments(o: Opts) {
     const t = setTimeout(() => setBar(""), 4000);
     return () => clearTimeout(t);
   }, [bar]);
+  // The lone "Accepted · ⌘Z to undo" note keeps off the text (review of #7): it sits in the gutter
+  // beside the column when there's room, and otherwise leaves as soon as you scroll the plan.
+  const loneRef = useRef<HTMLDivElement>(null);
+  const lone = !!bar && !placed.length;
+  useLayoutEffect(() => {
+    const el = loneRef.current;
+    const wrap = o.docRef.current;
+    if (el) Object.assign(el.style, { left: "", right: "", transform: "" });
+    if (!lone || !el || !wrap) return;
+    const doc = wrap.querySelector<HTMLElement>(".doc");
+    const box = (el.offsetParent ?? wrap).getBoundingClientRect();
+    const gap = doc ? box.right - doc.getBoundingClientRect().right - (wrap.offsetWidth - wrap.clientWidth) : 0;
+    if (gap >= el.offsetWidth + 32) Object.assign(el.style, { left: "auto", right: `${Math.round((gap - el.offsetWidth) / 2)}px`, transform: "none" });
+    else {
+      const from = Date.now();
+      const off = () => Date.now() - from > 300 && setBar("");
+      wrap.addEventListener("scroll", off, { passive: true });
+      return () => wrap.removeEventListener("scroll", off);
+    }
+  }, [lone, bar]);
   // Focus follows the focused suggestion, so a screen reader reads it (§4.3).
   useEffect(() => {
     if (!focusId) return;
@@ -401,7 +421,7 @@ export function useComments(o: Opts) {
       mobile ? (
         placed.length ? <MobileBar placed={placed} index={index} go={go} review={review} agentName={agentName} /> : null
       ) : (
-        <div className="review" role="toolbar" aria-label="Review suggestions">
+        <div className={`review${lone ? " lone" : ""}`} role="toolbar" aria-label="Review suggestions" ref={loneRef}>
           {placed.length ? (
             <>
               <span className="lbl">

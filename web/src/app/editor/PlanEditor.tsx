@@ -670,6 +670,10 @@ export function PlanEditor({
   // Rich mode shows the last valid version of a decision block that doesn't parse (§5).
   const lastValid = useRef(new Map<string, DecisionFields>());
   useEffect(() => setEditing(null), [draft.epoch, mode]);
+  // Opening a block clears the Undo toast, like the suggestion's own editor does (review of #6/#7).
+  useEffect(() => {
+    if (editing) dispatchEvent(new Event("grillado:editor-open"));
+  }, [!!editing]);
   const problems = useMemo(() => decisionProblems(draft.text), [draft.text]);
 
   const startEdit = (b: Block) => !readOnly && setEditing({ start: b.start, len: b.end - b.start, text: b.raw, kind: b.kind });
