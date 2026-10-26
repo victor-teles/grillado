@@ -158,6 +158,8 @@ try {
     const snap = async (name) => {
       if (!SHOTS) return;
       if (!(await pg.locator(".seltb, .cpop").count())) await pg.mouse.move(600, 880);
+      // A toast left from the step before belongs only in the shot of that step.
+      if (name !== "i3-accepted") await pg.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
       await pg.waitForTimeout(200);
       await pg.screenshot({ path: path.join(SHOTS, `${name}-d-${theme}.png`) });
     };
