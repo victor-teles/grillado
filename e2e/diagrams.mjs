@@ -1,7 +1,7 @@
 // Item 5 end-to-end: Add diagrams from ⋯ (popover, run bar, streaming suggestion, Edit/Accept,
 // replace pair, slash "Diagram by {agent}", nothing-to-add toast, failure bar), the figure (theme,
 // full screen, zoom, Text view, Enter → editor with live preview and errors, broken source), mobile
-// sheet / bar / Tap to zoom, and axe (dark/light × desktop/mobile).
+// sheet / bar / Tap to zoom / Source | Preview switch, and axe (dark/light × desktop/mobile).
 // One server and one browser at a time; only processes started here are killed.
 //   node e2e/diagrams.mjs            checks only
 //   SHOTS=dir VIDEO=1 node e2e/diagrams.mjs   also writes screenshots (and a desktop clip) to dir
@@ -84,6 +84,43 @@ async function axe(pg, name) {
   await pg.waitForTimeout(400); // let fades finish
   const r = await new AxeBuilder({ page: pg }).analyze();
   check(`axe: ${name}`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message ?? ""} ${v.nodes[0]?.html?.slice(0, 160) ?? ""}`).join("; "));
+}
+// Mobile Source | Preview (§11): the switch in the accessory row replaces the preview under the source.
+const shown = (loc) => loc.first().evaluate((e) => { const r = e.getBoundingClientRect(); return r.height > 0 && getComputedStyle(e).visibility !== "hidden" && getComputedStyle(e).display !== "none"; }).catch(() => false);
+async function mobileSwitch(pg, root, theme, what, shot) {
+  const ta = root.locator("textarea");
+  const sw = pg.locator(".acc4").getByRole("radiogroup", { name: "Show" });
+  const src = sw.getByRole("radio", { name: "Source" });
+  const pv = sw.getByRole("radio", { name: "Preview" });
+  await ta.waitFor();
+  check(`${theme} mobile ${what}: Source | Preview switch and Done in the accessory row`, (await sw.count()) === 1 && (await pg.locator(".acc4").getByRole("button", { name: "Done" }).count()) === 1 && (await pg.locator(".acc4").getByRole("button", { name: "Block" }).count()) === 0);
+  check(`${theme} mobile ${what}: opens on Source, the preview isn't under it`, (await src.getAttribute("aria-checked")) === "true" && (await shown(ta)) && !(await shown(root.locator(".lp5"))) && (await ta.evaluate((e) => e === document.activeElement)));
+  check(`${theme} mobile ${what}: switch buttons are at least 36px high`, await sw.locator("button").first().evaluate((b) => b.getBoundingClientRect().height >= 36));
+  check(`${theme} mobile ${what}: nothing else sits on the accessory row`, await pg.evaluate(() => { const a = document.querySelector(".acc4").getBoundingClientRect(); return [...document.querySelectorAll(".mbar, .toast")].every((e) => { const r = e.getBoundingClientRect(); return r.height === 0 || r.bottom <= a.top || r.top >= a.bottom; }); }));
+  await root.evaluate((e) => e.scrollIntoView({ block: "start" }));
+  if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-source-m-${theme}.png`) });
+  await axe(pg, `${theme} mobile ${what}: Source`);
+  await pv.tap();
+  await root.locator(".lp5 svg").waitFor({ timeout: 8000 });
+  await pg.waitForTimeout(150);
+  check(`${theme} mobile ${what}: Preview hides the source and shows the drawing`, (await root.locator("[data-view=preview]").count()) + (await root.evaluate((e) => (e.matches("[data-view=preview]") ? 1 : 0))) === 1 && !(await shown(ta)) && (await shown(root.locator(".lp5 svg"))));
+  check(`${theme} mobile ${what}: Preview is checked and focused; the edit stays open`, (await pv.getAttribute("aria-checked")) === "true" && (await pv.evaluate((e) => e === document.activeElement)) && (await ta.count()) === 1);
+  check(`${theme} mobile ${what}: the preview fits the width, on screen above the row`, await root.locator(".lp5").evaluate((e) => { const r = e.getBoundingClientRect(), a = document.querySelector(".acc4").getBoundingClientRect(); return r.right <= innerWidth && r.top >= 0 && r.top < a.top && e.querySelector("svg").getBoundingClientRect().width <= r.width; }));
+  if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-preview-m-${theme}.png`) });
+  await axe(pg, `${theme} mobile ${what}: Preview`);
+  await src.tap();
+  await pg.waitForTimeout(100);
+  check(`${theme} mobile ${what}: Source brings the source back, focused`, (await src.getAttribute("aria-checked")) === "true" && (await shown(ta)) && (await ta.evaluate((e) => e === document.activeElement)));
+  // keyboard: ←/→ move the checked option (one tab stop)
+  await src.focus();
+  await pg.keyboard.press("ArrowRight");
+  check(`${theme} mobile ${what}: → on the switch picks Preview`, (await pv.getAttribute("aria-checked")) === "true" && (await pv.evaluate((e) => e === document.activeElement)) && (await src.getAttribute("tabindex")) === "-1");
+  await pg.keyboard.press("ArrowLeft");
+  check(`${theme} mobile ${what}: ← back to Source`, (await src.getAttribute("aria-checked")) === "true");
+  await pv.tap();
+  await pg.locator(".acc4").getByRole("button", { name: "Done" }).tap();
+  await pg.waitForTimeout(200);
+  check(`${theme} mobile ${what}: Done from Preview finishes the edit`, (await pg.locator(".acc4").count()) === 0 && (await ta.count()) === 0);
 }
 const txt = async (loc) => ((await loc.first().textContent({ timeout: 5000 }).catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
 async function openAsk(pg, mobile = false) {
@@ -380,6 +417,7 @@ try {
       await pg.keyboard.press("Enter");
       await pg.locator(TA).waitFor();
       check("opening a block clears the Undo toast", (await pg.locator(".toast").count()) === 0);
+      check("desktop: no Source | Preview switch; the preview sits under the source", (await pg.locator(".mseg, .acc4").count()) === 0 && (await pg.locator(".blk[data-editing]").getAttribute("data-view")) === null);
       check("editor hint: Mermaid · ⌘↵ draw now · Esc finish", (await txt(pg.locator(".blk[data-editing] .blk-hint"))) === "Mermaid · ⌘↵ draw now · Esc finish", await txt(pg.locator(".blk[data-editing] .blk-hint")));
       await pg.locator(".blk[data-editing] .lp5 svg").waitFor({ timeout: 8000 });
       await pg.keyboard.press("Control+End");
@@ -487,6 +525,12 @@ try {
     }
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i5-suggestion-m-${theme}.png`) });
     await axe(mp, `${theme} mobile: suggestion`);
+    {
+      const sg = mp.getByTestId("diagram-suggestion");
+      await sg.locator(".hd").getByRole("button", { name: "Edit diagram source" }).tap();
+      await mobileSwitch(mp, sg.locator(".ned5"), theme, "suggestion edit", "i5-msugg");
+      check(`${theme} mobile: the suggestion is still there to review`, (await mp.getByTestId("diagram-suggestion").count()) === 1);
+    }
     await mp.locator(".mbar").getByRole("button", { name: /^Accept/ }).tap();
     const mfig = mp.locator(".doc figure.mm5").first();
     await mfig.locator(".mmw svg").waitFor({ timeout: 8000 });
@@ -500,6 +544,25 @@ try {
     check(`${theme} mobile: full screen Close is on screen, 44px`, await mp.getByRole("button", { name: "Close full screen" }).evaluate((b) => { const r = b.getBoundingClientRect(); return r.right <= innerWidth && r.width >= 44; }));
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i5-full-m-${theme}.png`) });
     await axe(mp, `${theme} mobile: full screen`);
+    await mp.getByRole("button", { name: "Close full screen" }).tap();
+    await mp.locator(".fs5").waitFor({ state: "detached" });
+    {
+      // The plan's own block editor (Enter on the focused figure, e.g. with a hardware keyboard).
+      const before = await planMd(mp);
+      await mfig.focus();
+      await mp.keyboard.press("Enter");
+      await mobileSwitch(mp, mp.locator(".blk[data-editing]"), theme, "plan diagram", "i5-medit");
+      await mp.waitForTimeout(400);
+      check(`${theme} mobile: finishing from Preview leaves the plan as it was`, (await planMd(mp)) === before);
+      await mp.locator(".doc figure.mm5 .mmw svg").first().waitFor({ timeout: 8000 });
+      // Tapping out of Preview finishes too (here on the title, which opens that block instead).
+      await mp.locator(".doc figure.mm5").first().focus();
+      await mp.keyboard.press("Enter");
+      await mp.locator(".acc4").getByRole("radio", { name: "Preview" }).tap();
+      await mp.locator(".doc h1").first().tap();
+      await mp.waitForTimeout(200);
+      check(`${theme} mobile: tapping out of Preview finishes the edit`, (await mp.locator("[data-view], .mseg").count()) === 0 && !(await mp.locator(".doc figure.mm5").first().evaluate((f) => !!f.closest("[data-editing]"))));
+    }
     await mctx.close();
     await s2.stop();
   }

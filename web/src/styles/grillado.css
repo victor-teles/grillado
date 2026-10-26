@@ -822,6 +822,14 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .acc4{position:fixed;left:0;right:0;bottom:0;z-index:69;height:48px;display:flex;align-items:center;gap:4px;padding:0 8px;background:var(--popover);box-shadow:0 -1px 0 var(--hair)}
 .acc4 .btn{height:40px;border-radius:10px}
 .acc4 .sp{flex:1}
+/* mobile diagram editing: Source | Preview in the accessory row (item 5 §11). Source keeps the preview
+   laid out (0 high, hidden) so it measures and keeps checking; Preview hides the source and its hint. */
+.acc4 .mseg button{height:36px;padding:0 14px}
+[data-view=source]>.blk-preview{height:0;padding:0;margin:0;overflow:hidden;visibility:hidden}
+[data-view=preview]>.blk-ed,[data-view=preview]>textarea,[data-view=preview]>.blk-hint{display:none}
+[data-view]{scroll-margin-top:56px}
+/* while the accessory row is up, it is the bottom bar: the review bar steps aside (Done finishes) */
+body:has(.acc4) .mbar{display:none}
 .msm{left:8px;right:8px;border-radius:14px}
 .msm .sm-l{max-height:236px!important;height:auto!important}
 .msm .sm-i{min-height:52px!important;gap:12px!important;padding:6px 12px!important;border-radius:10px!important}
