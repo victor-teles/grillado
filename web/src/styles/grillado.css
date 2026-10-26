@@ -396,8 +396,10 @@ button:disabled{cursor:default}
 .dz-lbl{display:none}
 .dz-h>.dz-lbl+*::before{content:none}
 .dz-aff{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}
-.dz:hover .dz-h,.dz:focus-within .dz-h,.dz[data-state=changing] .dz-h{max-height:40px;opacity:1;margin-top:4px}
-.dz:not([data-invalid]):not(:hover):not(:focus-within) .dz-n{display:none}
+/* focus-within reveals only for keyboard focus (html[data-kbd]); after a pointer click the card keeps focus, and a
+   pointer-held reveal collapsing on the next mousedown moved the next card's Change out from under the click */
+.dz:hover .dz-h,html[data-kbd] .dz:focus-within .dz-h,.dz[data-state=changing] .dz-h{max-height:40px;opacity:1;margin-top:4px}
+.dz:not([data-invalid]):not(:hover):not(:focus-within) .dz-n,html:not([data-kbd]) .dz:not([data-invalid]):not(:hover) .dz-n{display:none}
 .dz>.dz-act{grid-column:2;grid-row:1/span 2;display:flex;gap:6px;opacity:0;transition:opacity var(--d-quick) var(--ease-out)}
 .dz:hover>.dz-act,.dz:focus-within>.dz-act,.dz[data-state=open]>.dz-act{opacity:1}
 .dz[data-state=stale] .dz-av{color:var(--muted-foreground);font-weight:500}

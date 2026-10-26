@@ -3,7 +3,7 @@
 // v1.2 (HANDOFF-ENGINEER §3): a --sel surface, no border. Question muted, answer 15/600.
 //   .dz[data-state=rest|changing|open|stale][data-invalid]
 //   .dz-q .dz-a (+ .dz-badge[data-kind=yours] "Your call" after the answer) .dz-n
-//   .dz-h: one muted meta line ("R3·1 · Affects 2 passages"), revealed on hover / focus-within
+//   .dz-h: one muted meta line ("R3·1 · Affects 2 passages"), revealed on hover / keyboard focus-within
 //   .dz-opts[role=radiogroup] .dz-opt[aria-checked]: the round's radio rows; .dz-tag muted inline
 //   .dz-warn muted text, .dz-err destructive text, .dz-act buttons on the right
 import { useEffect, useId, useRef, useState } from "react";
@@ -16,6 +16,12 @@ export interface Pick {
 }
 
 export type CardState = "settled" | "open" | "stale";
+
+// A citation jump scrolls a card into view and focuses it; the card that lands under a resting pointer gets a
+// mouseenter without the pointer moving, and must not take the highlight from the one just focused.
+let lastFocus: { el: HTMLElement | null; at: number } = { el: null, at: 0 };
+const justFocusedElsewhere = (el: HTMLElement | null) =>
+  !!lastFocus.el && lastFocus.el !== el && lastFocus.el.contains(document.activeElement) && performance.now() - lastFocus.at < 300;
 
 export function DecisionCard({
   fields,
@@ -91,6 +97,11 @@ export function DecisionCard({
     requestAnimationFrame(measure);
   };
 
+  // The Change/Answer button unmounts on expand; keep focus in the card (as with Enter) so Escape and 1–9 reach it.
+  const expand = () => {
+    setExpanded(true);
+    ref.current?.focus({ preventScroll: true });
+  };
   const cancel = () => {
     setExpanded(false);
     setError("");
@@ -136,9 +147,12 @@ export function DecisionCard({
       aria-describedby={passages.length ? passages.join(" ") : undefined}
       contentEditable={false}
       tabIndex={0}
-      onMouseEnter={() => activate(true)}
+      onMouseEnter={() => !justFocusedElsewhere(ref.current) && activate(true)}
       onMouseLeave={() => !ref.current?.contains(document.activeElement) && activate(false)}
-      onFocus={() => activate(true)}
+      onFocus={() => {
+        lastFocus = { el: ref.current, at: performance.now() };
+        activate(true);
+      }}
       onBlur={(e) => !ref.current?.contains(e.relatedTarget as Node) && activate(false)}
       onKeyDown={(e) => {
         if (e.target === ref.current && e.key === "Enter" && canChange && !expanded) {
@@ -207,11 +221,11 @@ export function DecisionCard({
       {(view === "rest" || view === "stale" || (view === "open" && !expanded)) && canChange ? (
         <div className="dz-act">
           {view === "open" ? (
-            <button type="button" className="btn quiet sm" onClick={() => setExpanded(true)}>
+            <button type="button" className="btn quiet sm" onClick={expand}>
               Answer
             </button>
           ) : (
-            <button ref={changeBtn} type="button" className="btn quiet sm" onClick={() => setExpanded(true)} aria-label={`Change ${fields.id}`}>
+            <button ref={changeBtn} type="button" className="btn quiet sm" onClick={expand} aria-label={`Change ${fields.id}`}>
               Change
             </button>
           )}
