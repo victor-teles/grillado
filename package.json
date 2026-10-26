@@ -28,7 +28,7 @@
     "check:banned": "bun scripts/check-banned.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
     "test": "bun test test/",
-    "e2e": "node e2e/run.mjs && node e2e/comments.mjs && node e2e/slash.mjs"
+    "e2e": "node e2e/run.mjs && node e2e/comments.mjs && node e2e/slash.mjs && node e2e/diagrams.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",

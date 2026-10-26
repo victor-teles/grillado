@@ -1,4 +1,5 @@
 import type { CommentThread, Suggestion } from "../../../src/core/comments.ts";
+import type { DiagramRun } from "../../../src/core/diagrams.ts";
 // Mirrors of what the local server sends. Kept separate from server code on purpose.
 export type ProviderId = "claude" | "codex" | "grok" | "pi";
 export type FailureCode = "auth" | "rate_limit" | "timeout" | "not_found" | "malformed" | "unknown";
@@ -150,13 +151,16 @@ export interface SessionView {
   comments?: CommentThread[];
   suggestions?: Suggestion[];
   reviewUndo?: { action: "accept" | "reject"; items: Suggestion[] };
+  /** "Add diagrams" (item 5): the last run, and whether one is going now. */
+  diagramRun?: DiagramRun;
+  drawing?: boolean;
   progress?: string;
   tree: TreeState;
   acceptStreak: number;
   nudge: boolean;
 }
 
-export type { CommentThread, Suggestion };
+export type { CommentThread, DiagramRun, Suggestion };
 
 export const UNKNOWN_OPTION = "__unknown";
 export const OTHER_OPTION = "__other";

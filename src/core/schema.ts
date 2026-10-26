@@ -81,6 +81,13 @@ export const EditReplySchema = z.object({
     .max(8),
 });
 
+/** "Add diagrams": one section's diagram, or a skip when a diagram wouldn't help (#41). */
+export const DiagramReplySchema = z.object({
+  type: z.literal("diagram"),
+  skip: z.boolean(),
+  mermaid: z.string().max(4000),
+});
+
 export type Option = z.infer<typeof OptionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 export type Upcoming = z.infer<typeof UpcomingSchema>;
@@ -88,6 +95,7 @@ export type RoundReply = z.infer<typeof RoundReplySchema>;
 export type PlanReply = z.infer<typeof PlanReplySchema>;
 export type CommentReply = z.infer<typeof CommentReplySchema>;
 export type EditReply = z.infer<typeof EditReplySchema>;
+export type DiagramReply = z.infer<typeof DiagramReplySchema>;
 
 /**
  * JSON Schema for the CLI schema flags. OpenAI-style strict structured output (Codex) needs every
@@ -124,3 +132,4 @@ export const roundJsonSchema = () => toStrictJsonSchema(RoundReplySchema);
 export const planJsonSchema = () => toStrictJsonSchema(PlanReplySchema);
 export const commentJsonSchema = () => toStrictJsonSchema(CommentReplySchema);
 export const editJsonSchema = () => toStrictJsonSchema(EditReplySchema);
+export const diagramJsonSchema = () => toStrictJsonSchema(DiagramReplySchema);

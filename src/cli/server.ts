@@ -3,7 +3,8 @@ import { createReadStream, existsSync, mkdtempSync, rmSync, statSync, unwatchFil
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { nextRound, replyToComment, suggestEdits, synthesize } from "../core/engine.ts";
+import { nextRound, replyToComment, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { addComment, addMessage, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, startRun, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
@@ -85,6 +86,7 @@ export class GrilladoServer {
   private inflight = new Map<string, AbortController>();
   /** Agent runs on comment threads, by thread id. They don't lock the plan, except "Apply feedback". */
   private commentRuns = new Map<string, AbortController>();
+  private diagramRuns = new Map<string, AbortController>();
   private progress = new Map<string, string>();
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
@@ -369,6 +371,9 @@ export class GrilladoServer {
       error: s.error ? { ...s.error, message: redact(s.error.message, userText(s)) } : undefined,
       busy: this.inflight.has(s.id),
       applying: this.applying(s),
+      drawing: this.diagramRuns.has(s.id),
+      // A run cut short by a restart reads as stopped.
+      diagramRun: s.diagramRun?.state === "running" && !this.diagramRuns.has(s.id) ? { ...s.diagramRun, state: "stopped", current: undefined } : s.diagramRun,
       progress: this.progress.get(s.id),
       planPath: s.plan?.path,
       tree: buildTree(s),
@@ -484,7 +489,7 @@ export class GrilladoServer {
         return;
       case "apply":
         if (live(t.id)) throw new Error("The agent is still on this thread.");
-        if (busy || this.applying(s)) throw new Error("Waiting for the current run.");
+        if (busy || this.applying(s) || this.diagramRuns.has(s.id)) throw new Error("Waiting for the current run.");
         this.startComment(s, t.id, "apply");
         return;
       case "retry":
@@ -506,9 +511,29 @@ export class GrilladoServer {
 
   private reviewRoute(s: Session, body: any) {
     const op = String(body?.op ?? "");
+    if (op === "drop") {
+      // The browser couldn't draw a suggested diagram with Mermaid: it never shows, and counts as skipped (#43).
+      const x = (s.suggestions ?? []).find((y) => y.id === String(body?.id) && y.kind === "diagram" && y.status === "pending");
+      if (!x) return;
+      s.suggestions = (s.suggestions ?? []).filter((y) => y !== x);
+      if (s.diagramRun) {
+        s.diagramRun.added = Math.max(0, s.diagramRun.added - 1);
+        s.diagramRun.skipped++;
+      }
+      this.changed(s);
+      return;
+    }
     if (op === "undo") {
       if (!undoReview(s)) throw new Error("Nothing to undo.");
     } else if (op === "accept" || op === "reject") {
+      // Edit on a diagram suggestion accepts it with your changes, as one step (#42).
+      const code = typeof body?.code === "string" ? body.code : null;
+      if (op === "accept" && code !== null && Array.isArray(body?.ids) && body.ids.length === 1) {
+        const x = (s.suggestions ?? []).find((y) => y.id === String(body.ids[0]) && y.kind === "diagram" && y.status === "pending");
+        if (!x) throw new Error("Those suggestions were already reviewed.");
+        if (!code.trim() || code.length > 8000) throw new Error("The diagram is empty.");
+        withCode(x, code);
+      }
       // "all" takes every pending suggestion (Accept all / Reject all).
       review(s, op, body?.ids === "all" ? pending(s).map((x) => x.id) : body?.ids);
     } else throw new Error("Not found");
@@ -518,6 +543,91 @@ export class GrilladoServer {
       this.opts.store.writePlan(s.id, s.plan!.markdown);
     }
     this.changed(s);
+  }
+
+  /** "Add diagrams" (item 5): start (chosen sections, or the one at `at` from the slash menu), stop, retry. */
+  private diagramRoute(s: Session, body: any, busy: boolean) {
+    const op = String(body?.op ?? "start");
+    if (op === "stop") return this.diagramRuns.get(s.id)?.abort();
+    if (this.diagramRuns.has(s.id)) throw new Error("The agent is already adding diagrams.");
+    if (busy || this.applying(s)) throw new Error("Waiting for the current run.");
+    const md = s.plan?.markdown ?? "";
+    const all = planSections(md);
+    let titles: string[];
+    let kinds: DiagramKind[];
+    let focus = "";
+    if (op === "retry") {
+      const r = s.diagramRun;
+      if (!r) throw new Error("Nothing to try again.");
+      titles = r.sections.slice(r.done);
+      kinds = r.kinds;
+      focus = r.focus ?? "";
+    } else {
+      kinds = (Array.isArray(body?.kinds) ? body.kinds : DIAGRAM_KINDS).filter((k: string) => (DIAGRAM_KINDS as string[]).includes(k));
+      if (!kinds.length) throw new Error("Pick at least one kind.");
+      focus = String(body?.focus ?? "").trim().slice(0, 300);
+      if (op === "one") {
+        // The slash menu's "Diagram by {agent}": the section the caret is in.
+        const at = Number(body?.at) || 0;
+        const sec = [...all].reverse().find((x) => x.start <= at);
+        titles = sec ? [sec.title] : [];
+      } else {
+        const want = new Set(Array.isArray(body?.sections) ? body.sections.map(String) : []);
+        titles = all.filter((x) => want.has(x.title)).map((x) => x.title);
+      }
+    }
+    if (!titles.length) throw new Error("Pick at least one section.");
+    this.startDiagrams(s, titles, kinds, focus);
+  }
+
+  private startDiagrams(s: Session, titles: string[], kinds: DiagramKind[], focus: string) {
+    const controller = new AbortController();
+    this.diagramRuns.set(s.id, controller);
+    const t0 = Date.now();
+    const run: NonNullable<Session["diagramRun"]> = { state: "running", startedAt: new Date().toISOString(), sections: titles, kinds, ...(focus ? { focus } : {}), done: 0, added: 0, skipped: 0 };
+    s.diagramRun = run;
+    this.changed(s);
+    const opts = { ...this.runOptions(s, controller), onProgress: undefined };
+    const work = async () => {
+      // One section at a time: each suggestion lands as soon as its section is drawn (§18 I).
+      for (const title of titles) {
+        const md = s.plan?.markdown ?? "";
+        const sec = planSections(md).find((x) => x.title === title);
+        run.current = title;
+        this.changed(s);
+        const r = sec ? await suggestDiagram(s, md, sec, kinds, focus, this.adapterFor(s), opts) : null;
+        if (controller.signal.aborted) {
+          run.state = "stopped";
+          break;
+        }
+        if (r && !r.ok && r.code !== "malformed") {
+          run.state = "error";
+          run.message = redact(r.message, userText(s));
+          break;
+        }
+        // The plan stays editable while the agent draws: place it on the text as it is now.
+        const now = r?.ok && !r.value.skip ? planSections(s.plan?.markdown ?? "").find((x) => x.title === title) : undefined;
+        if (r?.ok && !r.value.skip && now) {
+          addDiagramSuggestion(s, now, r.value.mermaid, textHash(md));
+          run.added++;
+        } else run.skipped++;
+        run.done++;
+        run.current = undefined;
+        this.changed(s);
+      }
+      if (run.state === "running") run.state = "done";
+    };
+    work()
+      .catch((err) => {
+        run.state = "error";
+        run.message = redact(String(err?.message ?? err), userText(s));
+      })
+      .finally(() => {
+        run.current = undefined;
+        run.ms = Date.now() - t0;
+        if (this.diagramRuns.get(s.id) === controller) this.diagramRuns.delete(s.id);
+        this.changed(s);
+      });
   }
 
   private startComment(s: Session, threadId: string, kind: "reply" | "apply") {
@@ -594,9 +704,10 @@ export class GrilladoServer {
     }
     if (req.method !== "POST") return this.json(res, 404, { error: "Not found" });
     const busy = this.inflight.has(s.id);
-    if (action === "comments" || action === "suggestions") {
+    if (action === "comments" || action === "suggestions" || action === "diagrams") {
       if (s.status !== "plated" || !s.plan) throw new Error("Comments open once the plan is written.");
       if (action === "comments") this.commentRoute(s, parts[2], parts[3], body, busy);
+      else if (action === "diagrams") this.diagramRoute(s, body, busy);
       else this.reviewRoute(s, body);
       return this.json(res, 200, this.view(s));
     }

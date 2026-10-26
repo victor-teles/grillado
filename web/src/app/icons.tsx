@@ -187,3 +187,12 @@ export const IUser = mk(
     <path d="M20 21a8 8 0 0 0-16 0" />
   </>,
 );
+export const IMax = mk(
+  <>
+    <path d="M15 3h6v6" />
+    <path d="M9 21H3v-6" />
+    <path d="m21 3-7 7" />
+    <path d="m3 21 7-7" />
+  </>,
+);
+export const IMinus = mk(<path d="M5 12h14" />);

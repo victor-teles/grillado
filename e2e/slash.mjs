@@ -127,7 +127,7 @@ try {
     const all = await options(pg);
     if (one) {
       check("typed / opens the menu", await pg.locator(".slm").isVisible());
-      check("12 blocks; no agent row without item 5's hook", all.length === 12 && !all.some((t) => /Diagram by/.test(t)), all.join(" | "));
+      check("13 blocks with item 5's “Diagram by Claude Code” row", all.length === 13 && all.some((t) => /^Diagram by Claude Code/.test(t)), all.join(" | "));
       check("groups in the handoff order", (await pg.$$eval(".slm .sm-g", (e) => e.map((x) => x.textContent))).join(",") === "Plan,Diagrams,Blocks,Text");
       const attrs = await pg.$eval(TA, (el) => ({ role: el.getAttribute("role"), ex: el.getAttribute("aria-expanded"), ac: el.getAttribute("aria-autocomplete"), ad: el.getAttribute("aria-activedescendant"), ctl: el.getAttribute("aria-controls") }));
       const list = await pg.$eval(".slm [role=listbox]", (el) => ({ id: el.id, label: el.getAttribute("aria-label") }));
@@ -135,15 +135,14 @@ try {
       check("preview column at 1440px", await pg.locator(".slm .sm-p").isVisible());
       check("footer key chips are Inter (§18 D)", /Inter/.test(await pg.$eval(".sm-f .kb4", (el) => getComputedStyle(el).fontFamily)));
       await pg.waitForTimeout(400);
-      check("count announced politely", /12 blocks/.test(await pg.locator(".slm .sr-only[role=status]").textContent()));
+      check("count announced politely", /13 blocks/.test(await pg.locator(".slm .sr-only[role=status]").textContent()));
     }
     await snap("i4-menu");
     await axe(pg, `${theme} desktop: menu open`);
     // Filtering: /dia ranks State diagram first; ↓ moves, wraps.
     await pg.keyboard.type("dia");
-    if (one) check("/dia → State diagram, Flowchart", (await options(pg)).join(" | ") === "State diagram | Flowchartdiagram", (await options(pg)).join(" | "));
-    await pg.keyboard.press("ArrowDown");
-    await pg.keyboard.press("ArrowDown");
+    if (one) check("/dia → State diagram, Diagram by Claude Code, Flowchart", (await options(pg)).join(" | ") === "State diagram | Diagram by Claude Code | Flowchartdiagram", (await options(pg)).join(" | "));
+    for (let i = 0; i < 3; i++) await pg.keyboard.press("ArrowDown");
     if (one) check("↓ wraps to the first row", (await pg.$eval(".slm [aria-selected=true]", (e) => e.textContent)).includes("State diagram"));
     await snap("i4-filter");
     // Esc closes and keeps the text; a second Esc finishes.
@@ -336,7 +335,7 @@ try {
     if (one) check("mobile: hint has no Esc", (await mp.locator(".blk[data-editing] .blk-hint").textContent()) === "Markdown");
     await mp.locator(".acc4 button", { hasText: "Block" }).tap();
     await mp.locator(".msm").waitFor();
-    if (one) check("mobile: docked list, no preview", (await mp.locator(".msm [role=option]").count()) === 12 && (await mp.locator(".sm-p").count()) === 0);
+    if (one) check("mobile: docked list, no preview", (await mp.locator(".msm [role=option]").count()) === 13 && (await mp.locator(".sm-p").count()) === 0);
     await mp.waitForTimeout(400);
     if (one) check("mobile: menu is opaque and on top", await mp.evaluate(() => { const m = document.querySelector(".msm"); const r = m.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + 20, r.top + r.height / 2); return getComputedStyle(m).opacity === "1" && m.contains(hit); }));
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i4-menu-m-${theme}.png`) });

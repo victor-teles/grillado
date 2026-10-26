@@ -39,6 +39,8 @@ export interface Placed {
   start: number;
   end: number;
   after: string;
+  /** A diagram (item 5): a whole block after `end` (insert) or in place of `start..end` (replace). */
+  block?: boolean;
 }
 
 /** Trim what a suggestion keeps on both sides, so a pure addition shows as an insertion only. */
@@ -59,6 +61,11 @@ export function place(md: string, list: Suggestion[]): Placed[] {
   const out: Placed[] = [];
   for (const s of list) {
     if (s.status !== "pending") continue;
+    if (s.kind === "diagram") {
+      const at = locate(md, s.before, s.at, false);
+      if (at >= 0) out.push({ s, start: at, end: at + s.before.length, after: s.after, block: true });
+      continue;
+    }
     const at = locate(md, s.before, s.at, true);
     if (at < 0) continue;
     const m = minimal(s.before, s.after);

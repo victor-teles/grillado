@@ -14,7 +14,8 @@ import { Autosaver, type SaveState } from "./autosave";
 import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
 import type { CodeEditorHandle } from "./cm";
-import { Diagram } from "./Diagram";
+import { LivePreview } from "./Diagram";
+import { MermaidError, SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "./SourcePreview";
 import { type CiteRenderer, type DocMarks, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
 import { canHover, jumpTo, selecting } from "./link";
 import { formatEdit, formatKey } from "./selection";
@@ -359,8 +360,9 @@ export function autosize(el: HTMLTextAreaElement | null) {
 export type NewBlock = { pointer: boolean };
 
 /** The hint under the block editor (its aria-describedby): Esc closes the menu first; phones have no Esc. */
-function hintOf(fields: boolean, menu: boolean, mobile?: boolean): ReactNode {
+function hintOf(fields: boolean, menu: boolean, mobile?: boolean, mermaid?: boolean): ReactNode {
   const k = (t: string) => <span className="kb4">{t}</span>;
+  if (mermaid && !menu && !fields) return mobile ? "Mermaid" : <>Mermaid · {k("⌘↵")} draw now · {k("Esc")} finish</>;
   if (mobile) return "Markdown"; // phone keyboards have no Tab or Esc
   if (fields) return <>{k("Tab")} next field · {k("Esc")} finish</>;
   return menu ? <>Markdown · {k("Esc")} close menu</> : <>Markdown · {k("Esc")} to finish</>;
@@ -430,6 +432,12 @@ function BlockEditor({
     onDone(refocus, { at: s.last.current ?? undefined, remove: !!fresh && (!t.trim() || t.trim() === "/") });
   };
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
+  const [now, setNow] = useState(0);
+  // Mobile diagrams: Source | Preview in the accessory row instead of the preview under the source.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const sp = useSourcePreview(mobile && !!preview, rootRef, ref, finish);
+  const [merr, setMerr] = useState<{ line?: number; message: string; raw: string } | null>(null);
+  const errId = useId();
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
   // Prose is edited in Inter at its own size so nothing jumps; it goes mono only once the whole block is a
   // fence (typing ``` turns it). Prose that holds a fence below it stays Inter (#17, review of #7).
@@ -450,7 +458,7 @@ function BlockEditor({
     s.openAt(slash, true);
   };
   return (
-    <div className="blk" data-editing="" data-block={kind} data-fields={f ? "" : undefined}>
+    <div ref={rootRef} className="blk" data-editing="" data-block={kind} data-fields={f ? "" : undefined} data-view={mobile && preview ? sp.view : undefined}>
       <div className="blk-ed">
         {f ? (
           // Field chips: a mirror under the transparent textarea marks the template's fields.
@@ -463,7 +471,8 @@ function BlockEditor({
           className={cls}
           rows={1}
           aria-label="Edit block as Markdown. Escape to finish."
-          aria-describedby={hint}
+          aria-describedby={preview && merr ? `${hint} ${errId}` : hint}
+          aria-invalid={preview && merr ? true : undefined}
           placeholder="Type / for blocks"
           spellCheck
           {...comboboxProps(s)}
@@ -474,7 +483,9 @@ function BlockEditor({
             s.input(text, next);
           }}
           onSelect={() => s.moved()}
-          onBlur={() => finish(false)}
+          onBlur={(e) => {
+            if (!sp.keeps(e.relatedTarget)) finish(false);
+          }}
           onKeyDown={(e) => {
             if (s.key(e)) {
               e.stopPropagation();
@@ -490,6 +501,13 @@ function BlockEditor({
               onChange(out.text);
               return;
             }
+            // In a diagram, ⌘↵ draws the preview now (§9); Esc finishes.
+            if (preview && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              e.stopPropagation();
+              setNow((n) => n + 1);
+              return;
+            }
             if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
               e.preventDefault();
               e.stopPropagation();
@@ -499,20 +517,33 @@ function BlockEditor({
         />
       </div>
       <p className="blk-hint" id={hint} aria-hidden="true">
-        {hintOf(!!f, !!s.menu, mobile)}
+        {hintOf(!!f, !!s.menu, mobile, !!preview)}
       </p>
       {preview && preview.kind === "fence" ? (
-        <div className="blk-preview" aria-label="Live preview">
-          <Diagram code={preview.body} />
-        </div>
+        <>
+          {merr ? <MermaidError id={errId} err={merr} /> : null}
+          <div className="blk-preview" role="group" aria-label="Live preview">
+            <LivePreview code={preview.body} now={now} onError={setMerr} />
+          </div>
+        </>
       ) : null}
       <SlashMenu s={s} host={host} agentName={agentName} mobile={mobile} dock={dock + 48} />
       {mobile ? (
         <div className="acc4" role="toolbar" aria-label="Editing" style={{ bottom: dock }} onMouseDown={(e) => e.preventDefault()}>
-          <button type="button" className="btn quiet" onClick={addBlock}>
-            <PlusIcon />
-            Block
-          </button>
+          {preview ? (
+            <SourcePreviewSwitch
+              view={sp.view}
+              onView={(v) => {
+                sp.set(v);
+                if (v === "preview") setNow((n) => n + 1);
+              }}
+            />
+          ) : (
+            <button type="button" className="btn quiet" onClick={addBlock}>
+              <PlusIcon />
+              Block
+            </button>
+          )}
           <span className="sp" />
           <button type="button" className="btn quiet" onClick={() => finish(true)}>
             Done
@@ -541,24 +572,6 @@ function chips(text: string, fields: { start: number; end: number }[], active: n
   });
   out.push(`${text.slice(at)}\u200b`);
   return out;
-}
-
-/** Pixels the on-screen keyboard covers at the bottom of the layout viewport (mobile). */
-function useKeyboardDock(on: boolean) {
-  const [px, setPx] = useState(0);
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!on || !vv) return;
-    const update = () => setPx(Math.max(0, window.innerHeight - (vv.height + vv.offsetTop)));
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
-  }, [on]);
-  return px;
 }
 
 /** Renders a decision block from its last valid fields. */
@@ -645,6 +658,10 @@ export function PlanEditor({
   // Rich mode shows the last valid version of a decision block that doesn't parse (§5).
   const lastValid = useRef(new Map<string, DecisionFields>());
   useEffect(() => setEditing(null), [draft.epoch, mode]);
+  // Opening a block clears the Undo toast, like the suggestion's own editor does (review of #6/#7).
+  useEffect(() => {
+    if (editing) dispatchEvent(new Event("grillado:editor-open"));
+  }, [!!editing]);
   const problems = useMemo(() => decisionProblems(draft.text), [draft.text]);
 
   const startEdit = (b: Block) => !readOnly && setEditing({ start: b.start, len: b.end - b.start, text: b.raw, kind: b.kind });
@@ -757,7 +774,7 @@ export function PlanEditor({
           onKeyDown={(e) => {
             if (e.key === "Escape" && editing) doneEditing(true);
             const t0 = e.target as HTMLElement;
-            if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && (t0.matches(".blk-act") || t0.matches(".dz:not([data-state=changing])"))) {
+            if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && (t0.matches(".blk-act") || t0.matches(".dz:not([data-state=changing])") || t0.matches("figure.mm5[aria-keyshortcuts~='/']"))) {
               const start = Number(t0.closest<HTMLElement>(".blk")?.dataset.start);
               const b = parseBlocks(draft.text).find((x) => x.start === start);
               if (b) {
@@ -804,7 +821,7 @@ export function PlanEditor({
                         onChange={editBlock}
                         onDone={doneEditing}
                         agentName={agentName}
-                        onAgentDiagram={onAgentDiagram}
+                        onAgentDiagram={onAgentDiagram ? (at) => onAgentDiagram(editing.start + at) : undefined}
                         mobile={mobile}
                       />
                     ),
@@ -915,5 +932,5 @@ function RawEditor({
 /** Marks outside the block being edited: only that block's suggestions and anchors hide while you edit it (item 3 §4.7). */
 function outside(marks: DocMarks, start: number, end: number): DocMarks {
   const out = (a: { start: number; end: number }) => a.end < start || a.start > end;
-  return { ...marks, anchors: marks.anchors.filter(out), edits: marks.edits.filter(out) };
+  return { ...marks, anchors: marks.anchors.filter(out), edits: marks.edits.filter(out), replaces: marks.replaces?.filter((r) => r.start < start || r.start >= end) };
 }

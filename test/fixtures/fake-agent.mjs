@@ -100,6 +100,7 @@ const state = JSON.parse(prompt.match(/<state>([\s\S]*?)<\/state>/)?.[1] ?? "{}"
 const isPlan = /"type":"plan"/.test(system);
 const isComment = /"type":"reply"/.test(system);
 const isEdit = /"type":"edits"/.test(system);
+const isDiagram = /"type":"diagram"/.test(system);
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -225,9 +226,33 @@ function commentReply() {
   return { type: "edits", summary: "Spelled it out", edits };
 }
 
+// "Add diagrams": one diagram per section. A section with one line of text is skipped; one whose
+// title says "states" (or when only state diagrams are allowed) gets a state diagram.
+// FAKE_DIAGRAM=bad-once (first reply fails the check, the retry passes) | unparseable (passes the
+// check, Mermaid can't draw it) | fail (the agent errors on the second section).
+// FAKE_DIAGRAM_DELAY_MS: each section takes this long.
+function diagramReply() {
+  const sec = state.section ?? "";
+  const text = String(state.text ?? "").replace(/^```[\s\S]*?^```/gm, "");
+  const lines = text.split("\n").slice(1).filter((l) => /^[-*] /.test(l)).map((l) => l.replace(/^[-*]\s+|\[R\d+:[^\]]*\]/g, "").trim()).filter(Boolean);
+  if (process.env.FAKE_DIAGRAM === "fail" && once("diagram-n") === false) fail("rate");
+  if (lines.length < 2) return { type: "diagram", skip: true, mermaid: "" };
+  const words = lines.slice(0, 4).map((l) => l.split(/\s+/).slice(0, 3).join(" ").replace(/["\[\]{}()]/g, ""));
+  if (process.env.FAKE_DIAGRAM === "bad-once" && once("diagram-bad")) return { type: "diagram", skip: false, mermaid: `flowchart TD\n  A[${words[0]}] --> B[${words[1]}]` };
+  const states = /state/i.test(sec) || !(state.kinds ?? ["flowchart"]).includes("flowchart");
+  const head = states ? "stateDiagram-v2\n  direction LR" : "flowchart TD";
+  const acc = `  accTitle: ${sec} ${states ? "states" : "flow"}\n  accDescr: How ${sec.toLowerCase()} moves from ${words[0]} to ${words[words.length - 1]}.`;
+  const body = states
+    ? ["  [*] --> S0", ...words.map((w, i) => `  state "${w}" as S${i}`), ...words.slice(1).map((_, i) => `  S${i} --> S${i + 1}: next`), `  S${words.length - 1} --> [*]`]
+    : [...words.map((w, i) => `  N${i}["${w}"]`), ...words.slice(1).map((_, i) => `  N${i} -->${i === 0 ? "|then|" : ""} N${i + 1}`)];
+  if (process.env.FAKE_DIAGRAM === "unparseable") body.push("  N0 --> --> N1");
+  return { type: "diagram", skip: false, mermaid: [head, acc, ...body].join("\n") };
+}
+
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
-const reply = isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
+if (isDiagram && process.env.FAKE_DIAGRAM_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DIAGRAM_DELAY_MS)));
+const reply = isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude") {
