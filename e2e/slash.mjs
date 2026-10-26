@@ -162,9 +162,10 @@ try {
       check("field hint", (await pg.locator(".blk[data-editing] .blk-hint").textContent()) === "Tab next field · Esc finish");
       check("insert announced", /Question inserted\. Question field selected\./.test(await pg.locator(".blk[data-editing] > .sr-only[role=status]").textContent()));
       check("field chip under the textarea", (await pg.locator(".blk-bd .ph.on").textContent()) === "Question");
-      // Must-fix 2: a fence typed inside a paragraph turns the editor mono, and the chip (not the browser) shows the field.
+      // Review of #7 (carry-over): prose that holds a fence stays Inter; only a block that is a fence goes mono.
+      // The chip (not the browser) shows the field.
       const look = await pg.$eval(TA, (el) => ({ mono: el.classList.contains("mono"), font: getComputedStyle(el).fontFamily, sel: getComputedStyle(el, "::selection").backgroundColor }));
-      check("prose block holding a fence is mono", look.mono && /Geist Mono/.test(look.font), JSON.stringify(look));
+      check("prose block holding a fence stays Inter", !look.mono && /Inter/.test(look.font), JSON.stringify(look));
       check("textarea selection is transparent in field mode", look.sel === "rgba(0, 0, 0, 0)", look.sel);
     }
     await snap("i4-fields");

@@ -431,8 +431,10 @@ function BlockEditor({
   };
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
-  // Prose is edited in Inter at its own size so nothing jumps; once the block holds a fence it is mono (#17).
-  const cls = kind === "fence" || /^```/m.test(text) ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
+  // Prose is edited in Inter at its own size so nothing jumps; it goes mono only once the whole block is a
+  // fence (typing ``` turns it). Prose that holds a fence below it stays Inter (#17, review of #7).
+  const parts = parseBlocks(text);
+  const cls = kind === "fence" || /^\s*```/.test(text) || (parts.length > 0 && parts.every((b) => b.kind === "fence")) ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
   const f = s.fields;
   // Mobile: the accessory row sits on the keyboard; the list docks above it.
   const dock = useKeyboardDock(mobile);
