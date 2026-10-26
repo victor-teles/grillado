@@ -129,7 +129,18 @@ export interface SessionView {
   keepGoing?: boolean;
   summary: string;
   error?: { code: FailureCode; message: string };
-  plan?: { title: string; markdown: string; path: string; openDecisions: string[]; createdAt?: string };
+  plan?: {
+    title: string;
+    markdown: string;
+    path: string;
+    openDecisions: string[];
+    createdAt?: string;
+    editedAt?: string;
+    /** Decisions being asked again after an inline change; the plan is read-only meanwhile. */
+    waiting?: string[];
+    /** Set when plan.md was reloaded after a change made outside Grillado. */
+    reloadedAt?: string;
+  };
   busy: boolean;
   progress?: string;
   tree: TreeState;

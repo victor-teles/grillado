@@ -1,8 +1,10 @@
 // App chrome: header (desktop + mobile), steps, agent chip, theme, and small shared hooks.
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { IMore, IMoon, IPlate, IPower, ISun, ISwap, Mark } from "./icons";
-import type { ProviderId, ProviderView } from "./types";
+import { IDown, IMore, IMoon, IPlate, IPower, ISun, ISwap, Mark } from "./icons";
+import type { ProviderView } from "./types";
+import { monogram } from "./copy";
+export { monogram };
 
 // ---------------------------------------------------------------- hooks
 
@@ -55,37 +57,33 @@ export const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padS
 // ---------------------------------------------------------------- header parts
 
 export const STEPS = ["Idea", "On the grill", "Confirm", "Plan"] as const;
-const MONO: Record<ProviderId, string> = { claude: "CC", codex: "CX", grok: "GK", pi: "PI" };
-export const monogram = (id: ProviderId) => MONO[id];
-
+/** The four stages as plain text; the current one gets an ember dot (v1.2 header). */
 export function Steps({ step }: { step: number }) {
   return (
-    <ol className="steps" aria-label="Session progress">
+    <ol className="stages" aria-label="Session progress">
       {STEPS.map((s, i) => (
-        <li key={s} className="step" data-status={i < step ? "complete" : i === step ? "current" : "upcoming"} aria-current={i === step ? "step" : undefined}>
-          <span className="d" aria-hidden="true" />
+        <li key={s} aria-current={i === step ? "step" : undefined} data-done={i < step ? "" : undefined}>
           {s}
+          {i < step ? <span className="sr-only"> (done)</span> : null}
         </li>
       ))}
     </ol>
   );
 }
 
-export function AgentChip({ provider, compact, onSwitch }: { provider: ProviderView; compact?: boolean; onSwitch?: () => void }) {
+/** The agent in plain text with a chevron when it can be switched (v1.2: no monogram, no status dot). */
+export function AgentChip({ provider, onSwitch }: { provider: ProviderView; compact?: boolean; onSwitch?: () => void }) {
   const version = provider.version ? ` ${provider.version}` : "";
   // Visible name first so the accessible name contains it (WCAG 2.5.3); version and role for screen readers.
   const inner = (
     <>
-      <span className="mono2" aria-hidden="true">
-        {monogram(provider.id)}
-      </span>
       <span className="sr-only">Agent: </span>
-      <span className={compact ? "sr-only" : undefined}>{provider.displayName}</span>
+      <span>{provider.displayName}</span>
       <span className="sr-only">
         {version}
         {onSwitch ? ", switch agent" : ""}
       </span>
-      {provider.status === "ready" ? <span className="ok" aria-hidden="true" /> : null}
+      {onSwitch ? <IDown s={14} /> : null}
     </>
   );
   const title = `${provider.displayName}${version}`;
@@ -103,7 +101,6 @@ export function AgentChip({ provider, compact, onSwitch }: { provider: ProviderV
 export interface HeaderProps {
   step?: number;
   title?: string;
-  round?: number;
   provider?: ProviderView;
   onSwitch?: () => void;
   onHome?: () => void;
@@ -113,72 +110,45 @@ export interface HeaderProps {
   onTheme: () => void;
 }
 
+/** One 52px row (48 on phones): mark + session title · stages · agent + ⋯. */
 export function Header(p: HeaderProps) {
   const mobile = useMobile();
-  const brand = (
-    <>
-      <span className="mark" style={mobile ? { width: 24, height: 24 } : undefined}>
-        <Mark size={mobile ? 14 : 15} />
-      </span>
-      {mobile ? null : <span className="wordmark">Grillado</span>}
-    </>
+  const mark = (
+    <span className="mark" aria-hidden="true">
+      <Mark size={14} />
+    </span>
   );
   const home = p.onHome ? (
     <a
       href="/"
+      className="home"
       aria-label="Grillado home"
       onClick={(e) => {
         e.preventDefault();
         p.onHome!();
       }}
     >
-      {brand}
+      {mark}
     </a>
   ) : (
-    <span style={{ display: "flex", alignItems: "center", gap: 10 }} aria-label={mobile ? "Grillado" : undefined} role={mobile ? "img" : undefined}>
-      {brand}
+    <span className="home" role="img" aria-label="Grillado">
+      {mark}
     </span>
   );
-  const menu = <HeaderMenu {...p} mobile={mobile} />;
-  if (mobile)
-    return (
-      <header className="mh">
-        <div className="r">
-          {home}
-          <span className="sess2">{p.title ?? "Grillado"}</span>
-          {p.round ? <span className="roundc">R{p.round}</span> : null}
-          {p.provider ? <AgentChip provider={p.provider} compact onSwitch={p.onSwitch} /> : null}
-          {menu}
-        </div>
-        {p.step !== undefined ? (
-          <div className="mstep2">
-            <span className="bars" aria-hidden="true">
-              {STEPS.map((s, i) => (
-                <i key={s} className={i < p.step! ? "c" : i === p.step ? "n" : ""} />
-              ))}
-            </span>
-            <span>
-              {STEPS[p.step]} · step {p.step + 1} of 4
-            </span>
-          </div>
-        ) : null}
-      </header>
-    );
   return (
-    <header className="hdr">
+    <header className="top">
       <div className="brand">
         {home}
         {p.title ? (
-          <span className="sess" title={p.title}>
+          <span className="title" title={p.title}>
             {p.title}
           </span>
         ) : null}
       </div>
-      {p.step !== undefined ? <Steps step={p.step} /> : <span />}
-      <div className="hdr-r">
-        {p.round ? <span className="roundc">Round {p.round}</span> : null}
-        {p.provider ? <AgentChip provider={p.provider} onSwitch={p.onSwitch} /> : null}
-        {menu}
+      {p.step !== undefined && !mobile ? <Steps step={p.step} /> : <span />}
+      <div className="top-r">
+        {p.provider && !mobile ? <AgentChip provider={p.provider} onSwitch={p.onSwitch} /> : null}
+        <HeaderMenu {...p} mobile={mobile} />
       </div>
     </header>
   );
@@ -188,16 +158,17 @@ function HeaderMenu(p: HeaderProps & { mobile: boolean }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="ghost" aria-label="More">
+        <button type="button" className="icon-btn" aria-label="More">
           <IMore />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56 motion-reduce:animate-none">
         {p.provider ? (
           <>
-            <DropdownMenuLabel className="text-[12px] font-normal text-subtle-foreground">
+            <DropdownMenuLabel className="text-[12px] font-normal text-muted-foreground">
               {p.provider.displayName}
-              {p.provider.version ? <span className="mono"> {p.provider.version}</span> : null}
+              {p.provider.version ? ` ${p.provider.version}` : null}
+              {mobileStep(p)}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
           </>
@@ -225,7 +196,7 @@ function HeaderMenu(p: HeaderProps & { mobile: boolean }) {
               <IPower s={14} />
               <span className="grid">
                 Quit Grillado
-                <span className="text-[11.5px] text-subtle-foreground">Stops the local server. Your session is saved.</span>
+                <span className="text-[12px] text-muted-foreground">Stops the local server. Your session is saved.</span>
               </span>
             </DropdownMenuItem>
           </>
@@ -233,4 +204,9 @@ function HeaderMenu(p: HeaderProps & { mobile: boolean }) {
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+/** On phones the stages aren't in the header; the menu says where you are. */
+function mobileStep(p: HeaderProps & { mobile: boolean }) {
+  return p.mobile && p.step !== undefined ? <span className="block">{`${STEPS[p.step]} · step ${p.step + 1} of 4`}</span> : null;
 }

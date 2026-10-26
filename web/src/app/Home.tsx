@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { AgentChip, monogram, useMobile } from "./chrome";
+import { AgentChip, useMobile } from "./chrome";
 import { CopyButton } from "./CopyButton";
-import { ICheck, IChev, IFlame, IPlate, IRefresh, ITerm, IUp } from "./icons";
+import { IPlus, IRefresh, IUp } from "./icons";
 import type { AppState, ProviderId, ProviderView, SessionSummary } from "./types";
 
 // ---------------------------------------------------------------- 0c no agent
@@ -10,56 +10,40 @@ export function NoAgent({ state, onRescan }: { state: AppState; onRescan: () => 
   const [scanning, setScanning] = useState(false);
   const [copied, setCopied] = useState(false);
   return (
-    <main className="page">
-      <div className="center">
-        <span className="tile" aria-hidden="true">
-          <ITerm s={24} />
-        </span>
-        <h1 className="h1">No coding agent found</h1>
-        <p className="lead">Grillado runs on the coding agent you already use. Install one, log in once, then scan again.</p>
-        <ul className="card2" style={{ width: "min(600px,100%)", marginTop: 28, padding: 8, display: "grid", gap: 6, listStyle: "none" }} aria-label="Install commands">
+    <main className="solo">
+      <div className="col">
+        <h1>No coding agent found</h1>
+        <p className="lede">Install one, log in once, then scan again. Grillado checks your PATH and installs nothing for you.</p>
+        <ul className="rows" aria-label="Install commands">
           {state.providers.map((p) => (
-            <li key={p.id} className="inst">
-              <span className="n">{p.displayName}</span>
-              <code>{p.installHint}</code>
+            <li key={p.id} className="cmdrow">
+              <span className="nm">{p.displayName}</span>
+              <code title={p.installHint}>{p.installHint}</code>
               <CopyButton kind="icon" text={p.installHint} label={`Copy ${p.displayName} install command`} onCopied={() => setCopied(true)} />
               {p.status === "broken" || p.status === "outdated" ? <span className="why">Found, but not working: {p.reason}</span> : null}
             </li>
           ))}
         </ul>
-        <div style={{ marginTop: 20, display: "flex", gap: 12, alignItems: "center", flexDirection: "column" }}>
-          {scanning ? (
-            <span className="rs" role="status">
-              <span className="shimmer">Looking for claude, codex, grok and pi…</span>
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="pill primary solo"
-              onClick={async () => {
-                setScanning(true);
-                try {
-                  await onRescan();
-                } finally {
-                  setScanning(false);
-                }
-              }}
-            >
-              <IRefresh s={14} />
-              Scan again
-            </button>
-          )}
-          <span aria-live="polite">
-            {copied ? (
-              <span className="fb">
-                <ICheck s={14} />
-                Copied
-              </span>
-            ) : (
-              <span className="hint" style={{ margin: 0 }}>
-                We check your PATH. Nothing is installed for you.
-              </span>
-            )}
+        <div className="foot">
+          <button
+            type="button"
+            className="btn primary"
+            aria-busy={scanning || undefined}
+            disabled={scanning}
+            onClick={async () => {
+              setScanning(true);
+              try {
+                await onRescan();
+              } finally {
+                setScanning(false);
+              }
+            }}
+          >
+            <IRefresh s={16} />
+            {scanning ? "Scanning…" : "Scan again"}
+          </button>
+          <span className="meta" aria-live="polite">
+            {scanning ? "Looking for claude, codex, grok and pi…" : copied ? "Copied" : ""}
           </span>
         </div>
       </div>
@@ -74,8 +58,11 @@ export function Picker({ state, onPick }: { state: AppState; onPick: (id: Provid
   const lastUsed = state.remembered ?? state.selected ?? null;
   const [sel, setSel] = useState<ProviderId>(lastUsed && ready.some((p) => p.id === lastUsed) ? lastUsed : ready[0]!.id);
   const [remember, setRemember] = useState(false);
+  // Number keys pick a row; the numerals only show after the first number press (as in the round).
+  const [keys, setKeys] = useState(false);
   const groupRef = useRef<HTMLDivElement>(null);
-  const order = [...ready, ...state.providers.filter((p) => p.status !== "ready")];
+  const missing = state.providers.filter((p) => p.status === "missing");
+  const broken = state.providers.filter((p) => p.status !== "ready" && p.status !== "missing");
   const onKey = (e: React.KeyboardEvent) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if ((e.target as HTMLElement).matches("input")) {
@@ -84,6 +71,7 @@ export function Picker({ state, onPick }: { state: AppState; onPick: (id: Provid
     const n = Number(e.key);
     if (n >= 1 && n <= ready.length) {
       e.preventDefault();
+      setKeys(true);
       setSel(ready[n - 1]!.id);
       groupRef.current?.querySelector<HTMLElement>(`[data-id=${ready[n - 1]!.id}]`)?.focus();
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -93,7 +81,7 @@ export function Picker({ state, onPick }: { state: AppState; onPick: (id: Provid
       const p = ready[(i + ready.length) % ready.length]!;
       setSel(p.id);
       groupRef.current?.querySelector<HTMLElement>(`[data-id=${p.id}]`)?.focus();
-    } else if (e.key === "Enter" && !(e.target as HTMLElement).closest("button:not([role=radio])")) {
+    } else if (e.key === "Enter" && !(e.target as HTMLElement).closest("button:not([role=radio]),a")) {
       e.preventDefault();
       onPick(sel, remember);
     }
@@ -101,65 +89,64 @@ export function Picker({ state, onPick }: { state: AppState; onPick: (id: Provid
   useEffect(() => {
     groupRef.current?.querySelector<HTMLElement>("[aria-checked=true]")?.focus();
   }, []);
+  const names = (ps: ProviderView[]) => (ps.length <= 2 ? ps.map((p) => p.displayName).join(" and ") : `${ps.slice(0, -1).map((p) => p.displayName).join(", ")} and ${ps[ps.length - 1]!.displayName}`);
   return (
-    <main className="page" onKeyDown={onKey}>
-      <div className="center">
-        <div className="eyebrow" style={{ marginBottom: 12 }}>
-          {ready.length} agents ready on this computer
-        </div>
-        <h1 className="h1" id="picker-title">
-          Which agent should run this?
-        </h1>
-        <p className="lead">Grillado works through a coding agent you already have. It uses your existing login, so there's nothing new to sign in to.</p>
-        <div ref={groupRef} className="card2" style={{ width: "min(520px,100%)", marginTop: 28, padding: 8, display: "grid", gap: 6 }} role="radiogroup" aria-labelledby="picker-title">
-          {order.map((p) => (
-            <AgentRow key={p.id} p={p} k={ready.indexOf(p) + 1} checked={p.id === sel} lastUsed={p.id === lastUsed} onSelect={() => setSel(p.id)} />
+    <main className="solo" onKeyDown={onKey}>
+      <div className="col">
+        <h1 id="picker-title">Which agent should run this?</h1>
+        <p className="lede">Grillado runs through a coding agent you already have, with its existing login.</p>
+        <div ref={groupRef} className="rows" role="radiogroup" aria-labelledby="picker-title">
+          {ready.map((p, i) => (
+            <AgentRow key={p.id} p={p} k={keys ? i + 1 : 0} checked={p.id === sel} lastUsed={p.id === lastUsed} onSelect={() => setSel(p.id)} />
           ))}
         </div>
-        <div style={{ width: "min(520px,100%)", display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
-          <label className="cbx-l">
+        {missing.length ? (
+          <p className="note">
+            {names(missing)} {missing.length === 1 ? "isn't" : "aren't"} installed.{" "}
+            <a href="https://github.com/victor-teles/grillado#readme" target="_blank" rel="noreferrer">
+              How to add one
+            </a>
+          </p>
+        ) : null}
+        {broken.map((p) => (
+          <p key={p.id} className="note">
+            {p.displayName} was found, but isn't working{p.reason ? `: ${p.reason}` : "."}
+          </p>
+        ))}
+        <div className="foot">
+          <label className="check">
             <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
             Remember my choice
           </label>
-          <button type="button" className="pill primary" onClick={() => onPick(sel, remember)}>
-            Continue <kbd>↵</kbd>
+          <span className="sp" />
+          <button type="button" className="btn primary" onClick={() => onPick(sel, remember)}>
+            Continue
+            <span className="k" aria-hidden="true">
+              ↵
+            </span>
           </button>
         </div>
-        <p className="hint" style={{ marginTop: 18 }}>
-          {ready.slice(0, 9).map((_, i) => (
-            <kbd key={i}>{i + 1}</kbd>
-          ))}{" "}
-          choose · switch any time from the header
-        </p>
       </div>
     </main>
   );
 }
 
 function AgentRow({ p, k, checked, lastUsed, onSelect }: { p: ProviderView; k: number; checked: boolean; lastUsed: boolean; onSelect: () => void }) {
-  const off = p.status !== "ready";
-  const detail = off ? (p.status === "missing" ? "Not installed" : `Found, but not working${p.reason ? `: ${p.reason}` : ""}`) : "Uses your existing login";
   return (
-    <button type="button" role="radio" data-id={p.id} aria-checked={checked} disabled={off} tabIndex={checked ? 0 : -1} className="ag" onClick={onSelect}>
-      <span className="mono3" aria-hidden="true">
-        {monogram(p.id)}
+    <button type="button" role="radio" data-id={p.id} aria-checked={checked} tabIndex={checked ? 0 : -1} className="row" onClick={onSelect}>
+      <span className="rd" aria-hidden="true" />
+      <span className="nm">
+        {p.displayName}
+        {p.version ? <span>{p.version}</span> : null}
       </span>
-      <span style={{ minWidth: 0 }}>
-        <span className="n">
-          {p.displayName}
-          {p.version ? (
-            <span className="mono sub" style={{ fontSize: 11.5, fontWeight: 400 }}>
-              {p.version}
-            </span>
-          ) : null}
-          {lastUsed && !off ? <span className="rec">Last used</span> : null}
-        </span>
-        <span className="d">
-          {off ? null : <ICheck s={12} />}
-          {detail}
-        </span>
+      <span className="tail">
+        {lastUsed ? "Last used" : null}
+        {k ? (
+          <kbd className="n" aria-hidden="true">
+            {k}
+          </kbd>
+        ) : null}
       </span>
-      <span className="r">{off ? null : <kbd aria-hidden="true">{k}</kbd>}</span>
     </button>
   );
 }
@@ -251,18 +238,17 @@ export function Landing({
     }
   };
   return (
-    <main className="page">
-      <div className="center" style={mobile ? undefined : { paddingTop: 96 }}>
-        <span className="eyebrow" style={{ marginBottom: 14 }}>
-          <IFlame s={14} />
-          Plan anything with your coding agent
-        </span>
-        <h1 className="h1 xl" id="idea-label">
-          What are you planning?
-        </h1>
-        <p className="lead">Describe the idea. The agent asks the questions, you make the calls, and you leave with a plan saved on this computer.</p>
+    <main className="solo hero">
+      <div className="col">
+        <h1 id="idea-label">What are you planning?</h1>
+        <p className="lede">
+          Describe the idea. The agent asks, you decide,
+          {mobile ? " " : <br />}
+          and the plan is saved on this computer.
+        </p>
         <form
           className="composer"
+          data-focus={focused ? "" : undefined}
           onSubmit={(e) => {
             e.preventDefault();
             void start();
@@ -270,7 +256,9 @@ export function Landing({
         >
           <textarea
             ref={ta}
+            className="tx"
             aria-labelledby="idea-label"
+            aria-describedby="idea-keys"
             value={idea}
             rows={2}
             placeholder={placeholder}
@@ -285,30 +273,27 @@ export function Landing({
             }}
             maxLength={4000}
           />
+          <span id="idea-keys" className="sr-only">
+            Enter starts, Shift+Enter adds a new line.
+          </span>
           {showContext ? (
             <div className="ctxbox">
               <textarea aria-label="Context for the agent (optional)" placeholder="Anything the agent should know: constraints, stack, who it's for" value={context} onChange={(e) => setContext(e.target.value)} maxLength={20000} />
             </div>
           ) : null}
-          <div className="row">
-            {provider ? <AgentChip provider={provider} compact={mobile} onSwitch={onSwitch} /> : null}
-            {mobile ? null : (
-              <span className="hint" style={{ margin: "0 0 0 4px" }}>
-                <kbd>↵</kbd> start · <kbd>⇧</kbd>
-                <kbd>↵</kbd> new line
-              </span>
-            )}
+          <div className="ar">
+            {provider ? <AgentChip provider={provider} onSwitch={onSwitch} /> : null}
             {showContext ? null : (
-              <button type="button" className="ctx" onClick={() => setShowContext(true)}>
-                + Context
+              <button type="button" className="icon-btn" aria-label="Add context" onClick={() => setShowContext(true)}>
+                <IPlus s={16} />
               </button>
             )}
-            <button type="submit" className="send" aria-label="Start" disabled={!idea.trim() || sending}>
-              <IUp s={18} />
+            <button type="submit" className={`go${idea.trim() ? " on" : ""}`} aria-label="Start" disabled={!idea.trim() || sending}>
+              <IUp s={16} />
             </button>
           </div>
         </form>
-        <Recent sessions={state.sessions} dataDir={state.dataDir} onOpen={onOpen} mobile={mobile} />
+        <Recent sessions={state.sessions} dataDir={state.dataDir} onOpen={onOpen} />
       </div>
     </main>
   );
@@ -317,78 +302,49 @@ export function Landing({
 function when(iso: string) {
   const d = new Date(iso);
   const mins = Math.round((Date.now() - d.getTime()) / 60000);
-  if (mins < 1) return "Just now";
+  if (mins < 1) return "just now";
   if (mins < 60) return `${mins} min ago`;
   const today = new Date();
   if (d.toDateString() === today.toDateString()) return `${Math.round(mins / 60)} h ago`;
   const y = new Date(today);
   y.setDate(today.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return "Yesterday";
+  if (d.toDateString() === y.toDateString()) return "yesterday";
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
 }
 
-function StatusBadge({ s }: { s: SessionSummary }) {
-  if (s.status === "plated")
-    return s.open ? (
-      <span className="badge2 proto">Wrapped early · {s.open} open</span>
-    ) : (
-      <span className="badge2 ok">
-        <ICheck s={12} />
-        Plated
-      </span>
-    );
-  if (s.status === "confirm") return <span className="badge2">Confirm</span>;
-  if (s.status === "synthesizing") return <span className="badge2">Plating</span>;
-  return (
-    <span className="badge2 heat">
-      <span className="dot" aria-hidden="true" />
-      On the grill · round {Math.max(1, s.rounds)}
-    </span>
-  );
+/** Plain text status for a recent session (v1.2: no badges). */
+function statusText(s: SessionSummary) {
+  if (s.status === "plated") return s.open ? `Wrapped early · ${s.open} open` : "Plated";
+  if (s.status === "confirm") return "Confirm";
+  if (s.status === "synthesizing") return "Plating";
+  return `Round ${Math.max(1, s.rounds)}`;
 }
 
-function Recent({ sessions, dataDir, onOpen, mobile }: { sessions: SessionSummary[]; dataDir: string; onOpen: (id: string) => void; mobile: boolean }) {
+function Recent({ sessions, dataDir, onOpen }: { sessions: SessionSummary[]; dataDir: string; onOpen: (id: string) => void }) {
   const home = dataDir.replace(/^\/(home|Users)\/[^/]+/, "~");
   if (!sessions.length)
     return (
-      <div className="list empty-list">
-        <span className="tile" style={{ marginBottom: 12, width: 40, height: 40 }} aria-hidden="true">
-          <IPlate s={20} />
-        </span>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>No sessions yet</div>
-        <div className="sub" style={{ fontSize: 12.5, marginTop: 4, maxWidth: 360 }}>
-          Each session is saved on this computer in <span className="code">{home}</span>, so you can stop and pick up where you left off.
-        </div>
-      </div>
+      <p className="note empty">
+        Sessions are saved in <span className="inline-code">{home}</span>, so you can stop and pick up later.
+      </p>
     );
   return (
-    <section className="list" aria-labelledby="recent-title">
-      <h2>
-        <span id="recent-title">Recent</span>
-        {mobile ? null : (
-          <span className="sub" style={{ fontWeight: 400 }}>
-            Saved in {home}
-          </span>
-        )}
-      </h2>
+    <section className="recent" aria-labelledby="recent-title">
+      <h2 id="recent-title">Recent</h2>
       <ul>
         {sessions.map((s) => (
           <li key={s.id}>
             <a
-              className="li"
+              className="rrow"
               href={`/s/${s.id}`}
               onClick={(e) => {
                 e.preventDefault();
                 onOpen(s.id);
               }}
             >
-              <span className="t">{s.idea.split("\n")[0]}</span>
+              <span className="nm">{s.idea.split("\n")[0]}</span>
               <span className="meta">
-                <StatusBadge s={s} />
-                <span className="m">{when(s.updatedAt)}</span>
-              </span>
-              <span className="sub chev" aria-hidden="true">
-                <IChev s={14} />
+                {statusText(s)} · {when(s.updatedAt)}
               </span>
             </a>
           </li>

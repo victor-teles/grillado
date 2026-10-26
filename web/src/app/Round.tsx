@@ -14,9 +14,9 @@ import {
   AgentQuestionTitle,
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
-import { clock, useMobile, useSince } from "./chrome";
-import { ICheck, IFlame, ISpark, ISq } from "./icons";
-import { Heat, MobileStrip, SidePanel } from "./Tree";
+import { useMobile, useSince } from "./chrome";
+import { ISq } from "./icons";
+import { MobileStrip, SidePanel } from "./Tree";
 import { type Answer, type DecisionNode, OTHER_OPTION, type Question, type Round, type SessionView, UNKNOWN_OPTION } from "./types";
 
 type Act = (action: string, body?: unknown) => Promise<void>;
@@ -34,19 +34,17 @@ export function SessionBody({
   previewStale,
   highlight,
   showHeat,
-  showLegend,
   dim,
   split,
 }: {
   session: SessionView;
   main: React.ReactNode;
-  sideSub: string;
+  sideSub?: string;
   onNode?: (n: DecisionNode) => void;
   compact?: boolean;
   previewStale?: Set<string>;
   highlight?: string;
   showHeat?: boolean;
-  showLegend?: boolean;
   dim?: boolean;
   split?: boolean;
 }) {
@@ -71,7 +69,6 @@ export function SessionBody({
         previewStale={previewStale}
         highlight={highlight}
         showHeat={showHeat}
-        showLegend={showLegend}
         dim={dim}
       />
     </div>
@@ -90,46 +87,48 @@ function focusCard(questionIndex: number | undefined) {
   el?.scrollIntoView({ block: "nearest" });
 }
 
-function Stats({ session }: { session: SessionView }) {
-  const elapsed = useSince(session.createdAt);
-  return (
-    <dl className="stats">
-      <div className="stat">
-        <dd>{session.tree.counts.settled}</dd>
-        <dt>settled</dt>
-      </div>
-      <div className="stat">
-        <dd>{session.tree.counts.open}</dd>
-        <dt>open</dt>
-      </div>
-      <div className="stat el">
-        <dd>{clock(elapsed)}</dd>
-        <dt>elapsed</dt>
-      </div>
-    </dl>
-  );
-}
-
 // ---------------------------------------------------------------- answering
 
 export function RoundView({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
   const round = session.rounds.at(-1)!;
+  // The question being answered is marked in the tree (v1.2: one --sel row, no glow).
+  const [active, setActive] = useState<string | undefined>(round.questions[0]?.key);
   return (
     <SessionBody
       session={session}
-      sideSub={`${session.tree.counts.settled + session.tree.counts.open} so far`}
+      highlight={active}
       onNode={(n) => n.status === "frontier" && focusCard(n.questionIndex)}
-      main={<RoundForm key={`${session.id}-${round.n}`} session={session} round={round} act={act} banner={banner} />}
+      main={<RoundForm key={`${session.id}-${round.n}`} session={session} round={round} act={act} banner={banner} onActive={setActive} />}
     />
   );
 }
 
-function RoundForm({ session, round, act, banner }: { session: SessionView; round: Round; act: Act; banner?: React.ReactNode }) {
+function RoundForm({ session, round, act, banner, onActive }: { session: SessionView; round: Round; act: Act; banner?: React.ReactNode; onActive: (key: string) => void }) {
   const [status, setStatus] = useState<"asking" | "submitting">("asking");
+  // Number-key hints stay hidden until the first number press (v1.2).
+  const [keys, setKeys] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && /^[1-9]$/.test(e.key) && !(e.target as HTMLElement | null)?.matches?.("input,textarea")) setKeys(true);
+    };
+    const onIn = (e: Event) => {
+      const key = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("[data-slot=agent-question-item]")?.dataset.key;
+      if (key) onActive(key);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("focusin", onIn);
+    document.addEventListener("pointerdown", onIn);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("focusin", onIn);
+      document.removeEventListener("pointerdown", onIn);
+    };
+  }, [onActive]);
   const [error, setError] = useState<string>();
   const [nudgeHidden, setNudgeHidden] = useState(false);
   const n = round.questions.length;
   const labelOf = useMemo(() => new Map(session.tree.nodes.map((x) => [x.id, x.label])), [session.tree]);
+  void n;
   const parentOf = useMemo(() => new Map(session.tree.nodes.map((x) => [x.id, x.parentId])), [session.tree]);
 
   // Keys typed while nothing is focused go to the active card (input works from the first frame).
@@ -182,25 +181,19 @@ function RoundForm({ session, round, act, banner }: { session: SessionView; roun
       onValueChange={setValues}
       onSubmit={(v, meta) => void submit(v, meta.untouched)}
       submitLabel="Send round"
+      data-keys={keys || undefined}
     >
       <div className="scroll">
+        <Strip session={session} />
         <div className="col">
-          <Strip session={session} />
           {banner}
           {/* Names the form (role=form, aria-labelledby) and keeps the progress for screen readers;
               the visible intro below is Grillado's. */}
           <AgentQuestionHeader className="sr-only">{null}</AgentQuestionHeader>
           <div className="intro">
-            <div className="eb">
-              <span className="live">
-                <i aria-hidden="true" />
-                Your turn
-              </span>
-              {n} of {Math.max(n, session.tree.counts.open)} open decisions
-            </div>
             <h1>{n === 1 ? "1 decision is ready" : `${n} decisions are ready`}</h1>
             <p>
-              {first ? "The first calls on your idea." : "Each one opened up from something you settled."} Suggested picks are preselected, so change anything you disagree with.
+              {first ? "The first calls on your idea." : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
             </p>
           </div>
           {session.nudge && !nudgeHidden ? (
@@ -224,9 +217,8 @@ function RoundForm({ session, round, act, banner }: { session: SessionView; roun
         </div>
       </div>
       <AgentQuestionFooter className="bar">
-        <Stats session={session} />
         <span className="spacer" />
-        <button type="button" className="pill secondary wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})} disabled={status === "submitting"}>
+        <button type="button" className="btn quiet wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})} disabled={status === "submitting"}>
           Wrap it up
         </button>
       </AgentQuestionFooter>
@@ -234,39 +226,20 @@ function RoundForm({ session, round, act, banner }: { session: SessionView; roun
   );
 }
 
-function CardHead({ q, index, openedBy, yours }: { q: Question; index: number; openedBy?: string; yours: boolean }) {
+function CardHead({ openedBy, yours }: { openedBy?: string; yours: boolean }) {
   return (
     <div className="q-h">
-      <span className="q-idx" aria-hidden="true">
-        <span className="bg2" />
-        <span className="n">{index + 1}</span>
-        <span className="ck">
-          <ICheck s={12} />
-        </span>
-      </span>
-      <span className="q-topic">{q.label || "Decision"}</span>
-      {openedBy ? (
-        <span className="q-dep">
-          Opened by <b>{openedBy}</b>
-        </span>
-      ) : null}
-      {yours ? (
-        <span className="q-yours">
-          <ISpark s={12} />
-          Your call
-        </span>
-      ) : null}
+      {openedBy ? <span className="sr-only">Opened by {openedBy}</span> : null}
+      {yours ? <span className="yc">Your call</span> : null}
     </div>
   );
 }
 
-function QuestionCard({ q, index, openedBy, yours }: { q: Question; index: number; openedBy?: string; yours: boolean }) {
+function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; openedBy?: string; yours: boolean }) {
   return (
-    <AgentQuestionItem id={q.key} label={q.label || undefined} required className="q" data-testid="question" data-yours={yours || undefined}>
+    <AgentQuestionItem id={q.key} label={q.label || undefined} required className="q" data-testid="question" data-key={q.key} data-yours={yours || undefined}>
       <AgentQuestionTitle className="q-t">{q.title}</AgentQuestionTitle>
-      <span className="qring" aria-hidden="true" />
-      <span className="edge" aria-hidden="true" />
-      <CardHead q={q} index={index} openedBy={openedBy} yours={yours} />
+      <CardHead openedBy={openedBy} yours={yours} />
       {q.body ? <AgentQuestionDescription className="q-d">{q.body}</AgentQuestionDescription> : null}
       <AgentQuestionOptions>
         {q.options.map((o) => (
@@ -282,16 +255,11 @@ function QuestionCard({ q, index, openedBy, yours }: { q: Question; index: numbe
 function Nudge({ onReview, onDismiss }: { onReview: () => void; onDismiss: () => void }) {
   return (
     <div className="nudge" role="status" data-testid="nudge">
-      <span className="ic" aria-hidden="true">
-        <IFlame s={14} />
-      </span>
-      <span className="tx">
-        You've kept every suggestion for 4 rounds. <span>Anything you'd push back on?</span>
-      </span>
-      <button type="button" className="pill secondary" onClick={onReview}>
+      <p>You've kept every suggestion for 4 rounds. Anything you'd push back on?</p>
+      <button type="button" className="btn quiet" onClick={onReview}>
         Review my picks
       </button>
-      <button type="button" className="pill quiet" onClick={onDismiss}>
+      <button type="button" className="btn quiet" onClick={onDismiss}>
         Looks right
       </button>
     </div>
@@ -307,23 +275,36 @@ export function waitLabel(session: SessionView, elapsed: number, base: string) {
   return base;
 }
 
+/** Static skeleton lines (v1.2: no shimmer): a heading, a line and three option rows. */
 export function SkeletonCard({ wide }: { wide?: boolean }) {
   return (
-    <div className="skc" aria-hidden="true">
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <span className="sk" style={{ width: 20, height: 20, borderRadius: "50%" }} />
-        <span className="sk" style={{ width: 120 }} />
-      </div>
-      <span className="sk" style={{ width: wide ? "78%" : "64%", height: 14 }} />
-      <span className="sk" style={{ width: "46%" }} />
-      {[0, 1, 2].map((i) => (
-        <span key={i} className="sk" style={{ height: 40, borderRadius: 10 }} />
-      ))}
+    <div className="sk" aria-hidden="true">
+      <i className="h" style={wide ? { width: "62%" } : { width: "48%" }} />
+      <i style={{ width: "80%" }} />
+      <i className="r" />
+      <i className="r" />
+      <i className="r" />
     </div>
   );
 }
 
-/** Between rounds: status pill with live dots, skeleton cards, the bar confirms what was saved. */
+/** One status line under the title. The ember dot is static; no elapsed timer (DECISIONS #21). */
+function StatusLine({ label, dot, onStop }: { label: string; dot?: boolean; onStop?: () => void }) {
+  return (
+    <div className="status" role="status" aria-live="polite">
+      {dot ? <span className="ember" aria-hidden="true" /> : null}
+      <span>{label}</span>
+      {onStop ? (
+        <button type="button" className="btn quiet sm" onClick={onStop}>
+          <ISq s={12} />
+          Stop
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Between rounds: one status line, static skeletons, the bar confirms what was saved. */
 export function WaitingView({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
   const last = session.rounds.at(-1);
   const next = (session.rounds.length || 0) + 1;
@@ -331,65 +312,34 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
   const since = busy ? (last?.answeredAt ?? session.updatedAt) : undefined;
   const elapsed = useSince(since, busy);
   const saved = last?.answers?.length ?? 0;
-  const label = waitLabel(session, elapsed, `Preparing round ${next}…`);
+  const long = waitLabel(session, elapsed, "");
+  const label = long || `Preparing round ${next} · reading your answers`;
   return (
     <SessionBody
       session={session}
-      sideSub={`${session.tree.counts.settled + session.tree.counts.open} so far`}
       main={
         <div className="main">
           <div className="scroll">
+            <Strip session={session} />
             <div className="col">
-              <Strip session={session} />
               {banner}
               <div className="intro">
-                <div className="eb">
-                  <span className="live plain">Round {next}</span>
-                  {session.tree.counts.open ? `${session.tree.counts.open} open decisions` : "working out what's next"}
-                </div>
                 <h1>{session.idea.split("\n")[0]}</h1>
+                {busy ? <StatusLine label={label} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
               </div>
-              {busy ? (
-                <div className="waiting" role="status" aria-live="polite">
-                  <div className="row">
-                    <span className="rs">
-                      <span className="dots" aria-hidden="true">
-                        <i />
-                        <i />
-                        <i />
-                      </span>
-                      <span className="shimmer">{label}</span>
-                      <span className="det">{elapsed < 15 ? "Reading your answers" : clock(elapsed)}</span>
-                    </span>
-                    {elapsed >= 60 ? (
-                      <button type="button" className="pill secondary sm" onClick={() => void act("stop").catch(() => {})}>
-                        <ISq s={12} />
-                        Stop
-                      </button>
-                    ) : null}
-                  </div>
-                  <SkeletonCard wide />
-                  <SkeletonCard />
-                </div>
-              ) : null}
+              {busy ? <SkeletonCard wide /> : null}
             </div>
           </div>
           <div className="bar">
             <div className="in">
-              {saved && busy ? (
-                <span className="fb" role="status">
-                  <ICheck s={14} />
+              {saved ? (
+                <span className="meta" role="status">
                   {saved === 1 ? "1 decision saved" : `${saved} decisions saved`}
                 </span>
-              ) : (
-                <Stats session={session} />
-              )}
+              ) : null}
               <span className="spacer" />
-              <button type="button" className="pill secondary wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})}>
+              <button type="button" className="btn quiet wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})}>
                 Wrap it up
-              </button>
-              <button type="button" className="pill primary" disabled>
-                Send round <kbd aria-hidden="true">↵</kbd>
               </button>
             </div>
           </div>
@@ -409,69 +359,28 @@ export function FiringUp({ session, act, banner }: { session: SessionView; act: 
   const mobile = useMobile();
   const idea = session.idea.split("\n")[0];
   return (
-    <div className="split">
-      <div className="main" style={{ gridTemplateRows: "minmax(0,1fr)" }}>
-        <div className="scroll">
-          <div className="col" style={{ maxWidth: 640, gap: 14 }}>
-            {banner}
-            <div className="intro" style={{ gap: 6 }}>
-              <div className="eb">
-                <span className="live plain">Round 1</span>first questions are on the way
+    <SessionBody
+      session={session}
+      main={
+        <div className="main" style={{ gridTemplateRows: "minmax(0,1fr)" }}>
+          <div className="scroll">
+            <Strip session={session} />
+            <div className="col">
+              {banner}
+              <div className="intro">
+                <h1>{idea}</h1>
+                {busy ? <StatusLine dot label={label} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
               </div>
-              <h1>{idea}</h1>
+              {busy ? (
+                <>
+                  <SkeletonCard wide />
+                  {mobile ? null : <SkeletonCard />}
+                </>
+              ) : null}
             </div>
-            {busy ? (
-              <div className="waiting" role="status" aria-live="polite">
-                <div className="row">
-                  <span className="thinking">
-                    <span className="fl" aria-hidden="true">
-                      <IFlame s={18} />
-                    </span>
-                    <span className="shimmer">{label}</span>
-                  </span>
-                  {elapsed >= 15 ? <span className="sub mono" style={{ fontSize: 11.5 }}>{clock(elapsed)}</span> : null}
-                  {elapsed >= 60 ? (
-                    <button type="button" className="pill secondary sm" onClick={() => void act("stop").catch(() => {})}>
-                      <ISq s={12} />
-                      Stop
-                    </button>
-                  ) : null}
-                </div>
-                <SkeletonCard wide />
-                {mobile ? null : <SkeletonCard />}
-              </div>
-            ) : null}
           </div>
         </div>
-      </div>
-      <aside className="side2" aria-labelledby="fu-side" style={{ gridTemplateRows: "auto auto minmax(0,1fr)" }}>
-        <div className="side-h">
-          <h2 id="fu-side">Decisions</h2>
-          <span className="sub mono">none yet</span>
-        </div>
-        <Heat tree={session.tree} />
-        <div style={{ padding: "6px 16px" }}>
-          <ul className="tz" aria-label="Decision tree">
-            <li>
-              <span className="nd2 idea" aria-hidden="true" />
-              <div style={{ minWidth: 0 }}>
-                <div className="l" style={{ fontWeight: 600 }}>
-                  {idea}
-                </div>
-                <div className="a">Your idea</div>
-              </div>
-            </li>
-            {[70, 55, 62].map((w, i) => (
-              <li key={i} style={{ marginLeft: 14 }} aria-hidden="true">
-                <span className="nd2 sk" />
-                <div>
-                  <span className="sk" style={{ display: "block", width: `${w}%`, marginTop: 3 }} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </aside>
-    </div>
+      }
+    />
   );
 }

@@ -1,3 +1,4 @@
+import { findDecisionBlocks } from "../src/core/decision-block.ts";
 import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import { extractCandidate } from "../src/core/extract.ts";
@@ -179,9 +180,18 @@ describe("interview loop", () => {
     const res = await synthesize(s, planner, opts());
     expect(res.ok).toBe(true);
     const md = (res as any).markdown as string;
-    for (const tag of ["[R1:scope]", "[R1:platform]", "[R2:storage]"]) expect(md).toContain(tag);
-    expect(md).toContain("SQLite on device");
-    expect(md).toContain("accepted the recommendation");
+    // Every answered question is in plan.md as a fenced decision block with its {round, questionId} (AC16).
+    const blocks = findDecisionBlocks(md);
+    expect(blocks.map((b) => b.parsed.ok && [b.parsed.fields.id, b.parsed.fields.key])).toEqual([
+      ["R1·1", "scope"],
+      ["R1·2", "platform"],
+      ["R2·1", "storage"],
+    ]);
+    expect(md).toContain("answer: SQLite on device");
+    expect(md).toContain("kept_suggestion: true");
+    // The model's statement for a decision becomes its note; uncited decisions go under "More decisions".
+    expect(md).toContain("note: Narrow.");
+    expect(md).toContain("## More decisions");
   });
 
   test("plan citing a decision that does not exist is repaired", async () => {
@@ -224,10 +234,28 @@ describe("interview loop", () => {
     startSynthesis(s);
     const plan = { type: "plan", title: "t", markdown: "body", decisions: [], openDecisions: [] };
     const res = await synthesize(s, scripted([plan]), opts());
-    expect((res as any).markdown).toContain("## Open decisions\n\n- Question two?\n- Question three?");
+    const md = (res as any).markdown as string;
+    expect(md).toContain("## Open decisions\n\n```decision\nid: R2·1\nkey: two\nquestion: Question two?\nstatus: open\n```");
+    expect(findDecisionBlocks(md).filter((b) => b.parsed.ok && b.parsed.fields.status === "open")).toHaveLength(2);
     s.status = "confirm";
     keepGoing(s);
     expect(s.status as string).toBe("asking");
+  });
+
+  test("open decisions lead plan.md: after the intro, before the first section (v1.2 §5)", async () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    const a = scripted([round(q("one")), round(q("two"))]);
+    await nextRound(s, a, opts());
+    submitAnswers(s, 1, acceptAll(s));
+    await nextRound(s, a, opts());
+    wrapUp(s);
+    startSynthesis(s);
+    const plan = { type: "plan", title: "t", markdown: "Intro line.\n\n## Scope\n\nCites [R1:one].\n\n## Later\n\nMore.", decisions: [], openDecisions: [] };
+    const md = ((await synthesize(s, scripted([plan]), opts())) as any).markdown as string;
+    const heads = md.split("\n").filter((l) => /^#{1,2} /.test(l));
+    expect(heads).toEqual(["# t", "## Open decisions", "## Scope", "## Later"]);
+    expect(md.indexOf("Intro line.")).toBeLessThan(md.indexOf("## Open decisions"));
+    expect(md.indexOf("status: open")).toBeLessThan(md.indexOf("key: one"));
   });
 
   test("answers must cover every question in the round", async () => {

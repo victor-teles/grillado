@@ -58,7 +58,8 @@ export function createAdapter(spec: AdapterSpec, opts: AdapterOptions = {}): Pro
         const problem = await spec.verify(found, e);
         if (problem) return { status: "broken", version, path: found, reason: problem };
       }
-      return { status: "ready", version, path: found };
+      const name = agentNameFrom(res.stdout + res.stderr);
+      return { status: "ready", version, path: found, ...(name ? { name } : {}) };
     },
 
     async *run(req: RunRequest, signal: AbortSignal): AsyncIterable<ProviderEvent> {
@@ -140,4 +141,10 @@ export function lastJsonLine(stdout: string): Record<string, unknown> | undefine
     } catch {}
   }
   return undefined;
+}
+
+/** The display name a CLI prints with its version ("2.1.3 (Claude Code)"), when it prints one. */
+export function agentNameFrom(out: string): string | undefined {
+  const m = /\d+\.\d+\.\d+[\w.+-]*\s*\(([A-Za-z][\w .-]{0,30})\)/.exec(out);
+  return m?.[1].trim() || undefined;
 }

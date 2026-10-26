@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdtempSync, rmSync, statSync, unwatchFile, watchFile } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -11,8 +11,13 @@ import {
   type Answer,
   type Session,
   acceptStreak,
+  answerOpenDecision,
+  changeDecision,
   createSession,
   dismissNudge,
+  editPlan,
+  planAnswerEdits,
+  saveAnswerEdits,
   keepGoing,
   reopen,
   setError,
@@ -22,7 +27,9 @@ import {
   userText,
   wrapUp,
 } from "../core/session.ts";
+import { textHash } from "../core/text-hash.ts";
 import { buildTree } from "../core/tree.ts";
+import { canOpenBrowser, openBrowser } from "./open.ts";
 import type { Store } from "./store.ts";
 
 export const LOOPBACK = "127.0.0.1";
@@ -74,6 +81,7 @@ export class GrilladoServer {
   private progress = new Map<string, string>();
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
+  private watched = new Set<string>();
   port = 0;
 
   constructor(private opts: ServerOptions) {
@@ -160,6 +168,8 @@ export class GrilladoServer {
     for (const s of this.sessions.values()) this.opts.store.save(s);
     for (const res of this.clients) res.end();
     for (const dir of this.agentDirs.values()) rmSync(dir, { recursive: true, force: true });
+    for (const file of this.watched) unwatchFile(file);
+    this.watched.clear();
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
@@ -285,6 +295,28 @@ export class GrilladoServer {
     for (const c of this.clients) c.write(line);
   }
 
+  /**
+   * plan.md edited outside Grillado (Q5): adopt the file's text and tell the browser, which
+   * reloads it on its own when it has no unsaved edits and asks otherwise. Polling (stat every
+   * 500 ms) survives editors that save by renaming a new file over the old one.
+   */
+  private watchPlan(s: Session) {
+    if (!s.plan) return;
+    const file = this.opts.store.planPath(s.id);
+    if (this.watched.has(file)) return;
+    this.watched.add(file);
+    watchFile(file, { interval: 500 }, (cur, prev) => {
+      if (cur.mtimeMs === prev.mtimeMs && cur.size === prev.size) return;
+      const live = this.sessions.get(s.id);
+      if (!live?.plan) return;
+      const md = this.opts.store.readPlan(s.id);
+      if (md === null || md === live.plan.markdown) return; // our own write, or nothing new
+      live.plan.markdown = md;
+      live.plan.reloadedAt = new Date().toISOString();
+      this.changed(live);
+    });
+  }
+
   private changed(s: Session) {
     this.opts.store.save(s);
     this.broadcast({ type: "session", session: this.view(s) });
@@ -297,7 +329,8 @@ export class GrilladoServer {
     return {
       providers: this.providers.map((p) => ({
         id: p.id,
-        displayName: p.displayName,
+        // The agent's own name when its binary reports one (v1.1 §5b), else the adapter's.
+        displayName: ("name" in p.detection && p.detection.name) || p.displayName,
         installHint: p.installHint,
         loginHint: p.loginHint,
         status: p.detection.status,
@@ -316,7 +349,7 @@ export class GrilladoServer {
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
       })),
-      dataDir: this.opts.store.dir,
+      dataDir: tildify(this.opts.store.dir),
     };
   }
 
@@ -342,11 +375,16 @@ export class GrilladoServer {
       const loaded = this.opts.store.load(id);
       if (!loaded) throw new Error("Session not found");
       s = loaded;
+      // plan.md is the source of truth for the plan text: pick up edits made while we were down
+      // (or by hand, in another editor).
+      const md = s.plan ? this.opts.store.readPlan(id) : null;
+      if (s.plan && md !== null && md !== s.plan.markdown) s.plan.markdown = md;
       // A run that was cut off by a restart can't resume on its own (AC14): offer Retry.
       if ((s.status === "asking" || s.status === "synthesizing") && !s.error) {
         setError(s, "unknown", "Interrupted. Retry to continue.");
       }
       this.sessions.set(id, s);
+      this.watchPlan(s);
     }
     return s;
   }
@@ -404,9 +442,12 @@ export class GrilladoServer {
     this.run(s, async (c) => {
       const out = await synthesize(s, this.adapterFor(s), this.runOptions(s, c));
       if (!out.ok) return;
+      // The new plan overwrites plan.md; keep the user's edited version next to it.
+      if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
       const file = this.opts.store.writePlan(s.id, out.markdown);
       s.plan = { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions, createdAt: new Date().toISOString() };
       s.status = "plated";
+      this.watchPlan(s);
     });
   }
 
@@ -501,8 +542,63 @@ export class GrilladoServer {
         this.startPlan(s);
         break;
       }
+      case "plan": {
+        if (busy) throw new Error("The agent is still working.");
+        // Saves name the version they were edited from. If plan.md moved on meanwhile (edited in
+        // another editor), refuse so the browser can ask which version to keep (Q5).
+        if (typeof body?.base === "string" && s.plan && textHash(s.plan.markdown) !== body.base && body.markdown !== s.plan.markdown)
+          return this.json(res, 409, { error: "plan.md changed outside Grillado", conflict: true, markdown: s.plan.markdown });
+        // A hand edit of a settled `answer:` is a Change (DECISIONS #22): it's saved only through
+        // "Save and re-ask" (`reask: true`), never by the autosave.
+        const edits = typeof body?.markdown === "string" && s.plan ? planAnswerEdits(s, body.markdown) : [];
+        if (edits.length && body?.reask !== true)
+          return this.json(res, 409, { error: "That changes a settled answer. Save it with Save and re-ask, or cancel.", answerEdits: edits });
+        if (edits.length) {
+          const deps = saveAnswerEdits(s, body.markdown);
+          this.opts.store.writePlan(s.id, s.plan!.markdown);
+          if (deps.length) this.startRound(s);
+          else this.changed(s);
+          return this.json(res, 200, { ok: true, savedAt: s.plan!.editedAt, reasked: deps, markdown: s.plan!.markdown });
+        }
+        editPlan(s, body?.markdown);
+        this.opts.store.writePlan(s.id, s.plan!.markdown);
+        this.changed(s);
+        return this.json(res, 200, { ok: true, savedAt: s.plan!.editedAt });
+      }
+      case "change": {
+        if (busy) throw new Error("The agent is still working.");
+        const deps = changeDecision(s, String(body?.key ?? ""), { optionId: String(body?.optionId ?? ""), text: body?.text });
+        this.opts.store.writePlan(s.id, s.plan!.markdown);
+        if (deps.length) this.startRound(s);
+        else this.changed(s);
+        break;
+      }
+      case "answer-open": {
+        if (busy) throw new Error("The agent is still working.");
+        answerOpenDecision(s, String(body?.key ?? ""), { optionId: String(body?.optionId ?? ""), text: body?.text });
+        this.opts.store.writePlan(s.id, s.plan!.markdown);
+        this.changed(s);
+        break;
+      }
+      case "plan-conflict": {
+        // The copy that lost a "changed on disk" conflict is kept next to plan.md.
+        if (!s.plan) throw new Error("There's no plan yet.");
+        if (typeof body?.markdown !== "string" || body.markdown.length > 500_000) throw new Error("Expected the plan as Markdown text.");
+        const file = this.opts.store.writeConflict(s.id, body.markdown);
+        return this.json(res, 200, { ok: true, path: file });
+      }
+      case "reveal": {
+        // "Show file location": open the session folder in the OS file manager, when there is one.
+        if (!s.plan) throw new Error("There's no plan yet.");
+        const dir = path.dirname(this.opts.store.planPath(s.id));
+        const opened = canOpenBrowser();
+        if (opened) openBrowser(dir);
+        return this.json(res, 200, { ok: true, opened, path: this.opts.store.planPath(s.id) });
+      }
       case "reopen": {
         if (busy) throw new Error("The agent is still working.");
+        // A new plan will overwrite plan.md; keep the user's edited version next to it.
+        if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
         reopen(s, String(body?.key ?? ""));
         this.startRound(s);
         break;
@@ -534,4 +630,11 @@ function readJson(req: http.IncomingMessage): Promise<any> {
     });
     req.on("error", reject);
   });
+}
+
+/** Show the data dir relative to the user's home ("~/.grillado"), never as an absolute path (v1.2 review). */
+function tildify(dir: string): string {
+  const home = os.homedir();
+  if (home && (dir === home || dir.startsWith(home + path.sep))) return "~" + dir.slice(home.length);
+  return dir;
 }

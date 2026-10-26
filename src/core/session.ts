@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
+import { type AnswerEdit, answerEdits, blockKey, findDecisionBlocks, serializeDecision, updateDecisionBlock } from "./decision-block.ts";
 
 export type SessionStatus =
   | "asking" // waiting for the agent's next round
@@ -85,7 +86,18 @@ export interface Session {
   keepGoing: boolean;
   summary: string;
   error?: SessionError;
-  plan?: { title: string; markdown: string; path: string; openDecisions: string[]; createdAt: string };
+  plan?: {
+    title: string;
+    markdown: string;
+    path: string;
+    openDecisions: string[];
+    createdAt: string;
+    editedAt?: string;
+    /** Decisions being asked again after an inline change (Q2); the plan stays, marked, until the next plan. */
+    waiting?: string[];
+    /** Last time plan.md was reloaded after a change made outside Grillado (Q5). */
+    reloadedAt?: string;
+  };
 }
 
 export function createSession(input: { idea: string; context?: string; provider: ProviderId }): Session {
@@ -201,6 +213,8 @@ export function submitAnswers(s: Session, roundN: number, answers: Answer[]): vo
   round.answeredAt = new Date().toISOString();
   s.status = "asking";
   s.error = undefined;
+  // The re-asked decisions are answered; from here the plan is no longer shown while waiting.
+  if (s.plan) s.plan.waiting = undefined;
   touch(s);
 }
 
@@ -253,6 +267,22 @@ export function reopen(s: Session, key: string): string[] {
   s.error = undefined;
   touch(s);
   return affected;
+}
+
+/** Largest plan the editor may save (the HTTP body limit is 1 MB). */
+export const MAX_PLAN_CHARS = 500_000;
+
+/**
+ * The user edited the plan (editor autosave). The text is stored exactly as sent, so raw
+ * `[R1:id]` citations and anything else the editor doesn't understand survive untouched.
+ */
+export function editPlan(s: Session, markdown: unknown) {
+  if (s.status !== "plated" || !s.plan) throw new Error("There's no plan to edit yet.");
+  if (typeof markdown !== "string") throw new Error("Expected the plan as Markdown text.");
+  if (markdown.length > MAX_PLAN_CHARS) throw new Error("The plan is too long to save.");
+  s.plan.markdown = markdown;
+  s.plan.editedAt = new Date().toISOString();
+  touch(s);
 }
 
 /** "Wrap it up": stop asking; the plan lists what's still open (user story 8). */
@@ -330,24 +360,294 @@ export function validatePlan(s: Session, plan: PlanReply): string | null {
   return null;
 }
 
+/** "R2·1": a decision's round and its position in that round, as the UI shows it. */
+export function decisionLabel(s: Session, round: number, key: string): string {
+  const r = s.rounds.find((x) => x.n === round);
+  const i = r ? r.questions.findIndex((q) => q.key === key) : -1;
+  return `R${round}·${i === -1 ? "?" : i + 1}`;
+}
+
+/** The question a decision answered (latest round that asked it). */
+export function questionFor(s: Session, key: string): { round: Round; question: Question } | undefined {
+  for (let i = s.rounds.length - 1; i >= 0; i--) {
+    const q = s.rounds[i].questions.find((x) => x.key === key);
+    if (q) return { round: s.rounds[i], question: q };
+  }
+  return undefined;
+}
+
+const keyCited = (text: string, round: number, key: string) =>
+  [...text.matchAll(/\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/g)].some((m) => m[1].split(/\s*,\s*/).includes(`R${round}:${key}`));
+
+/** A settled decision as a fenced ```decision block (Q3). */
+export function decisionBlock(s: Session, d: Decision, note?: string): string {
+  const at = s.rounds.find((r) => r.n === d.round)?.answeredAt;
+  return serializeDecision({
+    id: decisionLabel(s, d.round, d.key),
+    key: d.key,
+    question: d.title,
+    answer: d.answer,
+    note,
+    by: "you",
+    kept_suggestion: d.accepted_recommendation,
+    at,
+  });
+}
+
 /**
- * Final plan.md. The model writes the body; the decision log is generated from session data so
- * every answered question appears with its {round, questionId}, whatever the model did (AC16).
+ * Final plan.md. The model writes the body; each decision is added from session data as a
+ * fenced ```decision block, right after the section that first cites it (or under "More
+ * decisions"), so every answered question appears with its {round, questionId} whatever the
+ * model did (AC16).
  */
 export function renderPlanMarkdown(s: Session, plan: PlanReply): string {
   const statements = new Map(plan.decisions.map((d) => [d.questionId, d.statement]));
-  const decisions = Object.values(s.decisions).sort((a, b) => a.round - b.round || a.key.localeCompare(b.key));
-  const lines = [`# ${plan.title}`, "", plan.markdown.trim(), "", "## Decision log", ""];
+  const pos = (d: Decision) => s.rounds.find((r) => r.n === d.round)?.questions.findIndex((q) => q.key === d.key) ?? 0;
+  const decisions = Object.values(s.decisions).sort((a, b) => a.round - b.round || pos(a) - pos(b));
+  const body = plan.markdown.trim().split("\n");
+  // Sections of the body: [start line, end line) per "## " heading (section 0 is before the first).
+  const starts = [0, ...body.flatMap((l, i) => (/^##\s/.test(l) ? [i] : []))].filter((v, i, a) => a.indexOf(v) === i);
+  const sections = starts.map((a, i) => ({ a, b: starts[i + 1] ?? body.length, blocks: [] as string[] }));
+  const rest: string[] = [];
   for (const d of decisions) {
-    const how = d.kind === "unknown" ? "left to a default" : d.accepted_recommendation ? "accepted the recommendation" : "your call";
-    const statement = statements.get(d.key);
-    lines.push(`- **[R${d.round}:${d.key}]** ${d.title} → ${d.answer} (${how})${statement ? `. ${statement}` : ""}`);
+    const block = decisionBlock(s, d, statements.get(d.key));
+    const sec = sections.find((x) => keyCited(body.slice(x.a, x.b).join("\n"), d.round, d.key));
+    if (sec) sec.blocks.push(block);
+    else rest.push(block);
   }
-  const open = [...new Set([...openQuestions(s).map((q) => q.title), ...plan.openDecisions])];
-  if (open.length) {
-    lines.push("", "## Open decisions", "");
-    for (const o of open) lines.push(`- ${o}`);
+  // Open decisions lead the document: after any intro, before the first section (v1.2 §5 e-early).
+  const round = currentRound(s);
+  const openQs = openQuestions(s);
+  const openTitles = new Set(openQs.map((q) => q.title));
+  const other = [...new Set(plan.openDecisions)].filter((o) => !openTitles.has(o));
+  const lines = [`# ${plan.title}`, ""];
+  let opened = false;
+  const pushOpen = () => {
+    opened = true;
+    if (!openQs.length && !other.length) return;
+    lines.push("## Open decisions", "");
+    openQs.forEach((q, i) => {
+      lines.push(serializeDecision({ id: `R${round!.n}·${i + 1}`, key: q.key, question: q.title, status: "open" }), "");
+    });
+    for (const o of other) lines.push(`- ${o}`);
+    if (other.length) lines.push("");
+  };
+  for (const sec of sections) {
+    if (!opened && /^##\s/.test(body[sec.a] ?? "")) pushOpen();
+    const part = body.slice(sec.a, sec.b);
+    while (part.length && !part.at(-1)!.trim()) part.pop();
+    if (!part.length && !sec.blocks.length) continue;
+    lines.push(...part, "");
+    for (const b of sec.blocks) lines.push(b, "");
   }
+  if (!opened) pushOpen();
+  if (rest.length) {
+    lines.push("## More decisions", "");
+    for (const b of rest) lines.push(b, "");
+  }
+  while (lines.length && !lines.at(-1)!.trim()) lines.pop();
   lines.push("");
   return lines.join("\n");
+}
+
+/** Everything a pick in an inline decision block can be. */
+export interface Pick {
+  optionId: string;
+  text?: string;
+}
+
+function answerFor(q: Question, pick: Pick): { answer: string; kind: Decision["kind"]; accepted: boolean } {
+  const option = q.options.find((o) => o.id === pick.optionId);
+  if (option) return { answer: option.label, kind: "option", accepted: option.id === q.recommendedOptionId };
+  if (pick.optionId === OTHER_OPTION && pick.text?.trim()) return { answer: pick.text.trim().slice(0, 2000), kind: "other", accepted: false };
+  throw new Error("Pick one of the options, or type your own answer.");
+}
+
+/**
+ * Change a settled decision from its block in the plan (Q2: works like Reopen for what depends
+ * on it). The decision takes the new answer right away and its block in plan.md is updated; its
+ * dependents are marked "will be asked again" and a new round starts for them. The plan stays,
+ * marked, until the next plan replaces it. Returns the dependents that will be re-asked.
+ */
+export function changeDecision(s: Session, key: string, pick: Pick): string[] {
+  if (s.status !== "plated" || !s.plan) throw new Error("Change answers from the plan once it's written.");
+  const deps = setAnswer(s, key, pick);
+  if (deps === null) return [];
+  reask(s, key, deps);
+  finishChange(s, deps);
+  return deps;
+}
+
+/** The new answer, its round's record and its block; null when nothing changed. Returns the dependents. */
+function setAnswer(s: Session, key: string, pick: Pick): string[] | null {
+  const d = s.decisions[key];
+  if (!d) throw new Error("Unknown decision.");
+  const found = questionFor(s, key);
+  if (!found) throw new Error("Unknown decision.");
+  const next = answerFor(found.question, pick);
+  if (next.answer === d.answer && next.kind === d.kind) return null;
+  const deps = dependentsOf(s, key);
+  s.decisions[key] = { ...d, answer: next.answer, kind: next.kind, accepted_recommendation: next.accepted };
+  const ans = found.round.answers?.find((a) => a.questionId === key);
+  if (ans) Object.assign(ans, { optionId: pick.optionId, text: next.kind === "other" ? next.answer : undefined, accepted_recommendation: next.accepted });
+  const now = new Date().toISOString();
+  const md = restateAnswer(s.plan!.markdown, `R${d.round}:${key}`, d.answer, next.answer);
+  // The note is the agent's one-line statement of the old answer: carry it over only when it
+  // restates the answer word for word (then swap the words), otherwise drop it rather than let
+  // the card contradict itself.
+  const block = findDecisionBlocks(md).find((b) => blockKey(b.parsed) === key);
+  const oldNote = block?.parsed.ok ? block.parsed.fields.note : undefined;
+  const note = oldNote ? swapAnswer(oldNote, d.answer, next.answer) : undefined;
+  s.plan!.markdown = updateDecisionBlock(md, key, { answer: next.answer, note: note ?? undefined, by: "you", kept_suggestion: next.accepted, at: now });
+  s.plan!.editedAt = now;
+  return deps;
+}
+
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * `text` with every whole-word occurrence of the answer `from` replaced by `to` (case-insensitive;
+ * the first letter follows the text's case). null when `from` doesn't appear.
+ */
+export function swapAnswer(text: string, from: string, to: string): string | null {
+  const f = from.trim();
+  if (!f) return null;
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(f)}(?![\\p{L}\\p{N}])`, "giu");
+  if (!re.test(text)) return null;
+  re.lastIndex = 0;
+  // Where the text changed the answer's first-letter case (sentence start, mid-sentence), follow it.
+  const up = (c: string) => c !== c.toLowerCase();
+  return text.replace(re, (m) => (up(m[0]) === up(f[0]) ? to : (up(m[0]) ? to.charAt(0).toUpperCase() : to.charAt(0).toLowerCase()) + to.slice(1)));
+}
+
+/**
+ * The plan's prose after an answer changed: in each sentence or list item that cites the
+ * decision (`[R1:key]`), outside fences, a word-for-word restatement of the old answer becomes
+ * the new one. Prose that paraphrases the answer is left to the agent (folding a change into the
+ * text is the Phase 2 agent edit, reviewed before it reaches plan.md, DECISIONS #15).
+ */
+export function restateAnswer(md: string, cite: string, from: string, to: string): string {
+  if (!from.trim() || from === to) return md;
+  let fence = false;
+  return md
+    .split("\n")
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        fence = !fence;
+        return line;
+      }
+      if (fence || !line.includes(cite)) return line;
+      // Sentences keep every character, so the line joins back unchanged where nothing matched.
+      return line
+        .split(/(?<=[.!?])(?=\s)/)
+        .map((part) => (citesKey(part, cite) ? swapOutsideCites(part, from, to) : part))
+        .join("");
+    })
+    .join("\n");
+}
+
+const CITE_RE = /\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/g;
+const citesKey = (text: string, cite: string) => [...text.matchAll(CITE_RE)].some((m) => m[1].split(/\s*,\s*/).includes(cite));
+/** Swap the answer in the text between cites, never inside a [R1:key] cite itself. */
+function swapOutsideCites(text: string, from: string, to: string): string {
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(CITE_RE)) {
+    const seg = text.slice(last, m.index);
+    out += (swapAnswer(seg, from, to) ?? seg) + m[0];
+    last = m.index! + m[0].length;
+  }
+  const tail = text.slice(last);
+  return out + (swapAnswer(tail, from, to) ?? tail);
+}
+
+/** Mark what depends on a changed decision as "will be asked again". */
+function reask(s: Session, key: string, deps: string[]) {
+  const d = s.decisions[key];
+  const rootLabel = d ? d.label || d.title : key;
+  s.stale ??= {};
+  for (const k of deps) {
+    const x = s.decisions[k];
+    if (!x) continue;
+    s.stale[k] = { key: k, label: x.label || x.title, title: x.title, answer: x.answer, round: x.round, dependsOn: x.dependsOn, reason: `${rootLabel} changed` };
+    delete s.decisions[k];
+  }
+}
+
+/** After a change: a new round when anything is asked again; the plan stays, marked, until the next plan. */
+function finishChange(s: Session, deps: string[]) {
+  if (deps.length) {
+    s.reopened = [...new Set([...s.reopened, ...deps])];
+    s.plan!.waiting = deps;
+    s.status = "asking";
+    s.wrappedUp = false;
+  }
+  s.error = undefined;
+  touch(s);
+}
+
+/** The settled answers a plan.md text changed by hand (DECISIONS #22). */
+export function planAnswerEdits(s: Session, markdown: string): AnswerEdit[] {
+  return answerEdits(markdown, Object.fromEntries(Object.entries(s.decisions).map(([k, d]) => [k, d.answer])));
+}
+
+/**
+ * Save a hand-edited plan whose `answer:` lines changed settled decisions (DECISIONS #22): the
+ * same path as the card's Change. Each typed answer is matched to an option by its label, else
+ * kept as the user's own words; what depends on a changed answer is re-asked in a new round.
+ * Returns the decisions that will be asked again.
+ */
+export function saveAnswerEdits(s: Session, markdown: unknown): string[] {
+  editPlan(s, markdown);
+  const edits = planAnswerEdits(s, s.plan!.markdown);
+  const all: string[] = [];
+  for (const e of edits) {
+    if (!s.decisions[e.key]) continue; // asked again because an earlier edit changed what it depends on
+    const q = questionFor(s, e.key)?.question;
+    const option = q?.options.find((o) => o.label.trim().toLowerCase() === e.to.trim().toLowerCase());
+    const deps = setAnswer(s, e.key, option ? { optionId: option.id } : { optionId: OTHER_OPTION, text: e.to });
+    if (!deps) continue;
+    reask(s, e.key, deps);
+    all.push(...deps);
+  }
+  const deps = [...new Set(all)];
+  finishChange(s, deps);
+  return deps;
+}
+
+/**
+ * Answer a decision that was left open when the plan was written early. It's settled with its
+ * round, and its block in plan.md loses `status: open`. (Folding the answer into the plan's
+ * text is the agent's job in a later step.)
+ */
+export function answerOpenDecision(s: Session, key: string, pick: Pick): void {
+  if (s.status !== "plated" || !s.plan) throw new Error("There's no plan yet.");
+  if (s.decisions[key]) throw new Error("That decision is already answered.");
+  const found = questionFor(s, key);
+  if (!found) throw new Error("Unknown decision.");
+  const next = answerFor(found.question, pick);
+  const q = found.question;
+  s.decisions[key] = {
+    key,
+    round: found.round.n,
+    title: q.title,
+    answer: next.answer,
+    kind: next.kind,
+    accepted_recommendation: next.accepted,
+    dependsOn: q.dependsOn,
+    ...(q.label?.trim() ? { label: q.label.trim() } : {}),
+  };
+  const now = new Date().toISOString();
+  s.plan.markdown = updateDecisionBlock(s.plan.markdown, key, { status: undefined, answer: next.answer, by: "you", kept_suggestion: next.accepted, at: now });
+  s.plan.openDecisions = s.plan.openDecisions.filter((t) => t !== q.title);
+  s.plan.editedAt = now;
+  touch(s);
+}
+
+/** Keys of decision blocks in a plan (AC16 checks and the Decisions tab). */
+export function planDecisionKeys(md: string): string[] {
+  return findDecisionBlocks(md).flatMap((b) => {
+    const k = blockKey(b.parsed);
+    return k ? [k] : [];
+  });
 }
