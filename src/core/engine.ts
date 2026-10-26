@@ -3,12 +3,16 @@ import type { FailureCode } from "./classify.ts";
 import { extractCandidate } from "./extract.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
-import { commentSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, sectionAt } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
+import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
 import {
   type CommentReply,
   CommentReplySchema,
+  type DiagramReply,
+  DiagramReplySchema,
+  diagramJsonSchema,
   type EditReply,
   EditReplySchema,
   type PlanReply,
@@ -253,5 +257,39 @@ export async function suggestEdits(
     (reply) => checkEdits(base, reply.edits),
     opts,
     commentUserText(s, t),
+  );
+}
+
+/** The prompt for one section's diagram (#41): the whole plan for context, the section to draw. */
+export function buildDiagramPrompt(md: string, section: PlanSection, kinds: DiagramKind[], focus = ""): string {
+  const allowed = kinds.map((k) => (k === "flowchart" ? "flowchart" : "state diagram")).join(" or ");
+  return [
+    "The plan (Markdown):",
+    `<plan>${md}</plan>`,
+    "",
+    "The section to draw (JSON):",
+    `<state>${JSON.stringify({ section: section.title, text: md.slice(section.start, section.end).trim(), kinds, ...(focus ? { focus } : {}), replaces: section.diagram ? true : undefined })}</state>`,
+    "",
+    `Draw one ${allowed} for the section "${section.title}"${section.diagram ? ", replacing its current diagram" : ""}, or skip it.${focus ? ` The user asked to focus on: ${focus}` : ""}`,
+  ].join("\n");
+}
+
+/** One section of "Add diagrams": checked, with one silent retry on a bad diagram (#43). */
+export async function suggestDiagram(
+  s: Session,
+  md: string,
+  section: PlanSection,
+  kinds: DiagramKind[],
+  focus: string,
+  adapter: ProviderAdapter,
+  opts: RunOptions,
+): Promise<Validated<DiagramReply>> {
+  return runValidated<DiagramReply>(
+    adapter,
+    { kind: "diagram", systemPrompt: diagramSystemPrompt(), userPrompt: buildDiagramPrompt(md, section, kinds, focus), jsonSchema: diagramJsonSchema() },
+    DiagramReplySchema,
+    (reply) => (reply.skip ? null : checkMermaid(reply.mermaid, kinds)),
+    opts,
+    [userText(s), md, focus].join("\n"),
   );
 }

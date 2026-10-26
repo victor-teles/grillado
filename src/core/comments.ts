@@ -50,7 +50,15 @@ export interface Suggestion {
   status: SuggestionStatus;
   /** Hash of the plan text the run read when Apply was pressed. */
   baseHash?: string;
+  /** A whole block from "Add diagrams" (item 5): a Mermaid fence added after `before`, or replacing it. */
+  kind?: "diagram";
+  /** The H2 section it is for. */
+  section?: string;
+  replace?: boolean;
 }
+
+/** Diagram suggestions are whole fences, so they are found with fences counted (prose = false). */
+const proseOf = (x: Pick<Suggestion, "kind">) => x.kind !== "diagram";
 
 export interface ReviewUndo {
   action: "accept" | "reject";
@@ -61,6 +69,8 @@ export interface CommentState {
   comments?: CommentThread[];
   suggestions?: Suggestion[];
   reviewUndo?: ReviewUndo;
+  /** The latest "Add diagrams" run (item 5). */
+  diagramRun?: import("./diagrams.ts").DiagramRun;
 }
 
 export const MAX_COMMENT = 2000;
@@ -68,6 +78,7 @@ export const MAX_QUOTE = 2000;
 export const MAX_EDITS = 8;
 
 const newId = () => globalThis.crypto.randomUUID().slice(0, 8);
+export const newSuggestionId = newId;
 const now = () => new Date().toISOString();
 
 /** `[start, end)` of every ``` fence (code, mermaid, decision). The agent never edits inside one. */
@@ -228,7 +239,7 @@ export function pruneSuggestions(s: CommentState & { plan?: { markdown: string }
   let n = 0;
   s.suggestions = (s.suggestions ?? []).filter((x) => {
     if (x.status !== "pending") return true;
-    const at = locate(md, x.before, x.at, true);
+    const at = locate(md, x.before, x.at, proseOf(x));
     if (at >= 0) {
       x.at = at;
       return true;
@@ -236,6 +247,7 @@ export function pruneSuggestions(s: CommentState & { plan?: { markdown: string }
     n++;
     const t = s.comments?.find((c) => c.id === x.threadId);
     if (t?.run) t.run.dropped = (t.run.dropped ?? 0) + 1;
+    if (x.kind === "diagram" && s.diagramRun) s.diagramRun.skipped++;
     return false;
   });
   return n;
@@ -245,7 +257,7 @@ export function pruneSuggestions(s: CommentState & { plan?: { markdown: string }
 function applyAll(md: string, list: Suggestion[], dir: "forward" | "back"): { md: string; done: Suggestion[]; stale: Suggestion[] } {
   const found = list.map((x) => {
     const from = dir === "forward" ? x.before : x.after;
-    return { x, from, to: dir === "forward" ? x.after : x.before, i: locate(md, from, x.at, true) };
+    return { x, from, to: dir === "forward" ? x.after : x.before, i: locate(md, from, x.at, proseOf(x)) };
   });
   const stale = found.filter((f) => f.i < 0).map((f) => f.x);
   let out = md;
