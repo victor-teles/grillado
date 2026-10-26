@@ -1,7 +1,8 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type KeyboardEvent, type ReactNode, useId, useState } from "react";
 import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
 import { Diagram } from "./editor/Diagram";
 import { IEdit } from "./icons";
+import { CalloutIcon, PlusIcon } from "./editor/SlashMenu";
 
 const KIND = { para: "paragraph", heading: "heading", list: "list", fence: "code block" } as const;
 /** "Edit paragraph: A weekend MVP for the four…" — the first few words, without Markdown marks or citations. */
@@ -111,6 +112,7 @@ export function Markdown({
   afterTitle,
   openBadge,
   onBlock,
+  onAdd,
   edit,
   decision,
   marks,
@@ -121,6 +123,8 @@ export function Markdown({
   afterTitle?: ReactNode;
   openBadge?: ReactNode;
   onBlock?: (b: Block) => void;
+  /** "+" in the left margin of a block: add a block below it (item 4). */
+  onAdd?: (b: Block) => void;
   edit?: { start: number; end: number; node: ReactNode };
   /** Renders a ```decision fence (the n-th in the document). */
   decision?: (b: FenceBlock, n: number) => ReactNode;
@@ -201,6 +205,25 @@ export function Markdown({
           </button>
         )}
         {node}
+        {onAdd ? (
+          // Pointer only, after the content so text reads first: the keyboard way is "/" on the focused block (#32).
+          <button
+            type="button"
+            className="blk-add"
+            tabIndex={-1}
+            aria-label="Add a block below"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdd(b);
+            }}
+          >
+            <PlusIcon />
+            <span className="tip4" aria-hidden="true">
+              Add a block below<span className="kb4">/</span>
+            </span>
+          </button>
+        ) : null}
       </div>
     ) : (
       <Fragment key={b.start}>{node}</Fragment>
@@ -211,6 +234,7 @@ export function Markdown({
     const deco = decorate(plain, marks);
     const re = deco === null ? null : parseBlocks(deco)[0];
     const b: Block = re && re.kind === plain.kind ? ({ ...re, start: plain.start, end: plain.end, raw: plain.raw } as Block) : plain;
+    const lines = (deco ?? plain.raw).split("\n");
     ctx.mk = { anchor: null, edit: null, part: null, seen: ctx.mk.seen };
     // Blocks inside (or starting inside) the edited range are replaced by the block editor.
     if (edit && b.start >= edit.start && (b.start < edit.end || b.end <= edit.end)) {
@@ -230,6 +254,18 @@ export function Markdown({
           b,
           b.lang === "mermaid" ? (
             <Diagram code={b.body} onEdit={onBlock ? () => onBlock(b) : undefined} />
+          ) : b.lang === "diff" ? (
+            <pre className="diff4">
+              <code>
+                {b.body.split("\n").map((l, i) => (
+                  <span key={i} className={l.startsWith("-") ? "dl" : l.startsWith("+") ? "dd" : undefined}>
+                    {l || "\u200b"}
+                  </span>
+                ))}
+              </code>
+            </pre>
+          ) : b.lang === "tabs" ? (
+            <Tabs body={b.body} />
           ) : (
             <pre>
               <code>{b.body}</code>
@@ -261,8 +297,58 @@ export function Markdown({
       const Tag = (["h1", "h2", "h3", "h4"] as const)[b.level - 1];
       push(wrap(b, <Tag>{inline(b.text, ctx)}</Tag>));
     } else if (b.kind === "list") {
-      const items = b.items.map((t, n) => <li key={n}>{passage(b, n, t)}</li>);
-      push(wrap(b, b.ordered ? <ol start={b.first === 1 ? undefined : b.first}>{items}</ol> : <ul>{items}</ul>));
+      const check = !b.ordered && b.items.every((t) => CHECK.test(t));
+      const items = b.items.map((t, n) => {
+        if (!check) return <li key={n}>{passage(b, n, t)}</li>;
+        const on = /^\[[xX]\]/.test(t);
+        return (
+          <li key={n}>
+            <span className="bx" data-on={on ? "" : undefined} role="img" aria-label={on ? "Done" : "Not done"}>
+              {on ? "✓" : null}
+            </span>
+            <span>{passage(b, n, t.replace(CHECK, ""))}</span>
+          </li>
+        );
+      });
+      push(wrap(b, b.ordered ? <ol start={b.first === 1 ? undefined : b.first}>{items}</ol> : <ul className={check ? "ck4" : undefined}>{items}</ul>));
+    } else if (b.kind === "para" && callout(lines)) {
+      const c = callout(lines)!;
+      push(
+        wrap(
+          b,
+          <div className="cal4" data-kind={c.kind} role="note" aria-label={c.label}>
+            <CalloutIcon />
+            <p>{inline(c.body, ctx)}</p>
+          </div>,
+        ),
+      );
+    } else if (b.kind === "para" && table(lines)) {
+      const rows = table(lines)!;
+      push(
+        wrap(
+          b,
+          <div className="tbl4">
+            <table>
+              <thead>
+                <tr>
+                  {rows[0].map((c, i) => (
+                    <th key={i}>{inline(c, ctx)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(1).map((r, i) => (
+                  <tr key={i}>
+                    {r.map((c, j) => (
+                      <td key={j}>{inline(c, ctx)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>,
+        ),
+      );
     } else {
       push(wrap(b, <p>{sentences(b.text).map((t, i) => passage(b, i, t))}</p>));
     }
@@ -270,6 +356,84 @@ export function Markdown({
   showEdit();
   closeOpen();
   return <>{out}</>;
+}
+
+const CHECK = /^\[[ xX]\]\s+/;
+const CALLOUT = /^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
+
+/** `> [!NOTE]` / `> [!WARNING]` blockquotes (GitHub alerts) → a callout. */
+function callout(lines: string[]) {
+  const m = CALLOUT.exec(lines[0] ?? "");
+  if (!m || !lines.every((l) => l.startsWith(">"))) return null;
+  const warn = /^(warning|caution)$/i.test(m[1]);
+  return {
+    kind: warn ? "warning" : "note",
+    label: warn ? "Warning" : "Note",
+    body: lines
+      .slice(1)
+      .map((l) => l.replace(/^>\s?/, ""))
+      .join(" "),
+  };
+}
+
+/** A pipe table: every line starts with "|", the second is the --- row. */
+function table(lines: string[]) {
+  if (lines.length < 2 || !lines.every((l) => l.trim().startsWith("|")) || !/^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*$/.test(lines[1])) return null;
+  const cells = (l: string) =>
+    l
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((c) => c.trim());
+  return [cells(lines[0]), ...lines.slice(2).map(cells)];
+}
+
+/** A ```tabs fence: `--- Title` starts each tab (#31). Only the open tab shows. */
+function Tabs({ body }: { body: string }) {
+  const id = useId();
+  const tabs: { title: string; text: string[] }[] = [];
+  for (const l of body.split("\n")) {
+    const m = /^---\s+(.+)$/.exec(l);
+    if (m) tabs.push({ title: m[1].trim(), text: [] });
+    else if (tabs.length) tabs.at(-1)!.text.push(l);
+    else tabs.push({ title: "Tab", text: [l] });
+  }
+  const [on, setOn] = useState(0);
+  const cur = Math.min(on, Math.max(0, tabs.length - 1));
+  const key = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const next = (cur + d + tabs.length) % tabs.length;
+    setOn(next);
+    (e.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
+  };
+  if (!tabs.length) return null;
+  return (
+    <div className="tabs4">
+      <div role="tablist" aria-label="Tabs">
+        {tabs.map((t, i) => (
+          <button
+            key={i}
+            type="button"
+            role="tab"
+            id={`${id}-t${i}`}
+            aria-selected={i === cur}
+            aria-controls={`${id}-p${i}`}
+            tabIndex={i === cur ? 0 : -1}
+            onClick={() => setOn(i)}
+            onKeyDown={key}
+          >
+            {t.title}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`${id}-p${cur}`} aria-labelledby={`${id}-t${cur}`}>
+        <Markdown source={tabs[cur].text.join("\n")} />
+      </div>
+    </div>
+  );
 }
 
 const CITE = /\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/;

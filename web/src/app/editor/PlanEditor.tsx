@@ -6,17 +6,20 @@
 // .blk-edit (.mono only for fences) and .blk-hint, .doc-raw .ced, .dz, mark.ctx, .mmd.
 import { type MutableRefObject, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ICheck } from "../icons";
-import { type AnswerEdit, type DecisionFields, answerEdits, decisionProblems, parseDecisionBody, revertAnswerEdits } from "../../../../src/core/decision-block.ts";
+import { type AnswerEdit, type DecisionFields, answerEdits, decisionProblems, fillUserDecisions, parseDecisionBody, revertAnswerEdits } from "../../../../src/core/decision-block.ts";
 import { textHash } from "../../../../src/core/text-hash.ts";
 import { ApiError, api } from "../api";
 import { reconcile } from "./reconcile";
 import { Autosaver, type SaveState } from "./autosave";
 import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
+import type { CodeEditorHandle } from "./cm";
 import { Diagram } from "./Diagram";
 import { type CiteRenderer, type DocMarks, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
-import { canHover, selecting } from "./link";
+import { canHover, jumpTo, selecting } from "./link";
 import { formatEdit, formatKey } from "./selection";
+import { PlusIcon, type SlashHost, SlashMenu, comboboxProps, textareaRect, useSlash } from "./SlashMenu";
+import { useMobile } from "../chrome";
 
 export type EditorMode = "rich" | "raw";
 
@@ -352,24 +355,52 @@ export function autosize(el: HTMLTextAreaElement | null) {
   if (window.scrollY !== winY) window.scrollTo({ top: winY });
 }
 
+/** How the block editor was opened: a new block from "+" (pointer) or "/" on a block (key) opens the menu. */
+export type NewBlock = { pointer: boolean };
+
 function BlockEditor({
   text,
   kind,
   sel,
   onChange,
   onDone,
+  agentName,
+  onAgentDiagram,
+  fresh,
+  mobile,
 }: {
   text: string;
   kind: Block["kind"];
   /** Range to select on open (the selection toolbar's Edit, item 3 §2). */
   sel?: [number, number];
   onChange: (t: string) => void;
-  onDone: (refocus: boolean) => void;
+  /** `at`: where a slash insertion landed (the block to focus and flash); `remove`: an empty new block goes away. */
+  onDone: (refocus: boolean, o?: { at?: number; remove?: boolean }) => void;
+  agentName: string;
+  onAgentDiagram?: (at: number) => void;
+  /** A new block (item 4): its text is "/" and the menu opens on it. */
+  fresh?: NewBlock;
+  mobile: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const hint = useId();
   // After ⌘B / ⌘I the words stay selected, so a second shortcut stacks (or undoes) the mark.
   const keep = useRef<[number, number] | null>(null);
+  const ended = useRef(false);
+  const host = useRef<SlashHost | null>(null);
+  host.current = {
+    value: () => ref.current?.value ?? text,
+    sel: () => [ref.current?.selectionStart ?? 0, ref.current?.selectionEnd ?? 0],
+    set: (t, a, b) => {
+      const el = ref.current;
+      if (!el) return;
+      if (t === el.value) return el.setSelectionRange(a, b);
+      keep.current = [a, b];
+      onChange(t);
+    },
+    rect: (pos) => (ref.current ? textareaRect(ref.current, pos) : null),
+  };
+  const s = useSlash(host, { agentName, onAgentDiagram });
   useLayoutEffect(() => {
     autosize(ref.current);
     if (keep.current) ref.current?.setSelectionRange(...keep.current);
@@ -380,50 +411,144 @@ function BlockEditor({
     if (!el) return;
     el.focus({ preventScroll: true });
     el.setSelectionRange(sel?.[0] ?? el.value.length, sel?.[1] ?? el.value.length);
+    if (fresh) s.openAt(0, fresh.pointer);
   }, []);
+  // Finishing focuses and flashes the last inserted block; an empty new block goes away.
+  const finish = (refocus: boolean) => {
+    if (ended.current) return;
+    ended.current = true;
+    const t = ref.current?.value ?? text;
+    s.close();
+    onDone(refocus, { at: s.last.current ?? undefined, remove: !!fresh && (!t.trim() || t.trim() === "/") });
+  };
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
+  // Prose is edited in Inter at its own size so nothing jumps; only fences are mono (#17).
+  const cls = kind === "fence" || text.startsWith("```") ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
+  const f = s.fields;
+  // Mobile: the accessory row sits on the keyboard; the list docks above it.
+  const dock = useKeyboardDock(mobile);
+  const addBlock = () => {
+    const el = ref.current;
+    if (!el) return;
+    const at = el.selectionStart;
+    const pre = at === 0 || el.value[at - 1] === "\n" ? "" : "\n";
+    const t = el.value.slice(0, at) + pre + "/" + el.value.slice(el.selectionEnd);
+    const slash = at + pre.length;
+    keep.current = [slash + 1, slash + 1];
+    onChange(t);
+    s.openAt(slash, true);
+  };
   return (
-    <div className="blk" data-editing="" data-block={kind}>
-      <textarea
-        ref={ref}
-        // Prose is edited in Inter at its own size so nothing jumps; only fences are mono (#17).
-        className={kind === "fence" ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`}
-        rows={1}
-        aria-label="Edit block as Markdown. Escape to finish."
-        aria-describedby={hint}
-        spellCheck
-        value={text}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={() => onDone(false)}
-        onKeyDown={(e) => {
-          // ⌘B / ⌘I keep working here: the selection toolbar has no formatting buttons (#27).
-          const f = formatKey(e);
-          const el = e.currentTarget;
-          if (f && el.selectionStart !== el.selectionEnd) {
-            e.preventDefault();
-            const out = formatEdit(el.value, el.selectionStart, el.selectionEnd, f);
-            keep.current = [out.start, out.end];
-            onChange(out.text);
-            return;
-          }
-          if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
-            e.preventDefault();
-            e.stopPropagation();
-            onDone(true);
-          }
-        }}
-      />
+    <div className="blk" data-editing="" data-block={kind} data-fields={f ? "" : undefined}>
+      <div className="blk-ed">
+        {f ? (
+          // Field chips: a mirror under the transparent textarea marks the template's fields.
+          <div className={`${cls} blk-bd`} aria-hidden="true">
+            {chips(f.text, f.list, f.i)}
+          </div>
+        ) : null}
+        <textarea
+          ref={ref}
+          className={cls}
+          rows={1}
+          aria-label="Edit block as Markdown. Escape to finish."
+          aria-describedby={hint}
+          placeholder="Type / for blocks"
+          spellCheck
+          {...comboboxProps(s)}
+          value={text}
+          onChange={(e) => {
+            const next = e.target.value;
+            onChange(next);
+            s.input(text, next);
+          }}
+          onSelect={() => s.moved()}
+          onBlur={() => finish(false)}
+          onKeyDown={(e) => {
+            if (s.key(e)) {
+              e.stopPropagation();
+              return;
+            }
+            // ⌘B / ⌘I keep working here: the selection toolbar has no formatting buttons (#27).
+            const fk = formatKey(e);
+            const el = e.currentTarget;
+            if (fk && el.selectionStart !== el.selectionEnd) {
+              e.preventDefault();
+              const out = formatEdit(el.value, el.selectionStart, el.selectionEnd, fk);
+              keep.current = [out.start, out.end];
+              onChange(out.text);
+              return;
+            }
+            if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
+              e.preventDefault();
+              e.stopPropagation();
+              finish(true);
+            }
+          }}
+        />
+      </div>
       <p className="blk-hint" id={hint} aria-hidden="true">
-        Markdown · Esc to finish
+        {f ? "Tab next field · Esc finish" : "Markdown · Esc to finish"}
       </p>
       {preview && preview.kind === "fence" ? (
         <div className="blk-preview" aria-label="Live preview">
           <Diagram code={preview.body} />
         </div>
       ) : null}
+      <SlashMenu s={s} host={host} agentName={agentName} mobile={mobile} dock={dock + 48} />
+      {mobile ? (
+        <div className="acc4" role="toolbar" aria-label="Editing" style={{ bottom: dock }} onMouseDown={(e) => e.preventDefault()}>
+          <button type="button" className="btn quiet" onClick={addBlock}>
+            <PlusIcon />
+            Block
+          </button>
+          <span className="sp" />
+          <button type="button" className="btn quiet" onClick={() => finish(true)}>
+            Done
+          </button>
+        </div>
+      ) : null}
+      <span className="sr-only" role="status">
+        {s.say}
+      </span>
     </div>
   );
+}
+
+/** The template text with its fields marked (.ph, the active one .ph.on). */
+function chips(text: string, fields: { start: number; end: number }[], active: number) {
+  const out: ReactNode[] = [];
+  let at = 0;
+  fields.forEach((f, i) => {
+    out.push(text.slice(at, f.start));
+    out.push(
+      <span key={i} className={i === active ? "ph on" : "ph"}>
+        {text.slice(f.start, f.end)}
+      </span>,
+    );
+    at = f.end;
+  });
+  out.push(`${text.slice(at)}\u200b`);
+  return out;
+}
+
+/** Pixels the on-screen keyboard covers at the bottom of the layout viewport (mobile). */
+function useKeyboardDock(on: boolean) {
+  const [px, setPx] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!on || !vv) return;
+    const update = () => setPx(Math.max(0, window.innerHeight - (vv.height + vv.offsetTop)));
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [on]);
+  return px;
 }
 
 /** Renders a decision block from its last valid fields. */
@@ -449,6 +574,8 @@ export function PlanEditor({
   staleKeys,
   marks,
   editRef,
+  agentName,
+  onAgentDiagram,
 }: {
   draft: PlanDraft;
   mode: EditorMode;
@@ -468,9 +595,14 @@ export function PlanEditor({
   marks?: DocMarks;
   /** Opens the block editor at a source range (the selection toolbar's Edit). */
   editRef?: MutableRefObject<((start: number, end: number) => void) | null>;
+  /** The agent's name, for the slash menu's agent row (never hardcoded). */
+  agentName: string;
+  /** Item 5's hook: "Diagram by {agent}" shows in the slash menu only when this is set. */
+  onAgentDiagram?: (at: number) => void;
 }) {
+  const mobile = useMobile();
   // The block being edited, as a range of the draft. `len` follows the edited text's length.
-  const [editing, setEditing] = useState<{ start: number; len: number; text: string; kind: Block["kind"]; sel?: [number, number] } | null>(null);
+  const [editing, setEditing] = useState<{ start: number; len: number; text: string; kind: Block["kind"]; sel?: [number, number]; fresh?: NewBlock; pad?: [number, number] } | null>(null);
   const [active, setActive] = useState<string | null>(null);
   // Text → decision (§2.2): the hovered passage, after a 120ms intent; leaving clears after 200ms,
   // and moving to another passage within that grace swaps at once.
@@ -517,16 +649,47 @@ export function PlanEditor({
     draft.change(splice(draft.text, editing.start, editing.start + editing.len, t));
     setEditing({ ...editing, len: t.length, text: t });
   };
-  const doneEditing = (refocus = false) => {
-    const start = editing?.start;
+  const doneEditing = (refocus = false, o: { at?: number; remove?: boolean } = {}) => {
+    if (!editing) return;
+    const start = editing.start;
     setEditing(null);
+    if (o.remove && editing.pad) {
+      // An empty new block goes away with the blank lines added for it.
+      const [before, after] = editing.pad;
+      draft.change(splice(draft.text, start - before, start + editing.len + after, ""));
+    } else {
+      // Blocks added with "/" get their ids (U1, U2…) when editing finishes (#33).
+      const filled = fillUserDecisions(draft.text, new Date().toISOString());
+      if (filled !== draft.text) draft.change(filled);
+    }
     void draft.flush();
-    if (!refocus) return;
+    const at = o.remove ? undefined : o.at;
+    if (!refocus && at === undefined) return;
     // Back to the block's Edit button (v1.2 §1), or the document when the block is gone.
+    // After a slash insertion the new block takes focus and flashes once (item 4 §5).
     requestAnimationFrame(() => {
-      const btn = start === undefined ? null : articleRef.current?.querySelector<HTMLElement>(`.blk[data-start="${start}"] > .blk-act`);
-      (btn ?? articleRef.current)?.focus({ preventScroll: true });
+      const root = articleRef.current;
+      // A new editor opened in the meantime ("/" pressed straight away): leave its focus alone.
+      if (!root || root.querySelector(".blk-edit")) return;
+      if (at !== undefined) {
+        const abs = start + at;
+        const blks = [...root.querySelectorAll<HTMLElement>(".blk[data-start]")].filter((b) => Number(b.dataset.start) <= abs);
+        const blk = blks.at(-1);
+        if (blk) return jumpTo(blk, refocus ? (blk.querySelector<HTMLElement>(":scope > .blk-act, .dz") ?? null) : null);
+      }
+      // A removed new block hands focus back to the block it was added under.
+      const back = o.remove ? [...root.querySelectorAll<HTMLElement>(".blk[data-start]")].filter((b) => Number(b.dataset.start) < start).at(-1) : null;
+      const btn = (back ?? root.querySelector<HTMLElement>(`.blk[data-start="${start}"]`))?.querySelector<HTMLElement>(":scope > .blk-act");
+      (btn ?? root)?.focus({ preventScroll: true });
     });
+  };
+  /** "+" under a block, or "/" on a focused block: a new block below with the slash menu open (#32). */
+  const addBelow = (b: Block, pointer: boolean) => {
+    if (readOnly) return;
+    const rest = draft.text.slice(b.end);
+    const after = rest.startsWith("\n") && rest.length > 1 && rest[1] !== "\n" ? 1 : 0;
+    draft.change(splice(draft.text, b.end, b.end, `\n\n/${after ? "\n" : ""}`));
+    setEditing({ start: b.end + 2, len: 1, text: "/", kind: "para", fresh: { pointer }, pad: [2, after] });
   };
   // `setMode` flushes; the effect above closes the block editor.
   const switchMode = (m: EditorMode) => m !== mode && setMode(m);
@@ -583,6 +746,16 @@ export function PlanEditor({
           tabIndex={-1}
           onKeyDown={(e) => {
             if (e.key === "Escape" && editing) doneEditing(true);
+            const t0 = e.target as HTMLElement;
+            if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && t0.matches(".blk-act")) {
+              const start = Number(t0.closest<HTMLElement>(".blk")?.dataset.start);
+              const b = parseBlocks(draft.text).find((x) => x.start === start);
+              if (b) {
+                e.preventDefault();
+                addBelow(b, false);
+                return;
+              }
+            }
             // ↑/↓ from a block's Edit button or a decision card moves to the previous or next stop.
             const t = e.target as HTMLElement;
             if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.altKey && !e.metaKey && (t.matches(".blk-act") || t.matches(".dz:not([data-state=changing])"))) {
@@ -602,6 +775,7 @@ export function PlanEditor({
             afterTitle={afterTitle}
             openBadge={openBadge}
             onBlock={readOnly ? undefined : startEdit}
+            onAdd={readOnly || mobile ? undefined : (b) => addBelow(b, true)}
             decision={renderDecision}
             link={link}
             marks={editing && marks ? outside(marks, editing.start, editing.start + editing.len) : marks}
@@ -611,7 +785,18 @@ export function PlanEditor({
                     start: editing.start,
                     end: editing.start + editing.len,
                     node: (
-                      <BlockEditor key={editing.start} text={editing.text} kind={editing.kind} sel={editing.sel} onChange={editBlock} onDone={doneEditing} />
+                      <BlockEditor
+                        key={editing.start}
+                        text={editing.text}
+                        kind={editing.kind}
+                        sel={editing.sel}
+                        fresh={editing.fresh}
+                        onChange={editBlock}
+                        onDone={doneEditing}
+                        agentName={agentName}
+                        onAgentDiagram={onAgentDiagram}
+                        mobile={mobile}
+                      />
                     ),
                   }
                 : undefined
@@ -622,18 +807,98 @@ export function PlanEditor({
         <div className="doc doc-raw">
           {/* The page keeps its heading in the Markdown view; the source shows it as "# …". */}
           <h1 className="sr-only">{/^# (.+)$/m.exec(draft.text)?.[1] ?? "plan.md"}</h1>
-          <CodeEditor
+          <RawEditor
             key={readOnly ? "ro" : "rw"}
-            value={draft.text}
-            onChange={(t) => !readOnly && draft.change(t)}
-            onBlur={() => void draft.flush()}
-            label="plan.md, Markdown source"
+            draft={draft}
+            readOnly={readOnly}
             errors={problems}
-            testId="plan-raw"
+            agentName={agentName}
+            onAgentDiagram={onAgentDiagram}
+            mobile={mobile}
           />
         </div>
       )}
     </div>
+  );
+}
+
+/** The Markdown view: CodeMirror on the whole plan, with the slash menu (#32). */
+function RawEditor({
+  draft,
+  readOnly,
+  errors,
+  agentName,
+  onAgentDiagram,
+  mobile,
+}: {
+  draft: PlanDraft;
+  readOnly?: boolean;
+  errors: { line: number; message: string }[];
+  agentName: string;
+  onAgentDiagram?: (at: number) => void;
+  mobile: boolean;
+}) {
+  const ed = useRef<CodeEditorHandle | null>(null);
+  // The text before the next edit (an outside reload updates it too).
+  const prev = useRef(draft.text);
+  prev.current = draft.text;
+  const dock = useKeyboardDock(mobile);
+  const host = useRef<SlashHost | null>(null);
+  host.current = {
+    value: () => ed.current?.view.state.doc.toString() ?? draft.text,
+    sel: () => {
+      const r = ed.current?.view.state.selection.main;
+      return [r?.from ?? 0, r?.to ?? 0];
+    },
+    set: (t, a, b) => {
+      const view = ed.current?.view;
+      if (!view) return;
+      const cur = view.state.doc.toString();
+      let x = 0;
+      while (x < cur.length && x < t.length && cur[x] === t[x]) x++;
+      let z = 0;
+      while (z < cur.length - x && z < t.length - x && cur[cur.length - 1 - z] === t[t.length - 1 - z]) z++;
+      view.dispatch({
+        changes: cur === t ? undefined : { from: x, to: cur.length - z, insert: t.slice(x, t.length - z) },
+        selection: { anchor: a, head: b },
+        scrollIntoView: true,
+      });
+    },
+    rect: (pos) => ed.current?.view.coordsAtPos(pos) ?? null,
+  };
+  const s = useSlash(host, { agentName, onAgentDiagram });
+  const finish = () => {
+    s.close();
+    // Blocks added here get their ids (U1, U2…) when you leave the editor (#33).
+    const filled = fillUserDecisions(draft.text, new Date().toISOString());
+    if (filled !== draft.text) draft.change(filled);
+    void draft.flush();
+  };
+  return (
+    <>
+      <CodeEditor
+        value={draft.text}
+        onChange={(t) => {
+          if (readOnly) return;
+          const before = prev.current;
+          prev.current = t;
+          draft.change(t);
+          s.input(before, t);
+        }}
+        onBlur={finish}
+        onKey={(e) => !readOnly && s.key(e)}
+        onSelect={() => s.moved()}
+        handle={ed}
+        attrs={readOnly ? undefined : comboboxProps(s)}
+        label="plan.md, Markdown source"
+        errors={errors}
+        testId="plan-raw"
+      />
+      <SlashMenu s={s} host={host} agentName={agentName} mobile={mobile} dock={dock + 8} />
+      <span className="sr-only" role="status">
+        {s.say}
+      </span>
+    </>
   );
 }
 

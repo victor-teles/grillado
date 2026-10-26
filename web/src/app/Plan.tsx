@@ -19,6 +19,7 @@ import { type DecisionRenderer, type EditorMode, type GutRenderer, ModeToggle, P
 import { IAlert, ICheck, IChev, IDl, IDown, IFolder, IMore } from "./icons";
 import { type Act, dependentsOf } from "./Session";
 import type { Decision, Question, SessionView } from "./types";
+import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "../../../src/core/decision-block.ts";
 
 const nameOf = (d: { label?: string; title: string }) => d.label || d.title;
 
@@ -29,6 +30,10 @@ function questionFor(s: SessionView, key: string): Question | undefined {
   }
   return undefined;
 }
+
+/** A decision you added yourself (U id, item 4): the card asks its own question, answered in the text. */
+const ownKey = (s: SessionView, key: string) => /^u\d+$/.test(key) && !s.decisions[key];
+const ownQuestion = (key: string, title: string): Question => ({ key, label: title, title, body: "", options: [], recommendedOptionId: "", dependsOn: [] });
 
 function questionRound(s: SessionView, key: string): number | undefined {
   return s.rounds.find((r) => r.questions.some((q) => q.key === key))?.n;
@@ -78,7 +83,21 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
     return { anchor, text: fmt(COPY.reasking, { agent: agentName, questions: listOf(qs), n: `${n} ${n === 1 ? "passage" : "passages"}` }) };
   }, [waiting.join(" "), psg, staleKeys, touched, agentName, session.stale, session.decisions]);
   const external = useMemo(() => new Map((plan.external ?? []).map((e) => [e.key, e])), [plan.external]);
+  const ownBlocks = useMemo(() => {
+    const out = new Map<string, DecisionFields>();
+    for (const b of findDecisionBlocks(draft.text)) if (b.parsed.ok && b.parsed.fields.key && /^U\d+$/.test(b.parsed.fields.id)) out.set(b.parsed.fields.key, b.parsed.fields);
+    return out;
+  }, [draft.text]);
+  const ownDecisions = useMemo(
+    () =>
+      [...ownBlocks.values()]
+        .filter((f) => f.status !== "open" && f.answer && !session.decisions[f.key!])
+        .map((f): Decision => ({ key: f.key!, round: 0, title: f.question, answer: f.answer!, kind: "other", accepted_recommendation: false, dependsOn: [] })),
+    [ownBlocks, session.decisions],
+  );
   const label = (key: string) => {
+    const mine = ownBlocks.get(key);
+    if (mine) return mine.id;
     const r = session.rounds.find((x) => x.questions.some((q) => q.key === key));
     return r ? `R${r.n}·${r.questions.findIndex((q) => q.key === key) + 1}` : "";
   };
@@ -116,6 +135,13 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
     await draft.track(act(open ? "answer-open" : "change", { key, ...pick }));
     if (!open && was !== undefined) setTouched({ key, was });
   };
+  // Answering a Question you added is a plain edit of its block (#34): no round, no re-ask.
+  const saveOwn = async (key: string, pick: { optionId: string; text?: string }) => {
+    const answer = pick.text?.trim();
+    if (!answer) throw new Error("Type an answer first.");
+    draft.change(updateDecisionBlock(draft.text, key, { status: undefined, answer, by: "you", at: new Date().toISOString() }));
+    await draft.flush();
+  };
   const onExternal = async (confirm: boolean) => {
     await draft.flush();
     await act(confirm ? "external-confirm" : "external-dismiss");
@@ -130,19 +156,21 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
     const open = fields.status === "open" && !session.decisions[key];
     const deps = dependentsOf(session, key).map((k) => nameOf(session.decisions[k]));
     const ext = external.get(key);
+    const own = ownKey(session, key);
     const changed = touched?.key === key && session.decisions[key] && session.decisions[key].answer !== touched.was ? touched.was : undefined;
     return (
       <DecisionCard
         key={`${key}-${fields.answer ?? ""}`}
         fields={fields}
         state={stale ? "stale" : open ? "open" : "settled"}
-        question={questionFor(session, key)}
+        question={own ? ownQuestion(key, fields.question) : questionFor(session, key)}
+        own={own}
         dependents={deps}
         passages={psg.filter((p) => p.keys.includes(key)).map((p) => p.id)}
         invalid={invalid}
         readOnly={readOnly}
         onActive={setActive}
-        onSave={(pick) => save(key, open, pick)}
+        onSave={(pick) => (own ? saveOwn(key, pick) : save(key, open, pick))}
         agentName={agentName}
         lit={lit}
         was={changed}
@@ -321,6 +349,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
             draft={draft}
             mode={mode}
             setMode={setMode}
+            agentName={agentName}
             readOnly={readOnly}
             decision={renderDecision}
             gut={mobile ? undefined : gut}
@@ -340,7 +369,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
         </div>
         <div id="ppanel-decisions" role="tabpanel" aria-labelledby="ptab-decisions" hidden={tab !== "decisions"} className="dtab">
           {tab === "decisions" ? (
-            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} onShow={showInPlan} renderOpen={renderDecision} save={save} />
+            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} />
           ) : null}
         </div>
       </div>
@@ -460,6 +489,8 @@ function DecisionsTab({
   mobile,
   psg,
   label,
+  own,
+  titleOf,
   onShow,
   renderOpen,
   save,
@@ -470,6 +501,9 @@ function DecisionsTab({
   mobile: boolean;
   psg: { id: string; keys: string[] }[];
   label: (key: string) => string;
+  /** Decisions you added yourself and answered (U ids, item 4), listed after the rounds. */
+  own: Decision[];
+  titleOf: (key: string) => string;
   onShow: (key: string) => void;
   renderOpen: DecisionRenderer;
   save: (key: string, open: boolean, pick: { optionId: string; text?: string }) => Promise<void>;
@@ -489,10 +523,10 @@ function DecisionsTab({
   }, [openKeys.join(" ")]);
   const byRound = useMemo(() => {
     const m = new Map<number, Decision[]>();
-    for (const d of Object.values(session.decisions)) m.set(d.round, [...(m.get(d.round) ?? []), d]);
+    for (const d of [...Object.values(session.decisions), ...own]) m.set(d.round, [...(m.get(d.round) ?? []), d]);
     for (const ds of m.values()) ds.sort((a, b) => label(a.key).localeCompare(label(b.key), undefined, { numeric: true }));
     return [...m.entries()].sort((a, b) => b[0] - a[0]);
-  }, [session.decisions, session.rounds]);
+  }, [session.decisions, session.rounds, own]);
   const flat = byRound.flatMap(([, ds]) => ds);
   const resolved = flat.length;
   const rows = () => [...(listRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];
@@ -518,8 +552,8 @@ function DecisionsTab({
           </h2>
           <p className="sub">{fmt(COPY.openLead, { agent: agentName })}</p>
           {openKeys.map((key) => {
-            const q = questionFor(session, key)!;
-            return <div key={key}>{renderOpen({ id: label(key), key, question: q.title, status: "open" }, { invalid: false, active: false, setActive: () => {} })}</div>;
+            const title = questionFor(session, key)?.title ?? titleOf(key);
+            return <div key={key}>{renderOpen({ id: label(key), key, question: title, status: "open" }, { invalid: false, active: false, setActive: () => {} })}</div>;
           })}
         </section>
       ) : null}
@@ -540,7 +574,7 @@ function DecisionsTab({
         <div id="acc-resolved" hidden={!expanded} ref={listRef}>
           {byRound.map(([round, ds]) => (
             <div key={round} className="dgrp">
-              <h3>Round {round}</h3>
+              <h3>{round ? `Round ${round}` : COPY.addedByYou}</h3>
               <ul className="dlist">
                 {ds.map((d) => {
                   const i = flat.indexOf(d);

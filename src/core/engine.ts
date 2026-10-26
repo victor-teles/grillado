@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { FailureCode } from "./classify.ts";
 import { extractCandidate } from "./extract.ts";
+import { blockKey, findDecisionBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { commentSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, sectionAt } from "./comments.ts";
@@ -57,7 +58,23 @@ export function stateFor(s: Session) {
     })),
     reopened: s.reopened.length ? s.reopened : undefined,
     keepGoing: s.keepGoing || undefined,
+    ...userBlocks(s),
   };
+}
+
+/** Decisions and open Questions you added to the plan yourself (U ids, item 4 #34). */
+function userBlocks(s: Session) {
+  const asked: { key: string; question: string }[] = [];
+  const added: { key: string; question: string; answer: string }[] = [];
+  for (const b of findDecisionBlocks(s.plan?.markdown ?? "")) {
+    if (!b.parsed.ok || !/^U\d+$/.test(b.parsed.fields.id)) continue;
+    const key = blockKey(b.parsed);
+    if (!key || s.decisions[key]) continue;
+    const f = b.parsed.fields;
+    if (f.status === "open") asked.push({ key, question: f.question });
+    else if (f.answer) added.push({ key, question: f.question, answer: f.answer });
+  }
+  return { userQuestions: asked.length ? asked : undefined, userDecisions: added.length ? added : undefined };
 }
 
 export function buildRoundPrompt(s: Session): string {
@@ -68,6 +85,8 @@ export function buildRoundPrompt(s: Session): string {
   else if (state.keepGoing)
     lines.push("The user wants to keep going: look for branches that were left shallow and ask the next frontier there.");
   else lines.push("Recompute the frontier from the settled decisions and ask the next round, or reply frontier_empty.");
+  if (state.userQuestions)
+    lines.push("The user added open questions to the plan (userQuestions): ask each of them in this round, with its key as the question key.");
   return lines.join("\n");
 }
 

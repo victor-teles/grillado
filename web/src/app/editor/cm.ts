@@ -3,7 +3,7 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Annotation, type Extension, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
+import { Annotation, type Extension, Prec, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
 import { type Format, formatEdit } from "./selection";
 import { Decoration, type DecorationSet, EditorView, MatchDecorator, ViewPlugin, type ViewUpdate, WidgetType, keymap, lineNumbers } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
@@ -155,8 +155,13 @@ export function createEditor(opts: {
   onCursor?: (line: number, col: number) => void;
   onBlur?: () => void;
   keys?: { key: string; run: () => boolean }[];
+  /** Runs before CodeMirror's own keys (the slash menu); true when it used the key. */
+  onKey?: (e: KeyboardEvent) => boolean;
+  /** The selection moved without the text changing. */
+  onSelect?: () => void;
 }): CodeEditorHandle {
   const ext: Extension[] = [
+    Prec.highest(EditorView.domEventHandlers({ keydown: (e) => opts.onKey?.(e) ?? false })),
     lineNumbers(),
     history(),
     EditorView.lineWrapping,
@@ -168,6 +173,7 @@ export function createEditor(opts: {
     EditorView.contentAttributes.of({ "aria-label": opts.label, "aria-multiline": "true", spellcheck: "false" }),
     EditorView.updateListener.of((u) => {
       if (u.docChanged && !u.transactions.some((t) => t.annotation(external))) opts.onChange(u.state.doc.toString());
+      if (u.selectionSet && !u.docChanged) opts.onSelect?.();
       if (u.selectionSet || u.docChanged) {
         const head = u.state.selection.main.head;
         const line = u.state.doc.lineAt(head);

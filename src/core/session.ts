@@ -213,6 +213,9 @@ export function submitAnswers(s: Session, roundN: number, answers: Answer[]): vo
       delete s.stale[q.key];
     }
     s.decisions[q.key] = decision;
+    // A Question you added yourself (U id, item 4 #34) gets its answer in the plan text too.
+    if (s.plan && /^u\d+$/.test(q.key))
+      s.plan.markdown = updateDecisionBlock(s.plan.markdown, q.key, { status: undefined, answer: decision.answer, by: "you", at: new Date().toISOString() });
     recorded.push({ questionId: q.key, optionId: a.optionId, text: a.optionId === OTHER_OPTION ? decision.answer : undefined, accepted_recommendation: accepted });
   }
   round.answers = recorded;

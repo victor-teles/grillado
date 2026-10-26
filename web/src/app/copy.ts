@@ -11,6 +11,8 @@ export const COPY = {
   youKept: "You kept the suggestion",
   yourCall: "Your call",
   changedWas: "Changed just now · was {was}",
+  ownOpen: "Open · {agent} asks it in the next round",
+  addedByYou: "Added by you",
   authBanner: "To keep going, log in to {agent}: {how}, then come back (your answers are saved).",
   agentChip: "Agent: {agent}",
   resolvedNewest: "Newest first",
