@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
+import type { CommentState } from "./comments.ts";
 import { type AnswerEdit, answerEdits, blockKey, findDecisionBlocks, serializeDecision, updateDecisionBlock } from "./decision-block.ts";
 
 export type SessionStatus =
@@ -66,7 +67,7 @@ export interface SessionError {
   at: string;
 }
 
-export interface Session {
+export interface Session extends CommentState {
   id: string;
   createdAt: string;
   updatedAt: string;

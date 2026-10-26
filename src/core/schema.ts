@@ -66,11 +66,29 @@ export const PlanReplySchema = z.object({
   openDecisions: z.array(z.string().max(400)),
 });
 
+/** The agent's reply in a comment thread. */
+export const CommentReplySchema = z.object({
+  type: z.literal("reply"),
+  text: z.string().min(1).max(2000),
+});
+
+/** "Apply feedback": edits as exact `before → after` replacements, shown as suggestions (#16). */
+export const EditReplySchema = z.object({
+  type: z.literal("edits"),
+  summary: z.string().max(400),
+  edits: z
+    .array(z.object({ before: z.string().min(1).max(2000), after: z.string().max(2000) }))
+    .min(1)
+    .max(8),
+});
+
 export type Option = z.infer<typeof OptionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 export type Upcoming = z.infer<typeof UpcomingSchema>;
 export type RoundReply = z.infer<typeof RoundReplySchema>;
 export type PlanReply = z.infer<typeof PlanReplySchema>;
+export type CommentReply = z.infer<typeof CommentReplySchema>;
+export type EditReply = z.infer<typeof EditReplySchema>;
 
 /**
  * JSON Schema for the CLI schema flags. OpenAI-style strict structured output (Codex) needs every
@@ -105,3 +123,5 @@ export function toStrictJsonSchema(schema: z.ZodType): Record<string, unknown> {
 
 export const roundJsonSchema = () => toStrictJsonSchema(RoundReplySchema);
 export const planJsonSchema = () => toStrictJsonSchema(PlanReplySchema);
+export const commentJsonSchema = () => toStrictJsonSchema(CommentReplySchema);
+export const editJsonSchema = () => toStrictJsonSchema(EditReplySchema);

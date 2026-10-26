@@ -3,7 +3,8 @@ import { createReadStream, existsSync, mkdtempSync, rmSync, statSync, unwatchFil
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { nextRound, synthesize } from "../core/engine.ts";
+import { nextRound, replyToComment, suggestEdits, synthesize } from "../core/engine.ts";
+import { addComment, addMessage, addSuggestions, finishRun, resolveThread, review, startRun, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
@@ -78,6 +79,8 @@ export class GrilladoServer {
   private selected: ProviderId | null = null;
   private sessions = new Map<string, Session>();
   private inflight = new Map<string, AbortController>();
+  /** Agent runs on comment threads, by thread id. They don't lock the plan, except "Apply feedback". */
+  private commentRuns = new Map<string, AbortController>();
   private progress = new Map<string, string>();
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
@@ -164,6 +167,7 @@ export class GrilladoServer {
   /** Graceful stop (AC13): kill agent runs, flush sessions, close sockets. */
   async close() {
     for (const c of this.inflight.values()) c.abort();
+    for (const c of this.commentRuns.values()) c.abort();
     killAllChildren();
     for (const s of this.sessions.values()) this.opts.store.save(s);
     for (const res of this.clients) res.end();
@@ -359,6 +363,7 @@ export class GrilladoServer {
       ...s,
       error: s.error ? { ...s.error, message: redact(s.error.message, userText(s)) } : undefined,
       busy: this.inflight.has(s.id),
+      applying: this.applying(s),
       progress: this.progress.get(s.id),
       planPath: s.plan?.path,
       tree: buildTree(s),
@@ -383,6 +388,7 @@ export class GrilladoServer {
       if ((s.status === "asking" || s.status === "synthesizing") && !s.error) {
         setError(s, "unknown", "Interrupted. Retry to continue.");
       }
+      for (const t of s.comments ?? []) if (t.run?.state === "running") finishRun(t, { ok: false, message: "Interrupted. Retry to continue." });
       this.sessions.set(id, s);
       this.watchPlan(s);
     }
@@ -451,6 +457,92 @@ export class GrilladoServer {
     });
   }
 
+  /** "Apply feedback" is running on one of this session's threads: the plan is read-only meanwhile. */
+  private applying(s: Session) {
+    return (s.comments ?? []).some((t) => t.run?.kind === "apply" && t.run.state === "running" && this.commentRuns.has(t.id));
+  }
+
+  private commentRoute(s: Session, threadId: string | undefined, op: string | undefined, body: any, busy: boolean) {
+    const live = (id: string) => this.commentRuns.has(id);
+    if (!threadId) {
+      const t = addComment(s, { quote: body?.quote, at: body?.at, text: body?.text });
+      this.startComment(s, t.id, "reply"); // the agent replies to every comment (N2)
+      return;
+    }
+    const t = (s.comments ?? []).find((c) => c.id === threadId);
+    if (!t) throw new Error("That comment is gone.");
+    switch (op) {
+      case "reply":
+        if (live(t.id)) throw new Error("The agent is still on this thread.");
+        addMessage(s, t.id, "you", String(body?.text ?? ""));
+        this.startComment(s, t.id, "reply");
+        return;
+      case "apply":
+        if (live(t.id)) throw new Error("The agent is still on this thread.");
+        if (busy || this.applying(s)) throw new Error("The agent is already editing the plan.");
+        this.startComment(s, t.id, "apply");
+        return;
+      case "retry":
+        if (live(t.id) || !t.run) return;
+        if (t.run.kind === "apply" && (busy || this.applying(s))) throw new Error("The agent is already editing the plan.");
+        this.startComment(s, t.id, t.run.kind);
+        return;
+      case "stop":
+        this.commentRuns.get(t.id)?.abort();
+        return;
+      case "resolve":
+        resolveThread(s, t.id, body?.resolved !== false);
+        this.changed(s);
+        return;
+      default:
+        throw new Error("Not found");
+    }
+  }
+
+  private reviewRoute(s: Session, body: any) {
+    const op = String(body?.op ?? "");
+    if (this.applying(s)) throw new Error("The agent is still editing the plan.");
+    if (op === "undo") {
+      if (!undoReview(s)) throw new Error("Nothing to undo.");
+    } else if (op === "accept" || op === "reject") {
+      review(s, op, body?.ids);
+    } else throw new Error("Not found");
+    if (op !== "reject") {
+      // plan.md only ever holds accepted text (N3).
+      s.plan!.editedAt = new Date().toISOString();
+      this.opts.store.writePlan(s.id, s.plan!.markdown);
+    }
+    this.changed(s);
+  }
+
+  private startComment(s: Session, threadId: string, kind: "reply" | "apply") {
+    const t = startRun(s, threadId, kind);
+    const controller = new AbortController();
+    this.commentRuns.set(t.id, controller);
+    this.changed(s);
+    const opts = { ...this.runOptions(s, controller), onProgress: undefined };
+    const work = async () => {
+      if (kind === "reply") {
+        const r = await replyToComment(s, t, this.adapterFor(s), opts);
+        if (controller.signal.aborted) return finishRun(t, { ok: false, message: "Stopped." });
+        if (!r.ok) return finishRun(t, { ok: false, message: redact(r.message, userText(s)) });
+        addMessage(s, t.id, "agent", r.value.text);
+        return finishRun(t, { ok: true });
+      }
+      const r = await suggestEdits(s, t, this.adapterFor(s), opts);
+      if (controller.signal.aborted) return finishRun(t, { ok: false, message: "Stopped. Nothing changed in the plan." });
+      if (!r.ok) return finishRun(t, { ok: false, message: redact(r.message, userText(s)) });
+      const added = addSuggestions(s, t.id, r.value.edits, t.at);
+      finishRun(t, { ok: true, edits: added.length });
+    };
+    work()
+      .catch((err) => finishRun(t, { ok: false, message: String(err?.message ?? err) }))
+      .finally(() => {
+        if (this.commentRuns.get(t.id) === controller) this.commentRuns.delete(t.id);
+        this.changed(s);
+      });
+  }
+
   private abort(s: Session) {
     this.inflight.get(s.id)?.abort();
     this.inflight.delete(s.id);
@@ -491,6 +583,12 @@ export class GrilladoServer {
     }
     if (req.method !== "POST") return this.json(res, 404, { error: "Not found" });
     const busy = this.inflight.has(s.id);
+    if (action === "comments" || action === "suggestions") {
+      if (s.status !== "plated" || !s.plan) throw new Error("Comments open once the plan is written.");
+      if (action === "comments") this.commentRoute(s, parts[2], parts[3], body, busy);
+      else this.reviewRoute(s, body);
+      return this.json(res, 200, this.view(s));
+    }
     switch (action) {
       case "answers": {
         if (busy) throw new Error("The agent is still working.");
@@ -544,6 +642,7 @@ export class GrilladoServer {
       }
       case "plan": {
         if (busy) throw new Error("The agent is still working.");
+        if (this.applying(s)) return this.json(res, 409, { error: "The agent is editing the plan. Your edit wasn't saved." });
         // Saves name the version they were edited from. If plan.md moved on meanwhile (edited in
         // another editor), refuse so the browser can ask which version to keep (Q5).
         if (typeof body?.base === "string" && s.plan && textHash(s.plan.markdown) !== body.base && body.markdown !== s.plan.markdown)

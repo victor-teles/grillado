@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
 import { Diagram } from "./editor/Diagram";
-import { IEdit } from "./icons";
+import { IEdit, IMsg } from "./icons";
 
 const KIND = { para: "paragraph", heading: "heading", list: "list", fence: "code block" } as const;
 /** "Edit paragraph: A weekend MVP for the four…" — the first few words, without Markdown marks or citations. */
@@ -17,10 +17,65 @@ export function editLabel(b: Block): string {
 }
 
 export type CiteRenderer = (round: number, key: string, n: number) => ReactNode;
+
+/**
+ * Comment anchors and pending suggestions drawn over the text (Phase 2 §2): `mark.cmt` with a
+ * `.cmk` button after it, and each suggestion as `del.ae` (the text it replaces) then `ins.ae`.
+ * Ranges are source offsets in the rendered Markdown.
+ */
+export interface DocMarks {
+  anchors: { id: string; start: number; end: number; active: boolean; label: string }[];
+  edits: { id: string; start: number; end: number; after: string; focused: boolean }[];
+  onAnchor: (id: string) => void;
+  onEdit: (id: string) => void;
+  /** Accept / Reject controls after the focused suggestion. */
+  pill: (id: string) => ReactNode;
+}
+
+// Private-use sentinels spliced into a block's source so marks survive the Markdown parse.
+const A_OPEN = "\uE000";
+const A_CLOSE = "\uE005";
+const E_OPEN = "\uE003";
+const E_SEP = "\uE001";
+const E_CLOSE = "\uE002";
+const IDX = 0xe100;
+const SENTINELS = /[\uE000-\uE005]|[\uE100-\uE1FF]/;
+
+/** The block's source with mark sentinels in it, or null when nothing is marked in it. */
+function decorate(b: Block, marks: DocMarks | undefined): string | null {
+  if (!marks || b.kind === "fence") return null;
+  const tokens: { at: number; rank: number; s: string }[] = [];
+  const inBlock = (start: number, end: number) => start < b.end && end > b.start;
+  marks.anchors.forEach((a, i) => {
+    if (!inBlock(a.start, a.end)) return;
+    tokens.push({ at: Math.max(a.start, b.start), rank: 2, s: A_OPEN + String.fromCharCode(IDX + i) });
+    tokens.push({ at: Math.min(a.end, b.end), rank: 1, s: A_CLOSE });
+  });
+  marks.edits.forEach((e, i) => {
+    if (e.start < b.start || e.end > b.end) return;
+    tokens.push({ at: e.start, rank: 3, s: E_OPEN + String.fromCharCode(IDX + i) });
+    tokens.push({ at: e.end, rank: 0, s: E_SEP + e.after.replace(/\n/g, " ") + E_CLOSE });
+  });
+  if (!tokens.length) return null;
+  tokens.sort((x, y) => x.at - y.at || x.rank - y.rank);
+  let out = "";
+  let from = b.start;
+  for (const t of tokens) {
+    out += b.raw.slice(from - b.start, t.at - b.start) + t.s;
+    from = t.at;
+  }
+  return out + b.raw.slice(from - b.start);
+}
+
+interface MarkState {
+  anchor: number | null;
+  edit: number | null;
+  part: "del" | "ins" | null;
+}
 export type FenceBlock = Extract<Block, { kind: "fence" }>;
 
 /**
- * Minimal, safe Markdown → React (no raw HTML): headings, lists, paragraphs, code fences, **bold**, `code`.
+ * Minimal, safe Markdown → React (no raw HTML): headings, lists, paragraphs, code fences, **bold**, *italic*, ~~strike~~, `code`, [links](https://…).
  * `[R2:key]` citations render via `cite`; an "Open decisions" section is wrapped in `section.open`.
  * ```mermaid fences render as diagrams.
  *
@@ -37,6 +92,7 @@ export function Markdown({
   edit,
   decision,
   active,
+  marks,
 }: {
   source: string;
   cite?: CiteRenderer;
@@ -48,6 +104,7 @@ export function Markdown({
   decision?: (b: FenceBlock, n: number) => ReactNode;
   /** Decision whose context passages are highlighted (`mark.ctx`). */
   active?: string | null;
+  marks?: DocMarks;
 }) {
   const out: ReactNode[] = [];
   let openSection: ReactNode[] | null = null;
@@ -61,7 +118,7 @@ export function Markdown({
     );
     openSection = null;
   };
-  const ctx = { cite, n: 0 };
+  const ctx: Ctx = { cite, n: 0, marks, mk: { anchor: null, edit: null, part: null } };
   let decisions = 0;
   // A passage (sentence or list item) that cites decisions gets an id, so a decision block can
   // point at it (aria-describedby), and a mark while its decision is hovered or focused.
@@ -96,6 +153,9 @@ export function Markdown({
         onClick={(e) => {
           // Chips, links and other controls inside a block keep their own behavior.
           if ((e.target as HTMLElement).closest("button,a,input,textarea,select")) return;
+          // A pending suggestion is reviewed, not edited: clicking it focuses it.
+          const ae = (e.target as HTMLElement).closest<HTMLElement>("[data-edit]");
+          if (ae && marks) return marks.onEdit(ae.dataset.edit!);
           if (window.getSelection()?.toString()) return; // selecting text isn't a request to edit
           onBlock(b);
         }}
@@ -113,7 +173,12 @@ export function Markdown({
       <Fragment key={b.start}>{node}</Fragment>
     );
 
-  for (const b of parseBlocks(source)) {
+  for (const plain of parseBlocks(source)) {
+    // With marks, render a re-parse of the decorated source (same kind, same offsets for editing).
+    const deco = decorate(plain, marks);
+    const re = deco === null ? null : parseBlocks(deco)[0];
+    const b: Block = re && re.kind === plain.kind ? ({ ...re, start: plain.start, end: plain.end, raw: plain.raw } as Block) : plain;
+    ctx.mk = { anchor: null, edit: null, part: null };
     // Blocks inside (or starting inside) the edited range are replaced by the block editor.
     if (edit && b.start >= edit.start && (b.start < edit.end || b.end <= edit.end)) {
       showEdit();
@@ -176,8 +241,83 @@ export function Markdown({
 
 const CITE = /\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/;
 
-function inline(text: string, ctx: { cite?: CiteRenderer; n: number }): ReactNode {
-  const parts = text.split(new RegExp(`(\\*\\*[^*]+\\*\\*|\`[^\`]+\`|${CITE.source})`, "g")).filter((p) => p !== undefined);
+interface Ctx {
+  cite?: CiteRenderer;
+  n: number;
+  marks?: DocMarks;
+  mk: MarkState;
+}
+
+/** Plain text with mark sentinels → text wrapped in the marks open at each point. */
+function runs(text: string, ctx: Ctx, key: string | number): ReactNode {
+  if (!ctx.marks || (!SENTINELS.test(text) && ctx.mk.anchor === null && ctx.mk.edit === null)) return text;
+  const { marks, mk } = ctx;
+  const out: ReactNode[] = [];
+  let buf = "";
+  const flush = () => {
+    if (!buf) return;
+    let node: ReactNode = buf;
+    const k = `${key}-${out.length}`;
+    if (mk.edit !== null && mk.part) {
+      const e = marks.edits[mk.edit];
+      const Tag = mk.part;
+      node = (
+        <Tag key={`${k}e`} className="ae" data-edit={e.id} data-focus={e.focused ? "" : undefined}>
+          {node}
+        </Tag>
+      );
+    }
+    if (mk.anchor !== null) {
+      const a = marks.anchors[mk.anchor];
+      node = (
+        <mark key={`${k}a`} className="cmt" data-thread={a.id} data-active={a.active ? "" : undefined}>
+          {node}
+        </mark>
+      );
+    }
+    out.push(<Fragment key={k}>{node}</Fragment>);
+    buf = "";
+  };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === A_OPEN || c === E_OPEN) {
+      flush();
+      const n = text.charCodeAt(++i) - IDX;
+      if (c === A_OPEN) mk.anchor = n;
+      else {
+        mk.edit = n;
+        mk.part = "del";
+      }
+    } else if (c === A_CLOSE) {
+      flush();
+      const a = mk.anchor === null ? null : marks.anchors[mk.anchor];
+      mk.anchor = null;
+      if (a)
+        out.push(
+          <button key={`${key}-k${out.length}`} type="button" className="cmk" data-thread={a.id} aria-label={a.label} onClick={() => marks.onAnchor(a.id)}>
+            <IMsg s={12} />
+          </button>,
+        );
+    } else if (c === E_SEP) {
+      flush();
+      mk.part = "ins";
+    } else if (c === E_CLOSE) {
+      flush();
+      const e = mk.edit === null ? null : marks.edits[mk.edit];
+      mk.edit = null;
+      mk.part = null;
+      if (e?.focused) out.push(<Fragment key={`${key}-p`}>{marks.pill(e.id)}</Fragment>);
+    } else if (c.charCodeAt(0) < IDX || c.charCodeAt(0) > IDX + 0xff) buf += c;
+  }
+  flush();
+  return out;
+}
+
+const INLINE = new RegExp(`(\\*\\*[^*]+\\*\\*|~~[^~]+~~|\\*(?=[^*\\s])[^*]*[^*\\s]\\*|\\*[^*\\s]\\*|\`[^\`]+\`|\\[[^\\]]+\\]\\(https?:\\/\\/[^)\\s]+\\)|${CITE.source})`, "g");
+const LINK = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/;
+
+function inline(text: string, ctx: Ctx): ReactNode {
+  const parts = text.split(INLINE).filter((p) => p !== undefined);
   const nodes: ReactNode[] = [];
   let skip = false;
   parts.forEach((p, n) => {
@@ -185,14 +325,22 @@ function inline(text: string, ctx: { cite?: CiteRenderer; n: number }): ReactNod
       skip = false;
       return;
     }
-    if (p.startsWith("**") && p.endsWith("**")) {
+    if (p.startsWith("**") && p.endsWith("**") && p.length > 4) {
       const inner = p.slice(2, -2);
       // "**[R1:platform]**" (the generated decision log) renders as plain citation chips.
       if (ctx.cite && new RegExp(`^${CITE.source}$`).test(inner)) nodes.push(<Fragment key={n}>{inline(inner, ctx)}</Fragment>);
       else nodes.push(<strong key={n}>{inline(inner, ctx)}</strong>);
-    }
-    else if (p.startsWith("`") && p.endsWith("`") && p.length > 1) nodes.push(<code key={n}>{p.slice(1, -1)}</code>);
-    else if (CITE.test(p) && p.startsWith("[")) {
+    } else if (p.startsWith("~~") && p.endsWith("~~") && p.length > 4) nodes.push(<s key={n}>{inline(p.slice(2, -2), ctx)}</s>);
+    else if (p.startsWith("*") && p.endsWith("*") && p.length > 2) nodes.push(<em key={n}>{inline(p.slice(1, -1), ctx)}</em>);
+    else if (p.startsWith("`") && p.endsWith("`") && p.length > 1) nodes.push(<code key={n}>{runs(p.slice(1, -1), ctx, n)}</code>);
+    else if (LINK.test(p)) {
+      const m = LINK.exec(p)!;
+      nodes.push(
+        <a key={n} href={m[2]} target="_blank" rel="noopener noreferrer">
+          {inline(m[1], ctx)}
+        </a>,
+      );
+    } else if (CITE.test(p) && p.startsWith("[")) {
       // The capture group repeats the inner text as the next part; skip it.
       skip = true;
       const refs = p.slice(1, -1).split(/\s*,\s*/);
@@ -201,7 +349,7 @@ function inline(text: string, ctx: { cite?: CiteRenderer; n: number }): ReactNod
         if (!m) continue;
         nodes.push(<Fragment key={`${n}-${r}`}>{ctx.cite ? ctx.cite(Number(m[1]), m[2], ctx.n++) : null}</Fragment>);
       }
-    } else nodes.push(<Fragment key={n}>{p}</Fragment>);
+    } else nodes.push(<Fragment key={n}>{runs(p, ctx, n)}</Fragment>);
   });
   return nodes;
 }

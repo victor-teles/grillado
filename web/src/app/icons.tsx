@@ -180,3 +180,10 @@ export function Mark({ size = 15 }: { size?: number }) {
     </svg>
   );
 }
+export const IMsg = mk(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />);
+export const IUser = mk(
+  <>
+    <circle cx="12" cy="8" r="5" />
+    <path d="M20 21a8 8 0 0 0-16 0" />
+  </>,
+);
