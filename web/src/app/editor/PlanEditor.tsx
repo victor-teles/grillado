@@ -436,8 +436,10 @@ function BlockEditor({
   const [mdet, setMdet] = useState(false);
   const errId = useId();
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
-  // Prose is edited in Inter at its own size so nothing jumps; once the block holds a fence it is mono (#17).
-  const cls = kind === "fence" || /^```/m.test(text) ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
+  // Prose is edited in Inter at its own size so nothing jumps; it goes mono only once the whole block is a
+  // fence (typing ``` turns it). Prose that holds a fence below it stays Inter (#17, review of #7).
+  const parts = parseBlocks(text);
+  const cls = kind === "fence" || /^\s*```/.test(text) || (parts.length > 0 && parts.every((b) => b.kind === "fence")) ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
   const f = s.fields;
   // Mobile: the accessory row sits on the keyboard; the list docks above it.
   const dock = useKeyboardDock(mobile);
@@ -668,6 +670,10 @@ export function PlanEditor({
   // Rich mode shows the last valid version of a decision block that doesn't parse (§5).
   const lastValid = useRef(new Map<string, DecisionFields>());
   useEffect(() => setEditing(null), [draft.epoch, mode]);
+  // Opening a block clears the Undo toast, like the suggestion's own editor does (review of #6/#7).
+  useEffect(() => {
+    if (editing) dispatchEvent(new Event("grillado:editor-open"));
+  }, [!!editing]);
   const problems = useMemo(() => decisionProblems(draft.text), [draft.text]);
 
   const startEdit = (b: Block) => !readOnly && setEditing({ start: b.start, len: b.end - b.start, text: b.raw, kind: b.kind });

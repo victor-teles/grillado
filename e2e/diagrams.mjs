@@ -229,6 +229,18 @@ try {
       await pg.locator(".doc figure.mm5 .mmw svg").waitFor({ timeout: 8000 });
       await pg.waitForTimeout(300);
       check(`${theme}: Accept turns the block into a figure with no “Loading diagram…” flash (MF3)`, (await placeholders(pg)) === 0);
+      // The lone "Accepted · ⌘Z to undo" keeps off the text: in the gutter when there's room (review of #7).
+      const cov = await pg.evaluate(() => {
+        const n = document.querySelector(".review.lone");
+        if (!n) return { none: true };
+        const a = n.getBoundingClientRect();
+        const hit = [...document.querySelectorAll(".doc .blk")].some((b) => {
+          const r = b.getBoundingClientRect();
+          return r.left < a.right && a.left < r.right && r.top < a.bottom && a.top < r.bottom;
+        });
+        return { hit };
+      });
+      check(`${theme}: the Accepted note doesn't cover the plan's text`, cov.none || cov.hit === false, JSON.stringify(cov));
     }
     {
       const f = await flatNodes(pg);
@@ -367,6 +379,7 @@ try {
       await fig.focus();
       await pg.keyboard.press("Enter");
       await pg.locator(TA).waitFor();
+      check("opening a block clears the Undo toast", (await pg.locator(".toast").count()) === 0);
       check("editor hint: Mermaid · ⌘↵ draw now · Esc finish", (await txt(pg.locator(".blk[data-editing] .blk-hint"))) === "Mermaid · ⌘↵ draw now · Esc finish", await txt(pg.locator(".blk[data-editing] .blk-hint")));
       await pg.locator(".blk[data-editing] .lp5 svg").waitFor({ timeout: 8000 });
       await pg.keyboard.press("Control+End");
