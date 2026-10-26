@@ -282,6 +282,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
             <Strip session={session} />
             <section className="col appr" aria-labelledby="confirm-title">
               <div className="intro">
+                <p className="sub">{early ? "Wrapping up early" : "Nothing left open"} · after {session.rounds.length} {session.rounds.length === 1 ? "round" : "rounds"}</p>
                 <h1 id="confirm-title">Is it done?</h1>
                 <p>
                   {n} {n === 1 ? "decision" : "decisions"} settled,{" "}
@@ -291,7 +292,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
               <div className="dl">
                 {early ? (
                   <>
-                    <h3 id="grp-open">Still open</h3>
+                    <h2 id="grp-open">Still open</h2>
                     <dl aria-labelledby="grp-open">
                       {open.map((x) => (
                         <div className="dr" key={x.id}>
@@ -300,7 +301,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
                         </div>
                       ))}
                     </dl>
-                    <h3 id="grp-settled">Settled</h3>
+                    <h2 id="grp-settled">Settled</h2>
                   </>
                 ) : null}
                 <dl aria-labelledby={early ? "grp-settled" : undefined}>{shown.map(row)}</dl>

@@ -1,8 +1,9 @@
 // Screenshots of every screen, dark + light, desktop (1440×900) + mobile (390×844), for comparing
 // against the Designer's boards. Uses the built dist/cli.js and the fake agent CLIs.
 // One server and one browser at a time; only processes started here are killed.
-//   node e2e/shots.mjs [outDir]          (default /workspace/grillado-shots/v2)
-//   AXE=1 also prints axe violations per screen.
+//   node e2e/shots.mjs [outDir]          (default /workspace/grillado-shots/v1.2)
+//   AXE=1 also prints axe violations per screen. VP=d|m and THEME=dark|light narrow the run.
+// Names follow the v1.2 frames: {screen}-{d|m}-{dark|light}.png.
 import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -11,7 +12,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const OUT = process.argv[2] ?? "/workspace/grillado-shots/v2";
+const OUT = process.argv[2] ?? "/workspace/grillado-shots/v1.2";
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-shots-"));
 const NODE = process.execPath;
 mkdirSync(OUT, { recursive: true });
@@ -81,15 +82,15 @@ const typeIdea = async (pg, text) => {
   await pg.keyboard.press("Enter");
 };
 
-for (const vp of ["d", "m"]) {
-  for (const theme of ["dark", "light"]) {
+for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
+  for (const theme of process.env.THEME ? [process.env.THEME] : ["dark", "light"]) {
     // 0 · no agent
     {
       const s = await server([]);
       const { ctx, pg, snap } = await page(theme, vp);
       await pg.goto(s.url);
       await pg.getByRole("heading", { name: "No coding agent found" }).waitFor();
-      await snap("0c-noagent");
+      await snap("s-noagent");
       await ctx.close();
       await s.stop();
     }
@@ -99,42 +100,72 @@ for (const vp of ["d", "m"]) {
       const { ctx, pg, snap } = await page(theme, vp);
       await pg.goto(s.url);
       await pg.getByRole("heading", { name: "Which agent should run this?" }).waitFor();
-      await snap("0b-picker");
+      await snap("s-picker");
       await pg.getByLabel("Remember my choice").check();
       await pg.getByRole("radio", { name: /Claude Code/ }).click();
       await pg.getByRole("button", { name: /Continue/ }).click();
       await pg.getByRole("textbox", { name: "What are you planning?" }).waitFor();
-      await snap("1-landing-empty");
+      await snap("s-landing-empty");
       await pg.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
-      await snap("1-landing-typed");
+      await snap("s-landing-typed");
       await pg.keyboard.press("Enter");
       await pg.getByText("Sizing up your idea").waitFor();
-      await snap("2-firing-up");
+      await snap("s-firing");
       await pg.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
-      await snap("3-round");
+      await snap("r-start");
       await pg.locator("[data-testid=question] legend").nth(1).focus();
       await pg.keyboard.press("2");
-      await snap("3-round-yourcall");
+      await snap("r");
       if (vp === "m") {
-        await pg.getByRole("button", { name: /^Decisions/ }).click();
-        await snap("3-round-tree-sheet");
+        await pg.getByRole("button", { name: /Decisions,/ }).click();
+        await snap("s-sheet");
         await pg.keyboard.press("Escape");
       }
       await pg.getByRole("button", { name: /Send round/ }).click();
       await pg.getByText("Preparing round 2").waitFor();
-      await snap("3-waiting");
+      await snap("s-waiting");
       await pg.getByText("Keep data local first?").waitFor({ timeout: 15000 });
       await pg.getByRole("button", { name: /Send round/ }).click();
       await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15000 });
-      await snap("4-confirm");
+      await snap("s-confirm");
       await pg.getByRole("button", { name: "Reopen Platform" }).click();
-      await snap("4-reopen");
+      await snap("s-reopen");
       await pg.keyboard.press("Escape");
       await pg.getByRole("button", { name: /Yes, plate it/ }).click();
       await pg.getByText(/Plating your plan/).waitFor();
-      await snap("5-plating");
+      await snap("s-plating");
       await pg.getByTestId("plan").waitFor({ timeout: 15000 });
-      await snap("6-plan");
+      await snap("e");
+      // keyboard Edit: Tab onto the first paragraph's Edit button
+      const act = pg.locator("[data-testid=plan] .blk[data-block=para] .blk-act").first();
+      await act.focus();
+      await pg.keyboard.press("Shift+Tab");
+      await pg.keyboard.press("Tab");
+      await snap("e-kbd");
+      await pg.keyboard.press("Enter");
+      await pg.locator(".blk-edit").waitFor();
+      await snap("e-editing");
+      await pg.keyboard.press("Escape");
+      // Change on a decision card
+      const dz = pg.locator(".dz").first();
+      await dz.hover();
+      await snap("e-hover");
+      await dz.getByRole("button", { name: /^Change/ }).click();
+      await snap("e-change");
+      await dz.getByRole("button", { name: "Cancel" }).click();
+      // Markdown view
+      if (vp === "d") await pg.getByRole("radio", { name: "Markdown" }).click();
+      else {
+        await pg.getByRole("button", { name: "Plan actions" }).click();
+        await pg.getByRole("menuitemradio", { name: "Markdown" }).click();
+      }
+      await pg.locator(".cm-content").waitFor();
+      await snap("e-raw");
+      // Decisions tab
+      if (vp === "d") {
+        await pg.getByRole("tab", { name: /Decisions/ }).click();
+        await snap("e-decisions");
+      }
       await ctx.close();
       await s.stop();
       // Landing with recent sessions, same home.
@@ -142,7 +173,7 @@ for (const vp of ["d", "m"]) {
       const p2 = await page(theme, vp);
       await p2.pg.goto(s2.url);
       await p2.pg.getByRole("textbox", { name: "What are you planning?" }).waitFor();
-      await p2.snap("1-landing");
+      await p2.snap("s-landing-recent");
       await p2.ctx.close();
       await s2.stop();
     }
@@ -154,26 +185,26 @@ for (const vp of ["d", "m"]) {
       await typeIdea(pg, "A notes app");
       for (const t of ["Build it for yourself first?", "Start with the capture flow?", "Include search in v1?", "Sync across devices?"]) {
         await pg.getByText(t).first().waitFor({ timeout: 15000 });
-        if (vp === "m" && t === "Start with the capture flow?") await snap("3-round-wrap"); // ghost Wrap it up, 1+ settled
+        if (vp === "m" && t === "Start with the capture flow?") await snap("r-wrap"); // ghost Wrap it up, 1+ settled
         await pg.getByRole("button", { name: /Send round/ }).click();
         await pg.getByText(t).first().waitFor({ state: "detached", timeout: 15000 });
       }
       await pg.getByTestId("nudge").waitFor({ timeout: 15000 });
-      await snap("3-round-nudge");
+      await snap("s-nudge");
       await pg.locator(".bar").getByRole("button", { name: "Wrap it up" }).click();
       await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15000 });
-      await snap("4-confirm-early");
+      await snap("s-early");
       await pg.getByRole("button", { name: /Yes, plate it/ }).click();
       await pg.getByTestId("plan").waitFor({ timeout: 15000 });
-      await snap("6-plan-early");
+      await snap("e-early");
       await ctx.close();
       await s.stop();
     }
     // banners
     for (const [mode, name] of [
-      ["auth", "0d-banner-auth"],
-      ["rate", "0d-banner-rate"],
-      ["garbage", "0d-banner-malformed"],
+      ["auth", "s-banner-auth"],
+      ["rate", "s-banner-rate"],
+      ["garbage", "s-banner-malformed"],
     ]) {
       const s = await server(["claude", "codex"], { FAKE_MODE: mode });
       const { ctx, pg, snap } = await page(theme, vp);
@@ -185,8 +216,8 @@ for (const vp of ["d", "m"]) {
       await snap(name);
       if (mode === "auth") {
         await s.stop();
-        await pg.getByRole("heading", { name: "Grillado was stopped" }).waitFor({ timeout: 10000 });
-        await snap("7-stopped");
+        await pg.getByRole("heading", { name: "Grillado stopped" }).waitFor({ timeout: 10000 });
+        await snap("s-stopped");
       }
       await ctx.close();
       await s.stop();

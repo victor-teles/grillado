@@ -225,7 +225,8 @@ try {
   check("axe: home", axeHome.violations.length === 0, axeHome.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
   const config = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "config.json"), "utf8"));
   check("remembered default provider", config.defaultProvider === "claude");
-  check("agent chip carries the version", /Claude Code 9\.9\.9-fake/.test((await page.getByRole("banner").getByRole("button", { name: /Agent: Claude Code/ }).textContent()) ?? ""));
+  // v1.2: no agent in the header before a session; the composer carries it.
+  check("agent chip carries the version", /Claude Code 9\.9\.9-fake/.test((await page.getByRole("main").getByRole("button", { name: /Agent: Claude Code/ }).textContent()) ?? ""));
 
   // Keyboard-only from here on.
   await ideaBox.fill("A grilling recipe app for weeknights");
@@ -236,12 +237,15 @@ try {
   await page.waitForURL(/\/s\//);
   const sessionId = new URL(page.url()).pathname.split("/").pop();
 
-  // Reduced motion: cards only fade, the frontier glow doesn't breathe.
-  const rm = await page.evaluate(() => ({
-    card: getComputedStyle(document.querySelector("[data-testid=question]")).animationName,
-    glow: getComputedStyle(document.querySelector(".st-frontier .nd .gl")).animationName,
-  }));
-  check("prefers-reduced-motion: fade only, no breathing", rm.card === "gr-fade" && rm.glow === "none", JSON.stringify(rm));
+  // Reduced motion (v1.2 §7): nothing animates or loops; transitions are limited to opacity and colour.
+  const rm = await page.evaluate(() => {
+    const all = [...document.querySelectorAll("*")];
+    return {
+      animated: all.filter((el) => getComputedStyle(el).animationName !== "none").map((el) => el.className?.toString?.() || el.tagName).slice(0, 5),
+      card: getComputedStyle(document.querySelector("[data-testid=question]")).transitionProperty,
+    };
+  });
+  check("prefers-reduced-motion: nothing animates; only opacity/colour transitions", rm.animated.length === 0 && !/transform/.test(rm.card), JSON.stringify(rm));
   await page.waitForTimeout(400); // heat word and cards finish their entrance before contrast is measured
   const axeRound = await new AxeBuilder({ page }).analyze();
   check("axe: round view (dark)", axeRound.violations.length === 0, axeRound.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
@@ -340,9 +344,12 @@ try {
     ["key: scope", "key: platform", "key: storage"].every((t) => plan.includes(t)) && (plan.match(/^```decision$/gm) ?? []).length === 3 && plan.includes("[R1:platform]"),
   );
   check("plan.md has no banned text / prompt contents (AC17)", !containsBanned(plan.replace(/grilling recipe app/gi, "")));
-  check("UI shows file path", (await page.getByTestId("plan-path").textContent()) === planFile);
+  // v1.2: the path lives in the toolbar's ⋯ menu ("Plan actions").
+  await page.getByRole("button", { name: "Plan actions" }).click();
+  check("UI shows file path (Plan actions menu)", (await page.getByTestId("plan-path").textContent()) === planFile);
+  await page.keyboard.press("Escape");
   check("no Decisions log rail (Q1)", (await page.locator("aside.side2").count()) === 0 && (await page.getByText("Decisions log").count()) === 0);
-  check("save status persists as 'Saved to plan.md' (replaces the 'Saved to disk' badge)", (await page.getByTestId("save-status").textContent())?.includes("Saved to plan.md"));
+  check("save status persists as 'Plated · saved to plan.md' (replaces the 'Saved to disk' badge)", (await page.getByTestId("save-status").textContent())?.includes("Plated · saved to plan.md"));
   const cites = page.locator("[data-testid=plan] .cite");
   check("citations render as R·n chips", (await cites.count()) === 3 && (await cites.nth(1).textContent()) === "R1·2", await cites.allTextContents().then((t) => t.join(" ")));
   check("document shows chips and decision cards, not raw ids or YAML", !/\[R\d+:|kept_suggestion/.test(await page.getByTestId("plan").textContent()));
@@ -399,7 +406,7 @@ try {
   check("plan lists show bullets", marker === "disc", marker);
   await toMode("Markdown");
   check("raw view shows plan.md byte for byte, raw [R1:id]s included", (await rawText()) === plan && plan.includes("[R1:platform]"));
-  check("raw view is labelled 'plan.md, Markdown source' with a status line", (await page.getByRole("textbox", { name: "plan.md, Markdown source" }).count()) === 1 && /plan\.md\s*Markdown\s*Ln 1, Col 1/.test((await page.locator(".ced-status").textContent()) ?? ""));
+  check("raw view is labelled 'plan.md, Markdown source' and says nothing while the text is valid (v1.2 §4)", (await page.getByRole("textbox", { name: "plan.md, Markdown source" }).count()) === 1 && (await page.locator(".ced-status").count()) === 0);
   const axeRaw = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor, Markdown view (dark)", axeRaw.violations.length === 0, axeIds(axeRaw));
   // A decision block that doesn't parse gets a line marker and a plain message; rich keeps the last valid card.
@@ -408,7 +415,7 @@ try {
   await page.locator(".cm-errmsg").waitFor({ timeout: 3000 });
   check("invalid decision block: line marker + plain message in Markdown view", (await page.locator(".cm-errline").count()) === 1 && ((await page.locator(".cm-errmsg").textContent()) ?? "").includes("must be true or false"));
   await toMode("Rich");
-  check("invalid decision block: rich view shows the last valid card", (await page.locator(".dz[data-key=platform][data-invalid]").count()) === 1 && ((await page.locator(".dz[data-key=platform] .dz-a").textContent()) ?? "") === "Mobile app");
+  check("invalid decision block: rich view shows the last valid card", (await page.locator(".dz[data-key=platform][data-invalid]").count()) === 1 && ((await page.locator(".dz[data-key=platform] .dz-av").textContent()) ?? "") === "Mobile app");
   await toMode("Markdown");
   await setRaw(plan);
   const diagrams = "\n## Flow\n\n```mermaid\nflowchart TD\n  A[Idea] --> B[Plan]\n```\n\n```mermaid\n---\nconfig:\n  layout: elk\n---\nflowchart LR\n  C[Asks for ELK] --> D[Gets dagre]\n```\n\n```mermaid\nflowchart TD\n  A -->\n```\n";
@@ -417,8 +424,8 @@ try {
   await setRaw(typed);
   await shot(page, "plan-editor-markdown-dark");
   check("raw edit autosaves to plan.md", await waitDisk((t) => t === typed));
-  await page.getByTestId("save-status").getByText("Saved to plan.md").waitFor({ timeout: 5000 });
-  check("save status says Saved to plan.md", true);
+  await page.getByTestId("save-status").getByText(/^Saved/).waitFor({ timeout: 5000 });
+  check("save status says Saved", true);
   // Typing while scrolled down must not jump the page back to the top (steering bug).
   const scrollOf = () => page.evaluate(() => document.querySelector(".docwrap").scrollTop);
   await page.evaluate(() => (document.querySelector(".docwrap").scrollTop = 900));
@@ -435,9 +442,9 @@ try {
   await page.keyboard.press("Backspace");
   check("raw keystrokes save too", await waitDisk((t) => t === typed));
   await toMode("Rich");
-  await page.locator(".mmd[data-state=ok] svg").first().waitFor({ timeout: 15_000 });
-  await page.locator(".mmd[data-state=ok] svg").nth(1).waitFor({ timeout: 15_000 });
-  check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] svg").count()) === 2);
+  await page.locator(".mmd[data-state=ok] .mmd-svg > svg").first().waitFor({ timeout: 15_000 });
+  await page.locator(".mmd[data-state=ok] .mmd-svg > svg").nth(1).waitFor({ timeout: 15_000 });
+  check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] .mmd-svg > svg").count()) === 2);
   check("diagram SVG is an image named by type and node count", /^flowchart diagram, 2 nodes$/.test((await page.locator(".mmd[data-state=ok] [role=img]").first().getAttribute("aria-label")) ?? ""));
   await page.locator(".mmd[data-state=error]").waitFor({ timeout: 5000 });
   check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .mmd-err").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] pre").textContent()).includes("A -->"));
@@ -460,7 +467,7 @@ try {
   // Edit one block in place in the rich view.
   const para = page.locator("[data-testid=plan] .blk[data-block=para]").first();
   await para.scrollIntoViewIfNeeded();
-  const before = (await para.textContent()) ?? "";
+  const before = (await para.locator(":scope > :not(.blk-act)").first().textContent()) ?? "";
   await para.click({ position: { x: 4, y: 4 } });
   const blockBox = page.getByRole("textbox", { name: /Edit block as Markdown/ });
   await blockBox.waitFor();
@@ -475,6 +482,54 @@ try {
   const edited = onDisk();
   check("only the edited block changed on disk", edited === typed.replace(`\n${before}\n`, `\n${before} Edited in place.\n`), JSON.stringify(before.slice(0, 40)));
   check("citations and decision blocks survive the edits", ["[R1:scope]", "[R1:platform]", "[R2:storage]", "key: platform"].every((t) => edited.includes(t)));
+  // v1.2 §3: every prose block has an "Edit {kind}" button; Tab, Enter, type, Esc puts focus back on it.
+  {
+    const act = page.locator("[data-testid=plan] .blk[data-block=para] .blk-act").first();
+    check("prose blocks carry an 'Edit paragraph: …' button", /^Edit paragraph: /.test((await act.getAttribute("aria-label")) ?? (await act.textContent()) ?? ""), await act.getAttribute("aria-label"));
+    check("decision blocks have no Edit button", (await page.locator("[data-testid=plan] .dz .blk-act, [data-testid=plan] .blk:has(.dz) > .blk-act").count()) === 0);
+    await act.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    check("Tab reaches the block's Edit button", await act.evaluate((el) => el === document.activeElement));
+    const ring = await page.evaluate(() => getComputedStyle(document.activeElement.closest(".blk")).boxShadow);
+    check("a focused Edit button highlights its block", ring !== "none", ring);
+    await page.keyboard.press("Enter");
+    await blockBox.waitFor();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" Typed by keyboard.");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.activeElement?.classList.contains("blk-act"), null, { timeout: 2000 }).catch(() => {});
+    check("Esc closes the editor and focus returns to the block's Edit button", (await blockBox.count()) === 0 && (await page.evaluate(() => document.activeElement?.classList.contains("blk-act"))));
+    check("the keyboard edit is saved to plan.md", await waitDisk((t) => t.includes("Edited in place. Typed by keyboard.")));
+    await page.keyboard.press("Enter");
+    await blockBox.waitFor();
+    await blockBox.press("Meta+Enter");
+    await page.waitForFunction(() => document.activeElement?.classList.contains("blk-act"), null, { timeout: 2000 }).catch(() => {});
+    check("⌘↵ also closes and refocuses the Edit button", (await blockBox.count()) === 0 && (await page.evaluate(() => document.activeElement?.classList.contains("blk-act"))));
+  }
+  // DECISIONS #22, Markdown view: hand-editing answer: is a Change. Held, dependents named, Cancel restores.
+  {
+    const keep = onDisk();
+    await toMode("Markdown");
+    const cur = await rawText();
+    const handEdited = cur.replace(/(key: platform\nquestion: [^\n]*\nanswer: )[^\n]*/, "$1Web app, typed by hand");
+    await setRaw(handEdited);
+    const hold = page.getByTestId("answer-change");
+    await hold.waitFor({ timeout: 5000 });
+    check("#22 Markdown: a hand-edited answer: warns with the dependents", ((await hold.textContent()) ?? "").includes("Storage"), (await hold.textContent())?.slice(0, 160));
+    check("#22 Markdown: the primary is 'Save and re-ask 1'", (await hold.getByRole("button", { name: "Save and re-ask 1" }).count()) === 1);
+    await page.waitForTimeout(600);
+    check("#22 Markdown: nothing is written while the change is held", onDisk() === keep);
+    const axeHold = await new AxeBuilder({ page }).analyze();
+    check("axe: answer-change warning (dark)", axeHold.violations.length === 0, axeIds(axeHold));
+    await shot(page, "plan-editor-answer-change-dark");
+    await hold.getByRole("button", { name: "Cancel" }).click();
+    await hold.waitFor({ state: "detached", timeout: 3000 });
+    check("#22 Markdown: Cancel puts the old answer back", (await rawText()) === cur);
+    await page.waitForTimeout(600);
+    check("#22 Markdown: Cancel leaves plan.md unchanged", onDisk() === keep);
+    await toMode("Rich");
+  }
   const axeDocDark = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor with diagrams (dark)", axeDocDark.violations.length === 0, axeIds(axeDocDark));
 
@@ -513,7 +568,7 @@ try {
 
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "Light theme" }).click();
-  await page.locator(".mmd[data-state=ok] svg").first().waitFor();
+  await page.locator(".mmd[data-state=ok] .mmd-svg > svg").first().waitFor();
   await page.waitForTimeout(400);
   const axeDocLight = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor with diagrams (light)", axeDocLight.violations.length === 0, axeIds(axeDocLight));
@@ -527,7 +582,7 @@ try {
   await page.reload();
   await page.getByTestId("plan").waitFor();
   check("edits survive a reload", ((await page.getByTestId("plan").textContent()) ?? "").includes("Edited in place."));
-  check("save status still says Saved to plan.md after a reload", (await page.getByTestId("save-status").textContent())?.includes("Saved to plan.md"));
+  check("save status still says Saved after a reload", /^Saved/.test((await page.getByTestId("save-status").textContent()) ?? ""));
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "Dark theme" }).click();
 
@@ -551,7 +606,7 @@ try {
   // Graceful stop (AC13) and the stopped state in the tab.
   const st = await stop(server, "SIGINT");
   check("SIGINT exits 0 within 3s", st.code === 0, `${st.ms} ms`);
-  await page.getByRole("heading", { name: "Grillado was stopped" }).waitFor({ timeout: 10_000 });
+  await page.getByRole("heading", { name: "Grillado stopped" }).waitFor({ timeout: 10_000 });
   check("tab shows 'stopped' state", true);
 
   // Plan edits survive a restart (v1.1 acceptance): new process, same data dir.
@@ -580,7 +635,9 @@ try {
     const axeChange = await new AxeBuilder({ page }).analyze();
     check("axe: changing a decision (dark)", axeChange.violations.length === 0, axeIds(axeChange));
     await shot(page, "plan-editor-change-dark");
+    const diskBeforeCancel = readFileSync(planFile, "utf8");
     await page.keyboard.press("Escape");
+    check("#22 block editor: Cancel leaves the block and plan.md unchanged", readFileSync(planFile, "utf8") === diskBeforeCancel && (await card.locator(".dz-warn").count()) === 0);
     check("Esc cancels and puts focus back on the card", (await card.locator(".dz-opts").count()) === 0 && (await page.evaluate(() => document.activeElement?.matches(".dz[data-key=platform]"))));
     await page.keyboard.press("Enter");
     await page.keyboard.press(String(pickIdx));
@@ -637,6 +694,17 @@ try {
     const cf2 = path.join(path.dirname(planFile2), "plan.conflict.md");
     check("Load the file: the file wins, my edits are kept as plan.conflict.md", readFileSync(planFile2, "utf8") === fileSide && readFileSync(cf2, "utf8").includes(" Mine again.") && (await banner2.count()) === 0);
     await page.setViewportSize({ width: 1280, height: 720 });
+    // DECISIONS #22, Markdown view, save side: "Save and re-ask 1" runs the same path as the card's Change.
+    await toMode("Markdown");
+    const md22 = await rawText();
+    await setRaw(md22.replace(/(key: platform\nquestion: [^\n]*\nanswer: )[^\n]*/, "$1Mobile app"));
+    const hold2 = page.getByTestId("answer-change");
+    await hold2.waitFor({ timeout: 5000 });
+    check("#22 Markdown: the warning names the old and new answer", ((await hold2.textContent()) ?? "").includes(`${newAnswer} → Mobile app`), (await hold2.textContent())?.slice(0, 160));
+    await hold2.getByRole("button", { name: "Save and re-ask 1" }).click();
+    await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
+    const s22 = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
+    check("#22 Markdown: saving writes the answer and re-asks the dependents in a new round", readFileSync(planFile2, "utf8").includes("key: platform\nquestion: Start on the web?\nanswer: Mobile app") && s22.stale?.storage && !s22.decisions.storage && s22.rounds.at(-1).questions.some((q) => q.key === "storage"));
   }
   check("restart: second server exits 0", (await stop(again, "SIGINT")).code === 0);
   await context.close();

@@ -499,6 +499,8 @@ export function PlanEditor({
         </div>
       ) : (
         <div className="doc doc-raw">
+          {/* The page keeps its heading in the Markdown view; the source shows it as "# …". */}
+          <h1 className="sr-only">{/^# (.+)$/m.exec(draft.text)?.[1] ?? "plan.md"}</h1>
           <CodeEditor
             key={readOnly ? "ro" : "rw"}
             value={draft.text}
