@@ -279,7 +279,8 @@ export function Diagram({ code, onEdit, bare = false }: { code: string; onEdit?:
       aria-roledescription={ok ? "diagram" : undefined}
       aria-label={ok ? diagramLabel(code, ok) : undefined}
       aria-describedby={ok ? hint : undefined}
-      aria-keyshortcuts={ok ? (onEdit ? "Enter F" : "F") : undefined}
+      aria-keyshortcuts={ok ? (onEdit ? "Enter F /" : "F") : undefined}
+      aria-description={ok && onEdit ? "Slash adds a block below" : undefined}
       aria-busy={res === null || undefined}
       onClick={
         mobile && ok

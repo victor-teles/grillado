@@ -180,6 +180,7 @@ try {
       check("label U1 in the Decisions tab or card", /U1/.test(await card.textContent()) || /U1/.test(await pg.textContent("body")));
       // The meta line's "·" sits in the gap, so a wrapped line never starts with it.
       check("card meta separators sit in the gap", await card.evaluate((c) => [...c.querySelectorAll(".dz-h > * + *")].every((e) => getComputedStyle(e, "::before").position === "absolute")));
+      check("decision card announces its “/” shortcut", /(^| )\/$/.test((await card.getAttribute("aria-keyshortcuts")) ?? "") && (await card.getAttribute("aria-description")) === "Slash adds a block below", await card.getAttribute("aria-keyshortcuts"));
       // "/" on a focused decision card adds a block below it.
       const md0 = await planMd(pg);
       await card.focus();
@@ -340,6 +341,7 @@ try {
     await axe(mp, `${theme} mobile: menu open`);
     await mp.locator(".msm [role=option]", { hasText: "Checklist" }).tap();
     if (one) check("mobile: tap inserts", (await ta(mp)).v.includes("- [ ] Task"));
+    if (one) check("mobile: a field is selected but the hint never says Tab", (await mp.locator(".blk[data-editing] .blk-hint").textContent()) === "Markdown");
     await mp.keyboard.type("Buy milk");
     await mp.locator(".acc4 button", { hasText: "Done" }).tap();
     await mp.locator(TA).waitFor({ state: "detached" });

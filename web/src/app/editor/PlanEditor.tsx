@@ -362,8 +362,8 @@ export type NewBlock = { pointer: boolean };
 function hintOf(fields: boolean, menu: boolean, mobile?: boolean, mermaid?: boolean): ReactNode {
   const k = (t: string) => <span className="kb4">{t}</span>;
   if (mermaid && !menu && !fields) return mobile ? "Mermaid" : <>Mermaid · {k("⌘↵")} draw now · {k("Esc")} finish</>;
-  if (fields) return mobile ? <>{k("Tab")} next field</> : <>{k("Tab")} next field · {k("Esc")} finish</>;
-  if (mobile) return "Markdown";
+  if (mobile) return "Markdown"; // phone keyboards have no Tab or Esc
+  if (fields) return <>{k("Tab")} next field · {k("Esc")} finish</>;
   return menu ? <>Markdown · {k("Esc")} close menu</> : <>Markdown · {k("Esc")} to finish</>;
 }
 
@@ -780,7 +780,7 @@ export function PlanEditor({
           onKeyDown={(e) => {
             if (e.key === "Escape" && editing) doneEditing(true);
             const t0 = e.target as HTMLElement;
-            if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && (t0.matches(".blk-act") || t0.matches(".dz:not([data-state=changing])"))) {
+            if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && (t0.matches(".blk-act") || t0.matches(".dz:not([data-state=changing])") || t0.matches("figure.mm5[aria-keyshortcuts~='/']"))) {
               const start = Number(t0.closest<HTMLElement>(".blk")?.dataset.start);
               const b = parseBlocks(draft.text).find((x) => x.start === start);
               if (b) {

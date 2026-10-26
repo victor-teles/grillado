@@ -350,6 +350,19 @@ try {
       await pg.waitForFunction(() => !document.querySelector("[data-testid=diagram-suggestion]"), null, { timeout: 8000 });
       check("Reject all leaves the plan as it was", (await planMd(pg)) === base);
 
+      // 6c. "/" on a focused figure adds a block below it, like Edit and decision cards (#5 follow-up).
+      check("figure announces Enter, F and “/”", (await fig.getAttribute("aria-keyshortcuts")) === "Enter F /" && (await fig.getAttribute("aria-description")) === "Slash adds a block below");
+      const mdSlash = await planMd(pg);
+      await fig.focus();
+      await pg.keyboard.press("/");
+      await pg.locator(".slm").waitFor({ timeout: 5000 });
+      check("“/” on a figure opens the slash menu in a new block below", (await pg.locator(TA).inputValue()) === "/");
+      await pg.keyboard.press("Escape");
+      await pg.keyboard.press("Escape");
+      await pg.locator(TA).waitFor({ state: "detached" });
+      await pg.waitForTimeout(300);
+      check("Esc twice leaves the plan as it was", (await planMd(pg)) === mdSlash);
+
       // 7. Enter on a focused figure edits it: live preview, error after 1s, dimmed last good version.
       await fig.focus();
       await pg.keyboard.press("Enter");
