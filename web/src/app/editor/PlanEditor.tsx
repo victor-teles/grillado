@@ -358,6 +358,14 @@ export function autosize(el: HTMLTextAreaElement | null) {
 /** How the block editor was opened: a new block from "+" (pointer) or "/" on a block (key) opens the menu. */
 export type NewBlock = { pointer: boolean };
 
+/** The hint under the block editor (its aria-describedby): Esc closes the menu first; phones have no Esc. */
+function hintOf(fields: boolean, menu: boolean, mobile?: boolean): ReactNode {
+  const k = (t: string) => <span className="kb4">{t}</span>;
+  if (fields) return mobile ? <>{k("Tab")} next field</> : <>{k("Tab")} next field · {k("Esc")} finish</>;
+  if (mobile) return "Markdown";
+  return menu ? <>Markdown · {k("Esc")} close menu</> : <>Markdown · {k("Esc")} to finish</>;
+}
+
 function BlockEditor({
   text,
   kind,
@@ -423,8 +431,8 @@ function BlockEditor({
   };
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
-  // Prose is edited in Inter at its own size so nothing jumps; only fences are mono (#17).
-  const cls = kind === "fence" || text.startsWith("```") ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
+  // Prose is edited in Inter at its own size so nothing jumps; once the block holds a fence it is mono (#17).
+  const cls = kind === "fence" || /^```/m.test(text) ? "blk-edit mono" : `blk-edit${level ? ` h${Math.min(level, 4)}` : ""}`;
   const f = s.fields;
   // Mobile: the accessory row sits on the keyboard; the list docks above it.
   const dock = useKeyboardDock(mobile);
@@ -489,7 +497,7 @@ function BlockEditor({
         />
       </div>
       <p className="blk-hint" id={hint} aria-hidden="true">
-        {f ? "Tab next field · Esc finish" : "Markdown · Esc to finish"}
+        {hintOf(!!f, !!s.menu, mobile)}
       </p>
       {preview && preview.kind === "fence" ? (
         <div className="blk-preview" aria-label="Live preview">
@@ -747,7 +755,7 @@ export function PlanEditor({
           onKeyDown={(e) => {
             if (e.key === "Escape" && editing) doneEditing(true);
             const t0 = e.target as HTMLElement;
-            if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && t0.matches(".blk-act")) {
+            if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && (t0.matches(".blk-act") || t0.matches(".dz:not([data-state=changing])"))) {
               const start = Number(t0.closest<HTMLElement>(".blk")?.dataset.start);
               const b = parseBlocks(draft.text).find((x) => x.start === start);
               if (b) {

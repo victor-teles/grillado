@@ -149,6 +149,7 @@ try {
     // Esc closes and keeps the text; a second Esc finishes.
     await pg.keyboard.press("Escape");
     if (one) check("Esc closes the menu, keeps /dia", (await pg.locator(".slm").count()) === 0 && (await ta(pg)).v.endsWith("/dia") && (await pg.locator(TA).count()) === 1);
+    if (one) check("hint after the menu closes: Esc to finish", (await pg.locator(".blk[data-editing] .blk-hint").textContent()) === "Markdown · Esc to finish", (await pg.locator(".blk[data-editing] .blk-hint").textContent()));
     // Backspace past "/" closes; typing it again reopens.
     for (let i = 0; i < 4; i++) await pg.keyboard.press("Backspace");
     await pg.keyboard.type("/qs");
@@ -161,6 +162,10 @@ try {
       check("field hint", (await pg.locator(".blk[data-editing] .blk-hint").textContent()) === "Tab next field · Esc finish");
       check("insert announced", /Question inserted\. Question field selected\./.test(await pg.locator(".blk[data-editing] > .sr-only[role=status]").textContent()));
       check("field chip under the textarea", (await pg.locator(".blk-bd .ph.on").textContent()) === "Question");
+      // Must-fix 2: a fence typed inside a paragraph turns the editor mono, and the chip (not the browser) shows the field.
+      const look = await pg.$eval(TA, (el) => ({ mono: el.classList.contains("mono"), font: getComputedStyle(el).fontFamily, sel: getComputedStyle(el, "::selection").backgroundColor }));
+      check("prose block holding a fence is mono", look.mono && /Geist Mono/.test(look.font), JSON.stringify(look));
+      check("textarea selection is transparent in field mode", look.sel === "rgba(0, 0, 0, 0)", look.sel);
     }
     await snap("i4-fields");
     await pg.keyboard.type("Which browsers do we support?");
@@ -174,6 +179,19 @@ try {
       const card = pg.locator(".dz", { hasText: "Which browsers do we support?" }).first();
       check("card says the agent asks it next round", /Claude Code asks it in the next round/.test(await card.textContent()), (await card.textContent()).slice(0, 200));
       check("label U1 in the Decisions tab or card", /U1/.test(await card.textContent()) || /U1/.test(await pg.textContent("body")));
+      // The meta line's "·" sits in the gap, so a wrapped line never starts with it.
+      check("card meta separators sit in the gap", await card.evaluate((c) => [...c.querySelectorAll(".dz-h > * + *")].every((e) => getComputedStyle(e, "::before").position === "absolute")));
+      // "/" on a focused decision card adds a block below it.
+      const md0 = await planMd(pg);
+      await card.focus();
+      await pg.keyboard.press("/");
+      await pg.locator(".slm").waitFor();
+      check("/ on a decision card opens a new block below it", (await ta(pg)).v === "/");
+      await pg.keyboard.press("Escape");
+      await pg.keyboard.press("Escape");
+      await pg.locator(TA).waitFor({ state: "detached" });
+      await pg.waitForTimeout(800);
+      check("…and Esc twice removes it", (await planMd(pg)) === md0);
     }
     await snap("i4-question");
 
@@ -200,10 +218,30 @@ try {
     await pg.locator(TA).waitFor({ state: "detached" });
     if (one) check("table renders", (await pg.locator(".doc .tbl4 th").count()) === 2 && (await pg.locator(".doc .tbl4 th").nth(1).textContent()) === "Owner");
 
+    // Must-fix 3: "/" is announced on each block's Edit button.
+    if (one) {
+      const keys = await pg.$$eval(".doc .blk-act", (els) => els.map((e) => e.getAttribute("aria-keyshortcuts")));
+      check("Edit buttons announce aria-keyshortcuts=/", keys.length > 0 && keys.every((k) => k === "/"), JSON.stringify(keys.slice(0, 4)));
+    }
+    // Must-fix 1: the "+" tooltip sits left of "+" in the margin, and hides after a click until the pointer leaves.
+    {
+      const blk = pg.locator(".doc .blk[data-block=para]").first();
+      await blk.hover();
+      await blk.locator(".blk-add").hover();
+      await pg.waitForTimeout(500);
+      const tip = await blk.locator(".blk-add").evaluate((b) => {
+        const t = b.querySelector(".tip4");
+        const r = t.getBoundingClientRect(), p = b.getBoundingClientRect();
+        return { vis: getComputedStyle(t).visibility, right: r.right, plusLeft: p.left, mid: Math.abs(r.top + r.height / 2 - (p.top + p.height / 2)) };
+      });
+      if (one) check("+ tooltip shows left of +, centred", tip.vis === "visible" && tip.right <= tip.plusLeft && tip.mid < 2, JSON.stringify(tip));
+      await snap("i4-tooltip");
+    }
     // "+" in the margin: a new block below, menu open; Esc twice on it removes it.
     const before = await planMd(pg);
     await plus(pg);
     if (one) check("+ opens a new block with the menu", (await ta(pg)).v === "/" && (await pg.locator(".slm[data-pointer]").count()) === 1);
+    if (one) check("+ tooltip hidden after the click while the pointer stays", (await pg.locator(".blk-add[data-used] .tip4").evaluate((t) => getComputedStyle(t).visibility).catch(() => "gone")) !== "visible");
     await snap("i4-plus");
     await pg.keyboard.press("Escape");
     await pg.keyboard.press("Escape");
@@ -293,6 +331,7 @@ try {
     await mp.locator(".acc4").waitFor();
     if (one) check("mobile: accessory row", (await mp.locator(".acc4 button").allTextContents()).join(",") === "Block,Done");
     if (one) check("mobile: no + in the margin", !(await mp.locator(".blk-add").first().isVisible().catch(() => false)));
+    if (one) check("mobile: hint has no Esc", (await mp.locator(".blk[data-editing] .blk-hint").textContent()) === "Markdown");
     await mp.locator(".acc4 button", { hasText: "Block" }).tap();
     await mp.locator(".msm").waitFor();
     if (one) check("mobile: docked list, no preview", (await mp.locator(".msm [role=option]").count()) === 12 && (await mp.locator(".sm-p").count()) === 0);

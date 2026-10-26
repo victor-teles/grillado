@@ -199,7 +199,7 @@ export function Markdown({
       >
         {/* The keyboard way in (v1.2 §1): one Tab stop per block, shown on focus or hover. Mermaid keeps "Edit source". */}
         {b.kind === "fence" && b.lang === "mermaid" ? null : (
-          <button type="button" className="blk-act" aria-label={editLabel(b)} onClick={() => onBlock(b)}>
+          <button type="button" className="blk-act" aria-label={editLabel(b)} aria-keyshortcuts="/" aria-description="Slash adds a block below" onClick={() => onBlock(b)}>
             <IEdit s={14} />
             Edit
           </button>
@@ -215,8 +215,11 @@ export function Markdown({
             onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => {
               e.stopPropagation();
+              // The tooltip stays hidden after a click until the pointer leaves (it would cover the new block).
+              e.currentTarget.dataset.used = "";
               onAdd(b);
             }}
+            onPointerLeave={(e) => delete e.currentTarget.dataset.used}
           >
             <PlusIcon />
             <span className="tip4" aria-hidden="true">

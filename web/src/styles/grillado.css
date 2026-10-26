@@ -28,6 +28,8 @@
 }
 /* Light inks a step darker than the board tokens so small text on --sel clears 4.5:1. */
 html.light{--success-ink:oklch(0.47 0.14 153);--warning-ink:oklch(0.5 0.15 55)}
+/* dark: the warning ink moves to amber-yellow so it never reads as ember (heat, open, the agent at work) */
+html:not(.light){--warning-ink:oklch(0.84 0.15 92)}
 
 html,body,#root{height:100%}
 body{margin:0;font-family:var(--sans);font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;font-size:var(--t-body);line-height:20px;background:var(--background);color:var(--foreground)}
@@ -435,7 +437,10 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 .dz-n,.dz-h{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
 .dz-n{margin-top:4px}
 .dz-h{display:flex;gap:0;flex-wrap:wrap;max-height:0;opacity:0;overflow:hidden;transition:opacity var(--d-quick) var(--ease-out)}
-.dz-h>*+*::before{content:" · ";white-space:pre}
+/* the "·" sits in the gap, so a wrapped line never starts with one (it is clipped at the edge) */
+.dz-h{column-gap:15px}
+.dz-h>*{position:relative}
+.dz-h>*+*::before{content:"·";position:absolute;left:-10px}
 .dz-lbl{display:none}
 .dz-h>.dz-lbl+*::before{content:none}
 .dz-aff{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}
@@ -797,16 +802,18 @@ ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-
 .blk-ed{position:relative;display:grid}
 .blk-edit::placeholder{color:var(--subtle-foreground)}
 .blk[data-fields] .blk-edit:not(.blk-bd){position:relative;background:transparent;z-index:1}
+/* the mirror's .ph.on chip is the selection while fields are on, not the browser's own */
+.blk[data-fields] .blk-edit::selection{background:transparent}
 .blk-bd{position:absolute;inset:0;height:auto!important;white-space:pre-wrap;overflow-wrap:break-word;color:transparent;pointer-events:none;user-select:none}
 .blk-bd .ph{border-radius:4px;background:color-mix(in oklab,var(--foreground) var(--ph-a),transparent)}
 .blk-bd .ph.on{background:color-mix(in oklab,var(--primary) 30%,transparent)}
 /* rich view: "+" adds a block below; its tooltip shows after 300ms */
-.blk-add{position:absolute;left:-40px;top:-2px;width:28px;height:28px;border:0;border-radius:8px;padding:0;display:grid;place-items:center;background:transparent;color:var(--muted-foreground);opacity:0;transition:opacity var(--d-quick) ease,background-color var(--d-quick) ease,color var(--d-quick) ease}
+.blk-add{position:absolute;left:-40px;top:-2px;width:28px;height:28px;border:0;border-radius:8px;padding:0;display:grid;place-items:center;background:transparent;color:var(--muted-foreground);opacity:0;transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-quick) var(--ease-out),color var(--d-quick) var(--ease-out)}
 .blk:focus-within>.blk-add{opacity:1}
 @media (hover:hover) and (pointer:fine){.blk:hover>.blk-add{opacity:1}.blk-add:hover{background:var(--muted);color:var(--foreground)}}
 @media (hover:none),(max-width:767px){.blk-add{display:none}}
-.blk-add .tip4{position:absolute;left:0;top:calc(100% + 6px);z-index:9;display:flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 10px;border-radius:8px;background:var(--popover);box-shadow:var(--sm-shadow);font:400 var(--t-meta)/1 var(--sans);color:var(--foreground);white-space:nowrap;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--d-quick) var(--ease-out),visibility 0s var(--d-quick)}
-.blk-add:hover .tip4{opacity:1;visibility:visible;transition-delay:300ms,300ms}
+.blk-add .tip4{position:absolute;left:auto;right:calc(100% + 6px);top:50%;translate:0 -50%;z-index:9;display:flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 10px;border-radius:8px;background:var(--popover);box-shadow:var(--sm-shadow);font:400 var(--t-meta)/1 var(--sans);color:var(--foreground);white-space:nowrap;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--d-quick) var(--ease-out),visibility 0s var(--d-quick)}
+.blk-add:hover:not([data-used]) .tip4{opacity:1;visibility:visible;transition-delay:300ms,300ms}
 /* the new block's flash after an insert: 120 in, 1200 hold, 220 out (background only) */
 .doc .blk[data-fl]{background:color-mix(in oklab,var(--primary) var(--link-blk-a),var(--sel));transition-duration:120ms}
 .doc .blk:not([data-fl]){transition:background-color var(--d-base) var(--ease-out)}
