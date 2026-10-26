@@ -22,7 +22,9 @@ export interface PlanDraft {
   text: string;
   change: (text: string) => void;
   flush: () => Promise<void>;
-  save: { state: SaveState | "idle"; error?: string; savedAt?: number };
+  save: { state: SaveState | "idle"; error?: string; savedAt?: number; /** A decision card's save: "Saving…" right away. */ card?: boolean };
+  /** Show a save made outside the text (a decision card's Save answer) in the status: Saving…, then Saved. */
+  track: <T>(p: Promise<T>) => Promise<T>;
   /** Bumps when the text was replaced from outside (another tab, a new plan, plan.md on disk). */
   epoch: number;
   /** plan.md changed on disk while there were unsaved edits here (Q5). */
@@ -63,6 +65,9 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
   const sent = useRef(new Set<string>());
   const seenReload = useRef(reloadedAt);
   const saver = useRef<Autosaver | null>(null);
+  // A decision card's save runs outside the autosaver; while it shows (Saving…/Saved), the autosaver resetting to
+  // the server's echo must not blank it. Cleared by the next autosaver activity or an outside reload.
+  const cardSave = useRef(false);
   const openConflict = useCallback((disk: string) => {
     saver.current!.hold();
     conflictRef.current = true;
@@ -90,7 +95,11 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
         throw err;
       }
     },
-    onState: (state, info) => setSave({ state, ...info }),
+    onState: (state, info) => {
+      if (state === "saved" && cardSave.current) return; // reset() to the card save's echo, not a save of typing
+      cardSave.current = false;
+      setSave({ state, ...info });
+    },
   });
 
   useEffect(() => {
@@ -110,7 +119,9 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
     textRef.current = serverMarkdown;
     setText(serverMarkdown);
     setEpoch((n) => n + 1);
-    setSave({ state: "idle" });
+    // The echo of a card's save must not wipe its Saving…/Saved status.
+    if (external) cardSave.current = false;
+    if (!cardSave.current) setSave({ state: "idle" });
     if (external) setNotice("Reloaded plan.md");
   }, [serverMarkdown, reloadedAt, openConflict, clearAnswerHold]);
 
@@ -198,7 +209,20 @@ export function usePlanDraft(sessionId: string, serverMarkdown: string, reloaded
     setEpoch((n) => n + 1); // closes a block editor showing the old text
     change(revertAnswerEdits(textRef.current, answersRef.current));
   }, [change]);
-  return { text, change, flush, save, epoch, conflict, resolve, notice, answerChange, applyAnswerChange, cancelAnswerChange };
+  const track = useCallback(async <T,>(p: Promise<T>): Promise<T> => {
+    cardSave.current = true;
+    setSave({ state: "saving", card: true });
+    try {
+      const r = await p;
+      setSave({ state: "saved", savedAt: Date.now(), card: true });
+      return r;
+    } catch (err) {
+      cardSave.current = false;
+      setSave({ state: "idle" }); // the card shows what went wrong, next to the answer
+      throw err;
+    }
+  }, []);
+  return { text, change, flush, save, epoch, conflict, resolve, notice, answerChange, applyAnswerChange, cancelAnswerChange, track };
 }
 
 /**
@@ -240,7 +264,7 @@ export function SaveStatus({
       setAnnounce("Saved again");
     }
   }, [save.state, conflict, answerChange]);
-  const state = answerChange ? "held" : conflict ? "pending" : save.state === "saving" && !slow ? "pending" : save.state;
+  const state = answerChange ? "held" : conflict ? "pending" : save.state === "saving" && !slow && !save.card ? "pending" : save.state;
   // With open decisions the status reads "Saved · n open" from the start (v1.2 §3).
   const fresh = state === "idle" && !edited && !open;
   const label = answerChange

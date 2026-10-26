@@ -491,9 +491,74 @@ function setAnswer(s: Session, key: string, pick: Pick): string[] | null {
   const ans = found.round.answers?.find((a) => a.questionId === key);
   if (ans) Object.assign(ans, { optionId: pick.optionId, text: next.kind === "other" ? next.answer : undefined, accepted_recommendation: next.accepted });
   const now = new Date().toISOString();
-  s.plan!.markdown = updateDecisionBlock(s.plan!.markdown, key, { answer: next.answer, by: "you", kept_suggestion: next.accepted, at: now });
+  const md = restateAnswer(s.plan!.markdown, `R${d.round}:${key}`, d.answer, next.answer);
+  // The note is the agent's one-line statement of the old answer: carry it over only when it
+  // restates the answer word for word (then swap the words), otherwise drop it rather than let
+  // the card contradict itself.
+  const block = findDecisionBlocks(md).find((b) => blockKey(b.parsed) === key);
+  const oldNote = block?.parsed.ok ? block.parsed.fields.note : undefined;
+  const note = oldNote ? swapAnswer(oldNote, d.answer, next.answer) : undefined;
+  s.plan!.markdown = updateDecisionBlock(md, key, { answer: next.answer, note: note ?? undefined, by: "you", kept_suggestion: next.accepted, at: now });
   s.plan!.editedAt = now;
   return deps;
+}
+
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * `text` with every whole-word occurrence of the answer `from` replaced by `to` (case-insensitive;
+ * the first letter follows the text's case). null when `from` doesn't appear.
+ */
+export function swapAnswer(text: string, from: string, to: string): string | null {
+  const f = from.trim();
+  if (!f) return null;
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(f)}(?![\\p{L}\\p{N}])`, "giu");
+  if (!re.test(text)) return null;
+  re.lastIndex = 0;
+  // Where the text changed the answer's first-letter case (sentence start, mid-sentence), follow it.
+  const up = (c: string) => c !== c.toLowerCase();
+  return text.replace(re, (m) => (up(m[0]) === up(f[0]) ? to : (up(m[0]) ? to.charAt(0).toUpperCase() : to.charAt(0).toLowerCase()) + to.slice(1)));
+}
+
+/**
+ * The plan's prose after an answer changed: in each sentence or list item that cites the
+ * decision (`[R1:key]`), outside fences, a word-for-word restatement of the old answer becomes
+ * the new one. Prose that paraphrases the answer is left to the agent (folding a change into the
+ * text is the Phase 2 agent edit, reviewed before it reaches plan.md, DECISIONS #15).
+ */
+export function restateAnswer(md: string, cite: string, from: string, to: string): string {
+  if (!from.trim() || from === to) return md;
+  let fence = false;
+  return md
+    .split("\n")
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        fence = !fence;
+        return line;
+      }
+      if (fence || !line.includes(cite)) return line;
+      // Sentences keep every character, so the line joins back unchanged where nothing matched.
+      return line
+        .split(/(?<=[.!?])(?=\s)/)
+        .map((part) => (citesKey(part, cite) ? swapOutsideCites(part, from, to) : part))
+        .join("");
+    })
+    .join("\n");
+}
+
+const CITE_RE = /\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/g;
+const citesKey = (text: string, cite: string) => [...text.matchAll(CITE_RE)].some((m) => m[1].split(/\s*,\s*/).includes(cite));
+/** Swap the answer in the text between cites, never inside a [R1:key] cite itself. */
+function swapOutsideCites(text: string, from: string, to: string): string {
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(CITE_RE)) {
+    const seg = text.slice(last, m.index);
+    out += (swapAnswer(seg, from, to) ?? seg) + m[0];
+    last = m.index! + m[0].length;
+  }
+  const tail = text.slice(last);
+  return out + (swapAnswer(tail, from, to) ?? tail);
 }
 
 /** Mark what depends on a changed decision as "will be asked again". */

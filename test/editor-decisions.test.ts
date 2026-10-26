@@ -10,7 +10,7 @@ import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
 import { answerEdits, decisionProblems, findDecisionBlocks, parseDecisionBody, revertAnswerEdits, serializeDecision, updateDecisionBlock } from "../src/core/decision-block.ts";
 import { agentNameFrom } from "../src/core/providers/base.ts";
-import { type Session, OTHER_OPTION, answerOpenDecision, changeDecision, createSession, planAnswerEdits, renderPlanMarkdown, saveAnswerEdits } from "../src/core/session.ts";
+import { type Session, OTHER_OPTION, answerOpenDecision, changeDecision, createSession, planAnswerEdits, renderPlanMarkdown, restateAnswer, saveAnswerEdits, swapAnswer } from "../src/core/session.ts";
 import { textHash } from "../src/core/text-hash.ts";
 import { passages, sentences } from "../web/src/app/editor/blocks.ts";
 import { diagramLabel, explainDiagramError } from "../web/src/app/editor/diagram.ts";
@@ -160,6 +160,46 @@ describe("changing a decision inline (Q2)", () => {
     expect(s.decisions.scope).toMatchObject({ answer: "Just me", kind: "other" });
     expect(s.rounds[0].answers!.find((a) => a.questionId === "scope")).toMatchObject({ optionId: OTHER_OPTION, text: "Just me" });
     expect(s.plan!.markdown).toContain("answer: Just me");
+  });
+
+  test("no stale restatement: cited prose and the block's note follow the new answer (recording bug 1)", () => {
+    const s = createSession({ idea: "Notes", provider: "claude" });
+    const qs = [question("scope"), question("platform")];
+    s.rounds = [{ n: 1, questions: qs, summary: "", askedAt: "2026-10-22T20:00:00.000Z", answeredAt: "2026-10-22T21:14:00.000Z", answers: qs.map((q) => ({ questionId: q.key, optionId: "a", accepted_recommendation: true })) }];
+    for (const q of qs) s.decisions[q.key] = { key: q.key, round: 1, title: q.title, label: q.label, answer: `${q.key} a`, kind: "option", accepted_recommendation: true, dependsOn: [] };
+    const body = "## Implementation decisions\n- scope a [R1:scope]\n- platform a [R1:platform]\n\nWe go with platform a for now [R1:platform]. Scope a stays small [R1:scope]. Unrelated platform a mention.";
+    const statements = [
+      { round: 1, questionId: "scope", statement: "Decided: scope a." },
+      { round: 1, questionId: "platform", statement: "Phones first, because that's where lists get used." },
+    ];
+    const markdown = renderPlanMarkdown(s, { type: "plan", title: "Notes", markdown: body, decisions: statements, openDecisions: [] } as any);
+    s.status = "plated";
+    s.plan = { title: "Notes", markdown, path: "/tmp/plan.md", openDecisions: [], createdAt: new Date().toISOString() };
+
+    expect(changeDecision(s, "scope", { optionId: "b" })).toEqual([]);
+    const md = s.plan.markdown;
+    expect(md).toContain("- scope b [R1:scope]");
+    expect(md).toContain("Scope b stays small [R1:scope].");
+    expect(md).toContain("note: Decided: scope b.");
+    expect(md).not.toMatch(/scope a/i);
+    expect(md).toContain("- platform a [R1:platform]"); // other decisions untouched
+
+    // A paraphrased note can't be rewritten word for word: it's dropped, never left stale.
+    changeDecision(s, "platform", { optionId: "b" });
+    const md2 = s.plan.markdown;
+    expect(md2).toContain("- platform b [R1:platform]");
+    expect(md2).toContain("We go with platform b for now [R1:platform].");
+    expect(md2).toContain("Unrelated platform a mention."); // only sentences that cite the decision
+    expect(md2).not.toContain("Phones first");
+    expect(decisionProblems(md2)).toEqual([]);
+  });
+
+  test("restateAnswer leaves fences and cites alone; swapAnswer matches whole words", () => {
+    const md = "- Yes [R1:a]\n```decision\nanswer: Yes\n```\n- Yesterday [R1:a]\n- Yes [R1:b]";
+    expect(restateAnswer(md, "R1:a", "Yes", "No")).toBe("- No [R1:a]\n```decision\nanswer: Yes\n```\n- Yesterday [R1:a]\n- Yes [R1:b]");
+    expect(restateAnswer("- local [R1:local]", "R1:local", "local", "cloud")).toBe("- cloud [R1:local]");
+    expect(swapAnswer("we picked mobile app.", "Mobile app", "Web app")).toBe("we picked web app.");
+    expect(swapAnswer("nothing here", "Mobile app", "Web app")).toBeNull();
   });
 
   test("same answer is a no-op; bad picks and wrong states throw", () => {

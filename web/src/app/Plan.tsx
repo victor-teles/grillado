@@ -107,7 +107,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
   };
   const save = async (key: string, open: boolean, pick: { optionId: string; text?: string }) => {
     await draft.flush();
-    await act(open ? "answer-open" : "change", { key, ...pick });
+    await draft.track(act(open ? "answer-open" : "change", { key, ...pick }));
   };
 
   const renderDecision: DecisionRenderer = (fields, { invalid, setActive }) => {
