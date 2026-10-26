@@ -112,6 +112,20 @@ describe("block suggestions", () => {
     expect(s.plan!.markdown).not.toContain("accTitle: Old");
     expect(s.plan!.markdown.trimEnd().endsWith(`\`\`\`mermaid\n${FLOW}\n\`\`\``)).toBe(true);
   });
+  test("⌘Z undoes a whole Accept all batch (a new diagram and a replacement) in one step", () => {
+    const s = plated();
+    const secs = planSections(PLAN);
+    const a = addDiagramSuggestion(s, secs[1], FLOW);
+    const b = addDiagramSuggestion(s, secs[2], FLOW.replace("Sync flow", "New flow"));
+    expect(b.replace).toBe(true);
+    review(s, "accept", [a.id, b.id]);
+    expect(s.plan!.markdown).toContain("accTitle: New flow");
+    expect(s.plan!.markdown).not.toContain("accTitle: Old");
+    expect(undoReview(s)?.ids.sort()).toEqual([a.id, b.id].sort());
+    expect(s.plan!.markdown).toBe(PLAN);
+    expect(s.suggestions!.filter((x) => x.status === "pending").length).toBe(2);
+    expect(undoReview(s)).toBeNull();
+  });
   test("a hand edit under the anchor drops it and counts it as skipped", () => {
     const s = plated();
     s.diagramRun = { state: "done", startedAt: "", sections: ["Problem"], kinds: ["flowchart"], done: 1, added: 1, skipped: 0 };

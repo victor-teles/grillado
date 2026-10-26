@@ -264,6 +264,38 @@ try {
       await snap("i5-none");
       await pg.getByTestId("diagram-none").getByRole("button", { name: "Dismiss" }).click();
 
+      // 6b. Accept all on a batch with a new diagram and a replacement; one ⌘Z undoes the whole batch (PO, #6).
+      const before = await planMd(pg);
+      const grown = before.replace(/(## Problem\n[^\n]*\n)/, "$1\n- Phones go offline\n- Lists sync later\n");
+      await pg.evaluate(async (md) => {
+        const r = await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ markdown: md }) });
+        if (!r.ok) throw new Error(await r.text());
+      }, grown);
+      await pg.getByText("Lists sync later").waitFor({ timeout: 8000 });
+      await openAsk(pg);
+      await ask.getByRole("button", { name: "Clear all" }).click();
+      await ask.locator(".ck5", { hasText: "Problem" }).click();
+      await ask.locator(".ck5", { hasText: "Implementation decisions" }).click();
+      await ask.getByRole("button", { name: /^Add diagrams/ }).click();
+      await waitRunEnd(pg);
+      await pg.waitForFunction(() => document.querySelectorAll("[data-testid=diagram-suggestion]").length === 2, null, { timeout: 15000 });
+      check("batch: one new diagram and one replacement", (await pg.locator(".sgb5.rep").count()) === 1 && (await pg.getByTestId("diagram-removed").count()) === 1);
+      const base = await planMd(pg);
+      await pg.locator(".review").getByRole("button", { name: /^Accept all/ }).click();
+      await pg.waitForFunction(() => !document.querySelector("[data-testid=diagram-suggestion]"), null, { timeout: 8000 });
+      await pg.waitForTimeout(400);
+      const acc = await planMd(pg);
+      check("Accept all accepts the new diagram and the replacement", (acc.match(/```mermaid/g) ?? []).length === 2 && acc.includes("accTitle: Problem flow") && !acc.includes("|next|"), acc.slice(0, 400));
+      await pg.locator("body").click({ position: { x: 5, y: 300 } });
+      await pg.keyboard.press("Control+z");
+      await pg.waitForFunction(() => document.querySelectorAll("[data-testid=diagram-suggestion]").length === 2, null, { timeout: 8000 });
+      await pg.waitForTimeout(400);
+      check("one ⌘Z undoes the whole batch", (await planMd(pg)) === base && (await pg.getByTestId("diagram-removed").count()) === 1, (await planMd(pg)).slice(0, 300));
+      await snap("i5-undo-batch");
+      await pg.locator(".review").getByRole("button", { name: /^Reject all/ }).click();
+      await pg.waitForFunction(() => !document.querySelector("[data-testid=diagram-suggestion]"), null, { timeout: 8000 });
+      check("Reject all leaves the plan as it was", (await planMd(pg)) === base);
+
       // 7. Enter on a focused figure edits it: live preview, error after 1s, dimmed last good version.
       await fig.focus();
       await pg.keyboard.press("Enter");
