@@ -13,7 +13,9 @@ import { api } from "../api";
 import type { DocMarks } from "../Markdown";
 import { type EditorMode, type PlanDraft } from "../editor/PlanEditor";
 import { cleanSelection, sourceRange } from "../editor/selection";
-import { ICheck, IChev, IDown, IEdit, IMore, IMsg, IUndo, IUp, IX } from "../icons";
+import { IActivity, ICheck, IChev, IDown, IEdit, IMore, IMsg, IUndo, IUp, IX } from "../icons";
+import { type ActivityFocus, ActivityPanel, openActivity } from "../activity/Activity";
+import { jumpTo } from "../editor/link";
 import type { CommentThread, SessionView, Suggestion } from "../types";
 import { SuggestionBlock } from "../diagrams/SuggestionBlock";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
@@ -72,10 +74,15 @@ interface Opts {
   docRef: RefObject<HTMLDivElement | null>;
   editRef: MutableRefObject<((start: number, end: number) => void) | null>;
   onShowDecision: (key: string) => void;
+  /** Item 6 Asked chips: a decision's label and question (null when gone), and the jump to its Decisions row. */
+  decisionInfo?: (key: string) => { label: string; title: string } | null;
+  onDecisionRow?: (key: string) => void;
   setNote: (t: string) => void;
   /** Item 5: extra block rows (the "{agent} is drawing…" row) and a bar that takes the review bar's slot. */
   inserts?: { key: string; at: number; node: ReactNode }[];
   hideReviewBar?: boolean;
+  /** Item 6: a provider id's display name, for runs by another agent. */
+  agentNameOf?: (id: string) => string;
 }
 
 export function useComments(o: Opts) {
@@ -95,6 +102,19 @@ export function useComments(o: Opts) {
     setRailRaw(v);
   };
   const [railTab, setRailTab] = useState<"comments" | "activity">("comments");
+  const [actFocus, setActFocus] = useState<(ActivityFocus & { n: number }) | null>(null);
+  const [backPill, setBackPill] = useState(false);
+  const showActivity = (f?: ActivityFocus) => {
+    setRailTab("activity");
+    setRail(true);
+    if (f) setActFocus((x) => ({ ...f, n: (x?.n ?? 0) + 1 }));
+    else if (!mobile) requestAnimationFrame(() => document.querySelector<HTMLElement>(".act6 .evb[tabindex='0'], .act6 .gh6 button[tabindex='0']")?.focus());
+  };
+  useEffect(() => {
+    const on = (e: Event) => showActivity((e as CustomEvent<ActivityFocus>).detail);
+    window.addEventListener("grillado:activity", on);
+    return () => window.removeEventListener("grillado:activity", on);
+  });
   const [activeId, setActive] = useState<string | null>(null);
   const [hoverId, setHover] = useState<string | null>(null);
   const [focusId, setFocus] = useState<string | null>(null);
@@ -266,6 +286,10 @@ export function useComments(o: Opts) {
       if (s) startComment(s);
       return;
     }
+    if (mod && e.altKey && e.code === "KeyA" && o.tab === "doc") {
+      e.preventDefault();
+      return showActivity();
+    }
     if (e.key === "F10" && e.altKey && sel) {
       e.preventDefault();
       document.querySelector<HTMLElement>(".seltb button")?.focus();
@@ -370,8 +394,78 @@ export function useComments(o: Opts) {
     />
   ) : null;
 
+  // ---------- activity (item 6) ----------
+  const headingAt = (section: string) =>
+    [...(o.docRef.current?.querySelectorAll<HTMLElement>(".blk[data-block='heading']") ?? [])].find((b) => (b.querySelector("h1,h2,h3,h4,h5,h6")?.textContent ?? "").trim() === section.trim()) ?? null;
+  const hasHeading = (section: string) => draft.text.split("\n").some((l) => /^#{1,6}\s/.test(l) && l.replace(/^#{1,6}\s+/, "").trim() === section.trim());
+  // After an Asked chip jump, coming back to Activity puts focus back on that chip (#85).
+  const askedFrom = useRef<string | null>(null);
+  const activityShown = railOpen && railTab === "activity" && (mobile || o.tab === "doc");
+  useEffect(() => {
+    const key = askedFrom.current;
+    if (!activityShown || !key) return;
+    askedFrom.current = null;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const chip = document.querySelector<HTMLElement>(`.act6 .chip6[data-key="${CSS.escape(key)}"]`);
+        chip?.scrollIntoView({ block: "nearest" });
+        chip?.focus({ preventScroll: true });
+      }),
+    );
+  }, [activityShown]); // eslint-disable-line react-hooks/exhaustive-deps
+  const leaveSheet = () => {
+    if (!mobile) return;
+    setRail(false);
+    setBackPill(true);
+  };
+  const activityPanel =
+    railTab === "activity" ? (
+      <ActivityPanel
+        sessionId={session.id}
+        view={session.activity}
+        agentName={agentName}
+        agentId={session.provider}
+        agentNameOf={o.agentNameOf ?? ((id) => id)}
+        suggestions={list}
+        focus={actFocus ? { run: actFocus.run, kind: actFocus.kind, comment: actFocus.comment, n: actFocus.n } : null}
+        act={act}
+        mobile={mobile}
+        onToast={(text) => setToast({ text, undo: false })}
+        onSuggestion={(id) => {
+          leaveSheet();
+          setFocus(id);
+        }}
+        onSection={(section, probe, figure) => {
+          if (probe) return hasHeading(section);
+          const el = headingAt(section);
+          if (!el) return false;
+          // A diagram chip flashes the figure itself, the first one in that section (#83).
+          let fig: HTMLElement | null = null;
+          if (figure)
+            for (let n = el.nextElementSibling as HTMLElement | null; n && n.dataset.block !== "heading"; n = n.nextElementSibling as HTMLElement | null) {
+              fig = n.querySelector<HTMLElement>("figure.mm5");
+              if (fig) break;
+            }
+          leaveSheet();
+          requestAnimationFrame(() => (fig ? jumpTo(fig, fig) : jumpTo(el, el.querySelector<HTMLElement>(".blk-act"))));
+          return true;
+        }}
+        decision={(key) => o.decisionInfo?.(key) ?? null}
+        onDecision={(key) => {
+          askedFrom.current = key;
+          leaveSheet();
+          o.onDecisionRow?.(key);
+        }}
+        onLeave={() => {
+          if (mobile) setRail(false);
+          (o.docRef.current?.querySelector<HTMLElement>(".blk-act, .dz, [tabindex='0']") ?? o.docRef.current)?.focus();
+        }}
+      />
+    ) : null;
   const railBody = (
     <Rail
+      activity={activityPanel}
+      activityRunning={!!session.activity?.entries.some((e) => e.status === "running")}
       tab={railTab}
       setTab={setRailTab}
       open={open}
@@ -395,14 +489,12 @@ export function useComments(o: Opts) {
     mobile && railOpen ? (
       <>
         <div className="cscrim" onClick={() => setRail(false)} />
-        <div className="csheet" role="dialog" aria-label="Comments" aria-modal="true">
+        <div className="csheet" role="dialog" aria-label={railTab === "activity" ? "Activity" : "Comments"} aria-modal="true">
           <div className="grab" />
-          <div className="sh">
-            <b>Comments</b>
-            <button type="button" className="icon-btn" aria-label="Close comments" onClick={() => setRail(false)}>
-              <IX s={18} />
-            </button>
-          </div>
+          {/* The tabs are the header (#83): Close sits on their row, no row of its own. */}
+          <button type="button" className="icon-btn shx" aria-label={railTab === "activity" ? "Close activity" : "Close comments"} onClick={() => setRail(false)}>
+            <IX s={18} />
+          </button>
           {railBody}
         </div>
       </>
@@ -459,8 +551,10 @@ export function useComments(o: Opts) {
         </div>
       )
     ) : null;
+  // A plain toast (Copy log) sits above the review bar instead of waiting behind it.
+  const lifted = !!toast && !toast.undo && !!(docMode && (placed.length || bar) && !composing && !o.hideReviewBar);
   const toastEl = toast ? (
-    <div className="toast" role="status">
+    <div className={lifted ? "toast up6" : "toast"} role="status">
       <ICheck s={16} />
       <span>{toast.text}</span>
       {toast.undo && session.reviewUndo ? (
@@ -493,11 +587,51 @@ export function useComments(o: Opts) {
         {open.length ? <span className="ct">{open.length}</span> : null}
       </button>
     ) : null;
+  const actLive = !!session.activity?.entries.some((e) => e.status === "running");
   const menuItem = mobile ? (
-    <DropdownMenuItem onSelect={() => setRail(true)}>
-      <IMsg s={16} />
-      Comments{open.length ? ` (${open.length})` : ""}
-    </DropdownMenuItem>
+    <>
+      <DropdownMenuItem
+        onSelect={() => {
+          setRailTab("comments");
+          setRail(true);
+        }}
+      >
+        <IMsg s={16} />
+        Comments{open.length ? ` (${open.length})` : ""}
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => showActivity()}>
+        <IActivity s={16} />
+        Activity
+        {actLive ? <span className="dot6" aria-label="running" /> : null}
+      </DropdownMenuItem>
+    </>
+  ) : null;
+  // Mobile: after a jump out of the Activity sheet, one tap goes back (§14).
+  useEffect(() => {
+    if (!backPill) return;
+    const t = setTimeout(() => setBackPill(false), 8000);
+    // Scrolling the plan yourself dismisses it; the jump's own scroll (first 900ms) doesn't (#83).
+    const from = Date.now();
+    const wrap = o.docRef.current?.closest(".docwrap") ?? window;
+    const off = () => Date.now() - from > 900 && setBackPill(false);
+    wrap.addEventListener("scroll", off, { passive: true });
+    return () => {
+      clearTimeout(t);
+      wrap.removeEventListener("scroll", off);
+    };
+  }, [backPill]);
+  const back = backPill && mobile && !railOpen ? (
+    <button
+      type="button"
+      className="pill6 back6"
+      onClick={() => {
+        setBackPill(false);
+        showActivity();
+      }}
+    >
+      <IActivity s={14} />
+      Back to Activity
+    </button>
   ) : null;
 
   return {
@@ -513,7 +647,15 @@ export function useComments(o: Opts) {
         {toolbar}
         {composer}
         {sheet}
-        {reviewBar ?? toastEl}
+        {back}
+        {lifted ? (
+          <>
+            {reviewBar}
+            {toastEl}
+          </>
+        ) : (
+          reviewBar ?? toastEl
+        )}
         <span className="sr-only" role="status" aria-live="polite">
           {live}
         </span>
@@ -674,6 +816,8 @@ function Composer({
 type Act2 = (path: string, body?: unknown) => Promise<boolean>;
 
 function Rail(p: {
+  activity: ReactNode;
+  activityRunning: boolean;
   tab: "comments" | "activity";
   setTab: (t: "comments" | "activity") => void;
   open: CommentThread[];
@@ -693,7 +837,7 @@ function Rail(p: {
   applying: boolean;
 }) {
   const [showResolved, setShowResolved] = useState(false);
-  const running = p.open.some((t) => t.run?.state === "running");
+  const running = p.activityRunning || p.open.some((t) => t.run?.state === "running");
   const tabs = [
     { id: "comments" as const, label: "Comments", n: p.open.length },
     { id: "activity" as const, label: "Activity", n: 0 },
@@ -728,10 +872,7 @@ function Rail(p: {
       </div>
       <div className="rscroll" id={`rpanel-${p.tab}`} role="tabpanel" aria-labelledby={`rtab-${p.tab}`}>
         {p.tab === "activity" ? (
-          <div className="rempty">
-            <b>{CCOPY.activityEmpty}</b>
-            <p>{CCOPY.activityBody}</p>
-          </div>
+          p.activity
         ) : !p.open.length && !p.resolved.length ? (
           <div className="rempty" data-testid="comments-empty">
             <IMsg s={20} />
@@ -915,7 +1056,13 @@ function StatusRow({ row, t, agentName, act, onReview, onShowDecision }: { row: 
     <div className="crow" data-row={row.kind} role={row.kind === "failed" ? "alert" : undefined}>
       <span className="t">
         {row.kind === "writing" ? <span className="live" /> : ok ? <ICheck s={16} className="ok" /> : null}
-        <span className={ok || row.kind === "writing" ? "" : "m"}>{fill(rowText(row), agentName)}</span>
+        {row.kind === "writing" ? (
+          <button type="button" className="tolog" title="Open in Activity" onClick={() => openActivity({ kind: "apply", comment: t.id })}>
+            {fill(rowText(row), agentName)}
+          </button>
+        ) : (
+          <span className={ok ? "" : "m"}>{fill(rowText(row), agentName)}</span>
+        )}
       </span>
       {button}
     </div>

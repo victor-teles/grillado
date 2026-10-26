@@ -121,6 +121,13 @@ export const IUndo = mk(
     <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
   </>,
 );
+// lucide rotate-ccw
+export const IRetry = mk(
+  <>
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+  </>,
+);
 export const IBranch = mk(
   <>
     <line x1="6" x2="6" y1="3" y2="15" />
@@ -196,3 +203,55 @@ export const IMax = mk(
   </>,
 );
 export const IMinus = mk(<path d="M5 12h14" />);
+// Item 6 (Activity): Lucide circle-help, file-text, workflow, check-check, file-diff, activity, arrow-up-right, circle-alert.
+export const IHelp = mk(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+    <path d="M12 17h.01" />
+  </>,
+);
+export const IFile = mk(
+  <>
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+    <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+    <path d="M10 9H8" />
+    <path d="M16 13H8" />
+    <path d="M16 17H8" />
+  </>,
+);
+export const IFlow = mk(
+  <>
+    <rect width="8" height="8" x="3" y="3" rx="2" />
+    <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+    <rect width="8" height="8" x="13" y="13" rx="2" />
+  </>,
+);
+export const ICheck2 = mk(
+  <>
+    <path d="M18 6 7 17l-5-5" />
+    <path d="m22 10-7.5 7.5L13 16" />
+  </>,
+);
+export const IFileDiff = mk(
+  <>
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+    <path d="M9 10h6" />
+    <path d="M12 13V7" />
+    <path d="M9 17h6" />
+  </>,
+);
+export const IActivity = mk(<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />);
+export const IOut = mk(
+  <>
+    <path d="M7 7h10v10" />
+    <path d="M7 17 17 7" />
+  </>,
+);
+export const ICircleAlert = mk(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 8v4" />
+    <path d="M12 16h.01" />
+  </>,
+);

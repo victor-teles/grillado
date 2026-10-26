@@ -22,6 +22,8 @@ export interface DiagramRun {
   added: number;
   skipped: number;
   message?: string;
+  /** The failure code, for the activity log's plain reason. */
+  code?: string;
 }
 
 export interface PlanSection {

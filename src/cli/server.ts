@@ -5,12 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { nextRound, replyToComment, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
-import { addComment, addMessage, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, startRun, undoReview } from "../core/comments.ts";
+import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
+import { addComment, addMessage, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, sectionAt, startRun, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
 import {
   type Answer,
+  UNKNOWN_OPTION,
   type Session,
   acceptStreak,
   answerOpenDecision,
@@ -91,6 +93,12 @@ export class GrilladoServer {
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
   private watched = new Set<string>();
+  /** The activity log (item 6): lines read once per session, then appended in memory and on disk. */
+  private logs = new Map<string, ActivityLine[]>();
+  /** Runs in progress, by session, for the running step shown in the Activity tab. */
+  private recorders = new Map<string, Set<RunRecorder>>();
+  /** The last run per thread, per "Add diagrams" and per interview, so Try again can say what it retries. */
+  private lastRun = new Map<string, string>();
   port = 0;
 
   constructor(private opts: ServerOptions) {
@@ -324,8 +332,68 @@ export class GrilladoServer {
       // A changed `answer:` with dependents waits for the user (DECISIONS #26); nothing reruns here.
       adoptExternalPlan(live, md);
       this.opts.store.writePlan(live.id, live.plan.markdown);
+      this.log(live, { v: 1, type: "file", what: "reloaded", at: new Date().toISOString() });
       this.changed(live);
     });
+  }
+
+  // ---------------------------------------------------------------- activity log (item 6)
+
+  private lines(s: Session): ActivityLine[] {
+    let l = this.logs.get(s.id);
+    if (!l) {
+      l = parseLines(this.opts.store.readActivity(s.id));
+      this.logs.set(s.id, l);
+    }
+    return l;
+  }
+
+  private log(s: Session, ...lines: ActivityLine[]) {
+    this.lines(s).push(...lines);
+    this.opts.store.appendActivity(s.id, lines);
+  }
+
+  /** Start a run's log entry. Its steps are timed back to back; the live one shows in the tab. */
+  private record(s: Session, kind: RunKind, target?: RunTarget, retryKey?: string): RunRecorder {
+    const retryOf = retryKey ? (this.lastRun.get(retryKey) ?? null) : null;
+    const rec = new RunRecorder(
+      (line) => this.log(s, line),
+      () => this.broadcast({ type: "session", session: this.view(s) }),
+      { kind, agent: s.provider, ...(target ? { target } : {}), retryOf },
+    );
+    const set = this.recorders.get(s.id) ?? new Set();
+    set.add(rec);
+    this.recorders.set(s.id, set);
+    const end = rec.end.bind(rec);
+    rec.end = (...a) => {
+      end(...a);
+      set.delete(rec);
+    };
+    return rec;
+  }
+
+  /** The latest `limit` entries, newest first, with the running steps of live runs. */
+  activityView(s: Session, limit = 50) {
+    const lines = this.lines(s);
+    const live = new Map<string, string>();
+    for (const r of this.recorders.get(s.id) ?? []) if (r.current) live.set(r.id, r.current);
+    const entries = fold(lines, live);
+    const first = lines.find((l) => l.type === "run.started");
+    // Sessions from before 1.1 had work that wasn't logged (#58).
+    const legacy = s.rounds.length > 0 && (!first || Date.parse((first as { at: string }).at) > Date.parse(s.rounds[0].askedAt) + 1000);
+    return { entries: entries.slice(0, Math.max(1, Math.min(limit, 5000))), total: entries.length, legacy };
+  }
+
+  /** Review lines, one per run whose suggestions were reviewed. */
+  private logReview(s: Session, ids: string[], field: "accepted" | "rejected" | "undone") {
+    const byRun = new Map<string | null, string[]>();
+    for (const id of ids) {
+      const run = (s.suggestions ?? []).find((x) => x.id === id)?.run ?? null;
+      byRun.set(run, [...(byRun.get(run) ?? []), id]);
+    }
+    const at = new Date().toISOString();
+    for (const [run, list] of byRun)
+      this.log(s, { v: 1, type: "review", run, accepted: field === "accepted" ? list : [], rejected: field === "rejected" ? list : [], ...(field === "undone" ? { undone: list } : {}), at });
   }
 
   private changed(s: Session) {
@@ -377,6 +445,7 @@ export class GrilladoServer {
       progress: this.progress.get(s.id),
       planPath: s.plan?.path,
       tree: buildTree(s),
+      activity: this.activityView(s),
       acceptStreak: acceptStreak(s),
       nudge: shouldNudge(s),
     };
@@ -400,6 +469,14 @@ export class GrilladoServer {
       }
       for (const t of s.comments ?? []) if (t.run?.state === "running") finishRun(t, { ok: false, message: "Interrupted. Retry to continue." });
       this.sessions.set(id, s);
+      // Runs with no end were cut off when Grillado closed: written as interrupted now (#57).
+      const lines = this.lines(s);
+      const ended = interrupted(lines).map((run): ActivityLine => {
+        const start = lines.find((l) => l.type === "run.started" && l.id === run) as Extract<ActivityLine, { type: "run.started" }>;
+        const ms = lines.reduce((n, l) => n + (l.type === "step" && l.run === run ? l.ms : 0), 0);
+        return { v: 1, run, type: "run.ended", status: "interrupted", ms, at: new Date(Date.parse(start.at) + ms).toISOString() };
+      });
+      if (ended.length) this.log(s, ...ended);
       this.watchPlan(s);
     }
     return s;
@@ -448,23 +525,64 @@ export class GrilladoServer {
       });
   }
 
-  private startRound(s: Session) {
+  private startRound(s: Session, retry = false) {
+    if (this.inflight.has(s.id)) return;
+    const n = s.rounds.length + 1;
+    const rec = this.record(s, "round", { round: n, ...(s.reopened.length && s.rounds.length ? { reask: true } : {}) }, retry ? `session:${s.id}` : undefined);
+    this.lastRun.set(`session:${s.id}`, rec.id);
     this.run(s, async (c) => {
-      await nextRound(s, this.adapterFor(s), this.runOptions(s, c));
+      rec.step("Read the session", "{agent} is picking questions");
+      const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is picking questions") };
+      try {
+        const ok = await nextRound(s, this.adapterFor(s), opts);
+        if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was picking questions" });
+        if (!ok) return rec.end("failed", { reason: s.error?.code ?? null, last: reasonText(s.error?.code, "{agent}") });
+        const r = s.rounds.length === n ? s.rounds[n - 1] : null;
+        if (!r) {
+          rec.step("{agent} found nothing left to ask");
+          return rec.end("done", { result: { questions: 0 } });
+        }
+        rec.step(`{agent} picked ${r.questions.length} ${r.questions.length === 1 ? "question" : "questions"}`);
+        rec.step(`Round ${n} ready`);
+        rec.end("done", { result: { questions: r.questions.length }, asked: r.questions.map((q) => q.key) });
+      } finally {
+        rec.end("failed", { reason: "unknown", last: reasonText("unknown", "{agent}") });
+      }
     });
   }
 
-  private startPlan(s: Session) {
+  private startPlan(s: Session, retry = false) {
+    if (this.inflight.has(s.id)) return;
+    const rec = this.record(s, "plan", undefined, retry ? `session:${s.id}` : undefined);
+    this.lastRun.set(`session:${s.id}`, rec.id);
     this.run(s, async (c) => {
-      const out = await synthesize(s, this.adapterFor(s), this.runOptions(s, c));
-      if (!out.ok) return;
+      try {
+        await this.writePlan(s, c, rec);
+      } finally {
+        rec.end("failed", { reason: "unknown", last: reasonText("unknown", "{agent}") });
+      }
+    });
+  }
+
+  private async writePlan(s: Session, c: AbortController, rec: RunRecorder) {
+    {
+      const n = Object.keys(s.decisions).length;
+      rec.step(`Read ${n} ${n === 1 ? "decision" : "decisions"}`, "{agent} is writing the plan");
+      const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s plan didn’t fit the format; asked again", "{agent} is writing the plan") };
+      const out = await synthesize(s, this.adapterFor(s), opts);
+      if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was writing the plan" });
+      if (!out.ok) return rec.end("failed", { reason: s.error?.code ?? null, last: reasonText(s.error?.code, "{agent}") });
+      rec.step("{agent} wrote the plan", "Saving plan.md");
       // The new plan overwrites plan.md; keep the user's edited version next to it.
       if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
       const file = this.opts.store.writePlan(s.id, out.markdown);
       s.plan = { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions, createdAt: new Date().toISOString() };
       s.status = "plated";
       this.watchPlan(s);
-    });
+      const sections = planSections(out.markdown).map((x) => x.title);
+      rec.step("Saved plan.md");
+      rec.end("done", { result: { decisions: n, sections: sections.length }, wrote: sections });
+    }
   }
 
   /** "Apply feedback" is running on one of this session's threads (one at a time; the plan stays editable). */
@@ -495,7 +613,7 @@ export class GrilladoServer {
       case "retry":
         if (live(t.id) || !t.run) return;
         if (t.run.kind === "apply" && (busy || this.applying(s))) throw new Error("Waiting for the current run.");
-        this.startComment(s, t.id, t.run.kind);
+        this.startComment(s, t.id, t.run.kind, true);
         return;
       case "stop":
         this.commentRuns.get(t.id)?.abort();
@@ -524,7 +642,9 @@ export class GrilladoServer {
       return;
     }
     if (op === "undo") {
+      const ids = (s.reviewUndo?.items ?? []).map((x) => x.id);
       if (!undoReview(s)) throw new Error("Nothing to undo.");
+      this.logReview(s, ids, "undone");
     } else if (op === "accept" || op === "reject") {
       // Edit on a diagram suggestion accepts it with your changes, as one step (#42).
       const code = typeof body?.code === "string" ? body.code : null;
@@ -535,7 +655,10 @@ export class GrilladoServer {
         withCode(x, code);
       }
       // "all" takes every pending suggestion (Accept all / Reject all).
+      const before = new Set(pending(s).map((x) => x.id));
       review(s, op, body?.ids === "all" ? pending(s).map((x) => x.id) : body?.ids);
+      const done = (s.suggestions ?? []).filter((x) => before.has(x.id) && x.status !== "pending").map((x) => x.id);
+      this.logReview(s, done, op === "accept" ? "accepted" : "rejected");
     } else throw new Error("Not found");
     if (op !== "reject") {
       // plan.md only ever holds accepted text (N3).
@@ -577,40 +700,58 @@ export class GrilladoServer {
       }
     }
     if (!titles.length) throw new Error("Pick at least one section.");
-    this.startDiagrams(s, titles, kinds, focus);
+    this.startDiagrams(s, titles, kinds, focus, op === "retry");
   }
 
-  private startDiagrams(s: Session, titles: string[], kinds: DiagramKind[], focus: string) {
+  private startDiagrams(s: Session, titles: string[], kinds: DiagramKind[], focus: string, retry = false) {
+    const rec = this.record(s, "diagrams", undefined, retry ? `diagrams:${s.id}` : undefined);
+    this.lastRun.set(`diagrams:${s.id}`, rec.id);
+    const made: { id: string; section: string; note: string }[] = [];
+    let repaired = false;
     const controller = new AbortController();
     this.diagramRuns.set(s.id, controller);
     const t0 = Date.now();
     const run: NonNullable<Session["diagramRun"]> = { state: "running", startedAt: new Date().toISOString(), sections: titles, kinds, ...(focus ? { focus } : {}), done: 0, added: 0, skipped: 0 };
     s.diagramRun = run;
     this.changed(s);
-    const opts = { ...this.runOptions(s, controller), onProgress: undefined };
+    const opts = { ...this.runOptions(s, controller), onProgress: undefined, onRepair: () => (repaired = true) };
     const work = async () => {
       // One section at a time: each suggestion lands as soon as its section is drawn (§18 I).
       for (const title of titles) {
         const md = s.plan?.markdown ?? "";
         const sec = planSections(md).find((x) => x.title === title);
         run.current = title;
+        repaired = false;
+        rec.running(`${title}: drawing a diagram`);
         this.changed(s);
         const r = sec ? await suggestDiagram(s, md, sec, kinds, focus, this.adapterFor(s), opts) : null;
         if (controller.signal.aborted) {
           run.state = "stopped";
+          rec.step(`${title}: stopped`, undefined, "stopped");
           break;
         }
         if (r && !r.ok && r.code !== "malformed") {
           run.state = "error";
           run.message = redact(r.message, userText(s));
+          rec.step(`${title}: ${reasonText(r.code, "{agent}")}`, undefined, "failed");
+          run.code = r.code;
           break;
         }
         // The plan stays editable while the agent draws: place it on the text as it is now.
         const now = r?.ok && !r.value.skip ? planSections(s.plan?.markdown ?? "").find((x) => x.title === title) : undefined;
+        const again = repaired ? "first try didn’t draw, asked again; " : "";
         if (r?.ok && !r.value.skip && now) {
-          addDiagramSuggestion(s, now, r.value.mermaid, textHash(md));
+          const x = addDiagramSuggestion(s, now, r.value.mermaid, textHash(md));
+          if (x) {
+            x.run = rec.id;
+            made.push({ id: x.id, section: title, note: x.replace ? "diagram replaced" : "diagram added" });
+          }
           run.added++;
-        } else run.skipped++;
+          rec.step(`${title}: ${again}drew a diagram`);
+        } else {
+          run.skipped++;
+          rec.step(`${title}: ${!sec || !r ? "no longer in the plan, skipped" : r.ok ? `${again}nothing to draw, skipped` : "the diagram didn’t come through, skipped"}`);
+        }
         run.done++;
         run.current = undefined;
         this.changed(s);
@@ -625,39 +766,67 @@ export class GrilladoServer {
       .finally(() => {
         run.current = undefined;
         run.ms = Date.now() - t0;
+        const status = run.state === "done" ? "done" : run.state === "stopped" ? "stopped" : "failed";
+        rec.end(status, {
+          ...(status === "failed" ? { reason: run.code ?? "unknown" } : {}),
+          read: titles.slice(0, run.done),
+          ...(run.done < titles.length ? { notDone: titles.slice(run.done + (status === "done" ? 0 : 1)) } : {}),
+          suggestions: made,
+          result: { diagrams: run.added, skipped: run.skipped },
+        });
         if (this.diagramRuns.get(s.id) === controller) this.diagramRuns.delete(s.id);
         this.changed(s);
       });
   }
 
-  private startComment(s: Session, threadId: string, kind: "reply" | "apply") {
+  private startComment(s: Session, threadId: string, kind: "reply" | "apply", retry = false) {
     const t = startRun(s, threadId, kind);
+    const section = sectionAt(s.plan?.markdown ?? "", locate(s.plan?.markdown ?? "", t.quote, t.at)) || "the plan";
+    const rec = this.record(s, kind, { section, comment: t.id }, retry ? `thread:${t.id}` : undefined);
+    this.lastRun.set(`thread:${t.id}`, rec.id);
     const controller = new AbortController();
     this.commentRuns.set(t.id, controller);
     this.changed(s);
     const opts = { ...this.runOptions(s, controller), onProgress: undefined };
+    const stopped = (doing: string) => rec.end("stopped", { last: `Stopped while {agent} was ${doing}` });
+    const failed = (code: string) => rec.end("failed", { reason: code, last: reasonText(code, "{agent}") });
+    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
     const work = async () => {
       if (kind === "reply") {
-        const r = await replyToComment(s, t, this.adapterFor(s), opts);
-        if (controller.signal.aborted) return finishRun(t, { ok: false, stopped: true, message: "Stopped." });
-        if (!r.ok) return finishRun(t, { ok: false, message: redact(r.message, userText(s)) });
+        rec.step("Read your comment", "{agent} is writing a reply");
+        const r = await replyToComment(s, t, this.adapterFor(s), { ...opts, onRepair: () => rec.step("{agent}’s reply didn’t fit the format; asked again", "{agent} is writing a reply") });
+        if (controller.signal.aborted) return (stopped("writing a reply"), finishRun(t, { ok: false, stopped: true, message: "Stopped." }));
+        if (!r.ok) return (failed(r.code), finishRun(t, { ok: false, message: redact(r.message, userText(s)) }));
         addMessage(s, t.id, "agent", r.value.text);
+        rec.step("{agent} replied");
+        rec.end("done", { read: [section] });
         return finishRun(t, { ok: true });
       }
       // Suggestions are written against the plan as it is now; the plan stays editable (§4.1).
       const base = s.plan?.markdown ?? "";
-      const r = await suggestEdits(s, t, this.adapterFor(s), opts, base);
+      rec.step("Read plan.md");
+      rec.step(t.messages.some((m) => m.by === "agent") ? "Read your comment and {agent}’s reply" : "Read your comment", "{agent} is writing suggestions");
+      const r = await suggestEdits(s, t, this.adapterFor(s), { ...opts, onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is writing suggestions") }, base);
       // Stop keeps nothing (§4.1).
-      if (controller.signal.aborted) return finishRun(t, { ok: false, stopped: true, message: "Stopped · nothing changed" });
-      if (!r.ok) return finishRun(t, { ok: false, message: redact(r.message, userText(s)) });
+      if (controller.signal.aborted) return (stopped("writing suggestions"), finishRun(t, { ok: false, stopped: true, message: "Stopped · nothing changed" }));
+      if (!r.ok) return (failed(r.code), finishRun(t, { ok: false, message: redact(r.message, userText(s)) }));
+      rec.step(`{agent} wrote ${plural(r.value.edits.length, "suggestion")}`, "Checking against plan.md");
       const { added, dropped } = addSuggestions(s, t.id, r.value.edits, t.at, textHash(base));
+      for (const x of added) x.run = rec.id;
       // A thread on a decision block: answers change through the decision (#22), never a suggestion.
       const at = locate(base, t.quote, t.at);
       const decision = added.length ? null : decisionAt(base, at);
+      rec.step(dropped ? `Checked against plan.md: ${plural(dropped, "suggestion")} no longer fit` : "Checked against plan.md");
+      rec.step(decision ? "Made no suggestion: this is a decision, change it there" : `Made ${plural(added.length, "suggestion")}`);
+      rec.end("done", {
+        read: [section],
+        suggestions: added.map((x) => ({ id: x.id, section: sectionAt(s.plan?.markdown ?? "", x.at) || section })),
+        result: { suggestions: added.length },
+      });
       finishRun(t, { ok: true, edits: added.length, ...(dropped ? { dropped } : {}), ...(decision ? { decision } : {}) });
     };
     work()
-      .catch((err) => finishRun(t, { ok: false, message: String(err?.message ?? err) }))
+      .catch((err) => (failed("unknown"), finishRun(t, { ok: false, message: String(err?.message ?? err) })))
       .finally(() => {
         if (this.commentRuns.get(t.id) === controller) this.commentRuns.delete(t.id);
         this.changed(s);
@@ -693,6 +862,7 @@ export class GrilladoServer {
     const s = this.getSession(parts[0] ?? "");
     const action = parts[1];
     if (req.method === "GET" && !action) return this.json(res, 200, this.view(s));
+    if (req.method === "GET" && action === "activity") return this.json(res, 200, this.activityView(s, Number(new URL(req.url ?? "/", "http://x").searchParams.get("limit")) || 50));
     if (req.method === "GET" && action === "plan.md") {
       const md = this.opts.store.readPlan(s.id);
       if (!md) return this.json(res, 404, { error: "No plan yet" });
@@ -714,14 +884,16 @@ export class GrilladoServer {
     switch (action) {
       case "answers": {
         if (busy) throw new Error("The agent is still working.");
-        submitAnswers(s, Number(body?.round), (body?.answers ?? []) as Answer[]);
+        const answers = (body?.answers ?? []) as Answer[];
+        submitAnswers(s, Number(body?.round), answers);
+        this.log(s, { v: 1, type: "user", what: "answered", round: Number(body?.round), answers: answers.length, yourCall: answers.filter((a) => a.optionId === UNKNOWN_OPTION).length, at: new Date().toISOString() });
         this.startRound(s);
         break;
       }
       case "retry": {
         if (busy) break;
-        if (s.status === "asking") this.startRound(s);
-        else if (s.status === "synthesizing") this.startPlan(s);
+        if (s.status === "asking") this.startRound(s, true);
+        else if (s.status === "synthesizing") this.startPlan(s, true);
         break;
       }
       case "provider": {
@@ -759,6 +931,7 @@ export class GrilladoServer {
       }
       case "confirm": {
         startSynthesis(s);
+        this.log(s, { v: 1, type: "user", what: "confirmed", decisions: Object.keys(s.decisions).length, at: new Date().toISOString() });
         this.startPlan(s);
         break;
       }
@@ -822,6 +995,11 @@ export class GrilladoServer {
         if (!s.plan) throw new Error("There's no plan yet.");
         if (typeof body?.markdown !== "string" || body.markdown.length > 500_000) throw new Error("Expected the plan as Markdown text.");
         const file = this.opts.store.writeConflict(s.id, body.markdown);
+        // Which version won is the file event you audit later ("did I overwrite it?", #84 MF4).
+        if (body?.keep === "mine" || body?.keep === "file") {
+          this.log(s, { v: 1, type: "file", what: body.keep === "mine" ? "kept-mine" : "loaded-file", at: new Date().toISOString() });
+          this.changed(s);
+        }
         return this.json(res, 200, { ok: true, path: file });
       }
       case "reveal": {

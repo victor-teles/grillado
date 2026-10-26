@@ -17,7 +17,7 @@ export function SessionScreen({ session, app, act, onSwitch }: { session: Sessio
   switch (session.status) {
     case "asking":
       // A changed decision is being re-asked: the plan stays up, read-only and marked (Q2).
-      if (session.plan?.waiting?.length) return <PlanView session={session} act={act} agentName={agentName(app, session)} banner={banner} />;
+      if (session.plan?.waiting?.length) return <PlanView session={session} act={act} agentName={agentName(app, session)} agentNameOf={(id) => app.providers.find((p) => p.id === id)?.displayName ?? id} banner={banner} />;
       return session.rounds.length === 0 ? <FiringUp session={session} act={act} banner={banner} /> : <WaitingView session={session} act={act} banner={banner} />;
     case "answering":
       return <RoundView session={session} act={act} banner={banner} />;
@@ -26,7 +26,7 @@ export function SessionScreen({ session, app, act, onSwitch }: { session: Sessio
     case "synthesizing":
       return <Plating session={session} act={act} banner={banner} />;
     case "plated":
-      return <PlanView session={session} act={act} agentName={agentName(app, session)} />;
+      return <PlanView session={session} act={act} agentName={agentName(app, session)} agentNameOf={(id) => app.providers.find((p) => p.id === id)?.displayName ?? id} />;
     default:
       return null;
   }

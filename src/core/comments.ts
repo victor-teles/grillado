@@ -55,6 +55,8 @@ export interface Suggestion {
   /** The H2 section it is for. */
   section?: string;
   replace?: boolean;
+  /** The activity-log run that wrote it (item 6), so its chip and its review link back. */
+  run?: string;
 }
 
 /** Diagram suggestions are whole fences, so they are found with fences counted (prose = false). */
