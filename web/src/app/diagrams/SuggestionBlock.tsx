@@ -1,13 +1,13 @@
 // Item 5 §5: a suggested diagram as a block (item 4's .sgb), or a removed + suggested pair when it
 // replaces one. Edit opens the source with a live preview; finishing accepts it with your changes
 // in one step, and leaving it unchanged keeps it a suggestion (#42).
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { suggestedCode } from "../../../../src/core/diagrams.ts";
 import type { Placed } from "../comments/model";
 import { Diagram, LivePreview } from "../editor/Diagram";
 import { accOf, kindName } from "../editor/diagram";
 import { useMobile } from "../chrome";
-import { SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "../editor/SourcePreview";
+import { type MermaidErr, MermaidError, SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "../editor/SourcePreview";
 import { ICheck, IEdit, IMinus, IPlus, IX } from "../icons";
 
 const MOD = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? "") ? "⌘" : "Ctrl+";
@@ -114,6 +114,8 @@ export function SuggestionBlock(p: {
 function SourceEditor({ initial, onDone }: { initial: string; onDone: (t: string) => void }) {
   const [text, setText] = useState(initial);
   const [now, setNow] = useState(0);
+  const [err, setErr] = useState<MermaidErr | null>(null);
+  const errId = useId();
   const ref = useRef<HTMLTextAreaElement>(null);
   const ended = useRef(false);
   useEffect(() => {
@@ -144,6 +146,8 @@ function SourceEditor({ initial, onDone }: { initial: string; onDone: (t: string
         className="blk-edit mono"
         aria-label="Edit the suggested diagram as Mermaid. Escape to finish."
         spellCheck={false}
+        aria-describedby={err ? errId : undefined}
+        aria-invalid={err ? true : undefined}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={(e) => {
@@ -160,8 +164,9 @@ function SourceEditor({ initial, onDone }: { initial: string; onDone: (t: string
           }
         }}
       />
+      {err ? <MermaidError id={errId} err={err} /> : null}
       <div className="blk-preview" role="group" aria-label="Live preview">
-        <LivePreview code={text} now={now} />
+        <LivePreview code={text} now={now} onError={setErr} />
       </div>
       <p className="blk-hint" aria-hidden="true">
         {mobile ? (

@@ -5,7 +5,7 @@
 // .ped-save[data-save], .blk[data-block][data-start] with .blk-act (keyboard Edit), .blk[data-editing]
 // .blk-edit (.mono only for fences) and .blk-hint, .doc-raw .ced, .dz, mark.ctx, .mmd.
 import { type MutableRefObject, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { IAlert, ICheck } from "../icons";
+import { ICheck } from "../icons";
 import { type AnswerEdit, type DecisionFields, answerEdits, decisionProblems, fillUserDecisions, parseDecisionBody, revertAnswerEdits } from "../../../../src/core/decision-block.ts";
 import { textHash } from "../../../../src/core/text-hash.ts";
 import { ApiError, api } from "../api";
@@ -15,7 +15,7 @@ import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
 import type { CodeEditorHandle } from "./cm";
 import { LivePreview } from "./Diagram";
-import { SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "./SourcePreview";
+import { MermaidError, SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "./SourcePreview";
 import { type CiteRenderer, type DocMarks, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
 import { canHover, jumpTo, selecting } from "./link";
 import { formatEdit, formatKey } from "./selection";
@@ -437,7 +437,6 @@ function BlockEditor({
   const rootRef = useRef<HTMLDivElement>(null);
   const sp = useSourcePreview(mobile && !!preview, rootRef, ref, finish);
   const [merr, setMerr] = useState<{ line?: number; message: string; raw: string } | null>(null);
-  const [mdet, setMdet] = useState(false);
   const errId = useId();
   const level = kind === "heading" ? (/^#+/.exec(text)?.[0].length ?? 2) : 0;
   // Prose is edited in Inter at its own size so nothing jumps; it goes mono only once the whole block is a
@@ -522,16 +521,7 @@ function BlockEditor({
       </p>
       {preview && preview.kind === "fence" ? (
         <>
-          {merr ? (
-            <div className="merr" id={errId} role="status" onMouseDown={(e) => e.preventDefault()}>
-              <IAlert s={16} />
-              <span>{merr.message}</span>
-              <button type="button" className="btn quiet sm" aria-expanded={mdet} onClick={() => setMdet(!mdet)}>
-                Details
-              </button>
-              {mdet ? <pre className="mmd-det">{merr.raw}</pre> : null}
-            </div>
-          ) : null}
+          {merr ? <MermaidError id={errId} err={merr} /> : null}
           <div className="blk-preview" role="group" aria-label="Live preview">
             <LivePreview code={preview.body} now={now} onError={setMerr} />
           </div>
