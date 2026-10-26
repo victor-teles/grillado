@@ -366,7 +366,7 @@ try {
   check("each decision renders as a compact card", (await cards.count()) === 3 && (await page.getByRole("group", { name: "Decision R1·2" }).count()) === 1);
   await cites.nth(1).click();
   check("a citation moves focus to its decision card", await page.evaluate(() => document.activeElement?.matches(".dz[data-key=platform]")));
-  check("focusing a card highlights the passages that cite it", (await page.locator("[data-testid=plan] mark.ctx").count()) === 1 && ((await page.locator("mark.ctx").textContent()) ?? "").includes("Mobile app"));
+  check("focusing a card highlights the passages that cite it", (await page.locator("[data-testid=plan] mark.ctx").count()) === 1 && ((await page.locator("mark.ctx").textContent()) ?? "").includes("Mobile app"), (await page.locator("[data-testid=plan] mark.ctx").allTextContents()).join(" | "));
   check("card points at its passages (aria-describedby)", !!(await page.locator(".dz[data-key=platform]").getAttribute("aria-describedby")));
   const axePlan = await new AxeBuilder({ page }).analyze();
   check("axe: plan view (light)", axePlan.violations.length === 0, axePlan.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
@@ -457,6 +457,35 @@ try {
   check("diagram SVG is an image named by type and node count", /^flowchart diagram, 2 nodes$/.test((await page.locator(".mmd[data-state=ok] [role=img]").first().getAttribute("aria-label")) ?? ""));
   await page.locator(".mmd[data-state=error]").waitFor({ timeout: 5000 });
   check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .mmd-err").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] pre").textContent()).includes("A -->"));
+  // Recording bug 3: breaking a diagram while editing autosaves the raw text (plan.md is the source of truth);
+  // the live preview keeps the last good render, the rest of the plan is untouched, and fixing it renders again.
+  {
+    const good = "flowchart TD\n  A[Idea] --> B[Plan]";
+    const broken = "flowchart TD\n  A[Idea] --> ";
+    await page.locator(".mmd[data-state=ok]").first().hover();
+    await page.locator(".mmd[data-state=ok]").first().getByRole("button", { name: "Edit source" }).click();
+    const box = page.getByRole("textbox", { name: /Edit block as Markdown/ });
+    await box.waitFor();
+    await page.locator(".blk-preview .mmd[data-state=ok]").waitFor({ timeout: 10_000 });
+    const src = await box.inputValue();
+    await box.fill(src.replace(good, broken));
+    await page.locator(".blk-preview .mmd[data-state=error]").waitFor({ timeout: 10_000 });
+    check("broken diagram while editing: preview keeps the last good render, tagged", (await page.locator(".blk-preview .mmd-last svg").count()) === 1 && (await page.locator(".blk-preview .mmd-tag").textContent()) === "Last version that worked");
+    check("broken diagram autosaves as raw text; the rest of plan.md is intact", await waitDisk((t) => t.includes("```mermaid\n" + broken + "\n```") && (t.match(/^```decision$/gm) ?? []).length === 3 && t.includes("Asks for ELK")));
+    await box.press("Escape");
+    const edited = page.locator("[data-testid=plan] .mmd").first();
+    await page.waitForFunction(() => document.querySelectorAll("[data-testid=plan] .mmd[data-state=error]").length === 2, null, { timeout: 10_000 }).catch(() => undefined);
+    check("after closing, the rich view shows the broken source and its error (no crash)", (await page.locator(".mmd[data-state=error]").count()) === 2 && (await page.locator(".dz").count()) === 3, `${await page.locator(".mmd[data-state=error]").count()} errors, ${await page.locator(".mmd[data-state=ok]").count()} ok, ${await page.locator(".dz").count()} cards, editing=${await page.locator(".blk[data-editing]").count()}`);
+    check("the rich view's broken diagram is the edited one, showing its source", (await edited.getAttribute("data-state")) === "error" && ((await edited.locator("pre").textContent()) ?? "").includes("A[Idea] -->"));
+    await edited.hover();
+    await edited.getByRole("button", { name: "Edit source" }).click();
+    await box.waitFor();
+    await box.fill((await box.inputValue()).replace(broken, good));
+    await box.press("Escape");
+    const fixedOnDisk = await waitDisk((t) => t.includes(good));
+    const redrawn = await page.locator(".mmd[data-state=ok] .mmd-svg > svg").nth(1).waitFor({ timeout: 10_000 }).then(() => true).catch(() => false);
+    check("fixing the diagram saves and renders it again", fixedOnDisk && redrawn, `on disk ${fixedOnDisk}, redrawn ${redrawn}`);
+  }
   await page.locator(".mmd").first().scrollIntoViewIfNeeded();
   await shot(page, "plan-editor-diagrams-dark");
   // The block editor keeps the scroll too.
@@ -628,6 +657,64 @@ try {
   await page.locator(".mmd[data-state=ok]").nth(1).waitFor({ timeout: 15_000 }).catch(() => {});
   const restored = (await page.getByTestId("plan").textContent()) ?? "";
   check("plan edits survive a restart", restored.includes("Edited in place.") && (await page.locator(".mmd[data-state=ok]").count()) === 2, restored.slice(0, 80));
+  // Recording bugs on PR #2 @ba19865, with real pointer clicks (no scripted events).
+  {
+    const scope = page.locator(".dz[data-key=scope]");
+    const storage = page.locator(".dz[data-key=storage]");
+    // Bug 2: after Cancel on one card, the first click on another card's Change must open it.
+    await scope.scrollIntoViewIfNeeded();
+    await scope.hover();
+    await scope.getByRole("button", { name: /^Change/ }).click();
+    await scope.getByRole("radiogroup").waitFor();
+    await scope.getByRole("button", { name: "Cancel" }).click();
+    await storage.hover();
+    await storage.getByRole("button", { name: /^Change/ }).click();
+    const opened = await storage
+      .getByRole("radiogroup")
+      .waitFor({ timeout: 1500 })
+      .then(() => true)
+      .catch(() => false);
+    check("after Cancel on one card, one click on another card's Change opens it", opened);
+    if (opened) await storage.getByRole("button", { name: "Cancel" }).click();
+    else await page.keyboard.press("Escape");
+    // Same with a keyboard cancel (Escape keeps the card focused in keyboard mode), then a mouse click.
+    await scope.hover();
+    await scope.getByRole("button", { name: /^Change/ }).click();
+    await scope.getByRole("radiogroup").waitFor();
+    await page.keyboard.press("Escape");
+    await scope.getByRole("radiogroup").waitFor({ state: "detached" });
+    await storage.hover();
+    await storage.getByRole("button", { name: /^Change/ }).click();
+    const opened2 = await storage.getByRole("radiogroup").waitFor({ timeout: 1500 }).then(() => true).catch(() => false);
+    check("after Escape on one card, one mouse click on another card's Change opens it", opened2);
+    if (opened2) await storage.getByRole("button", { name: "Cancel" }).click();
+    else await page.keyboard.press("Escape");
+
+    // Bug 1: "Save answer" (no dependents) updates the note and the cited bullet, and the status shows the save.
+    const oldAnswer = ((await scope.locator(".dz-av").textContent()) ?? "").trim();
+    await page.evaluate(() => {
+      window.__saveStates = [];
+      const el = document.querySelector("[data-testid=save-status]");
+      new MutationObserver(() => window.__saveStates.push(`${el.getAttribute("data-save")}:${el.textContent}`)).observe(el, { attributes: true, childList: true, subtree: true, characterData: true });
+    });
+    await scope.hover();
+    await scope.getByRole("button", { name: /^Change/ }).click();
+    const pick = scope.locator(".dz-opt[aria-checked=false]").first();
+    const newAnswer = ((await pick.locator(".lb > span").first().textContent()) ?? "").trim();
+    await pick.click();
+    await scope.getByRole("button", { name: "Save answer" }).click();
+    await scope.locator(".dz-opts").waitFor({ state: "detached" });
+    await page.waitForFunction((a) => document.querySelector(".dz[data-key=scope] .dz-av")?.textContent?.trim() === a, newAnswer);
+    const note = (await scope.locator(".dz-n").first().textContent().catch(() => "")) ?? "";
+    const bullets = await page.locator("[data-testid=plan] li").allInnerTexts();
+    const disk = readFileSync(planFile, "utf8");
+    check("Save answer: the card's note no longer states the old answer", !note.includes(oldAnswer) && (note === "" || note.includes(newAnswer)), `${oldAnswer} -> ${newAnswer}: ${note}`);
+    check("Save answer: the bullet citing the decision says the new answer", bullets.some((b) => b.startsWith(newAnswer)) && !bullets.some((b) => b.startsWith(oldAnswer)), bullets.join(" | "));
+    check("Save answer: plan.md prose follows the new answer", disk.includes(`- ${newAnswer} [R1:scope]`) && !disk.includes(`- ${oldAnswer} [R1:scope]`));
+    const states = await page.evaluate(() => window.__saveStates);
+    const status = (await page.getByTestId("save-status").textContent()) ?? "";
+    check("Save answer: the status shows Saving… then Saved", states.some((x) => x.startsWith("saving:Saving")) && !states.slice(states.findIndex((x) => x.startsWith("saving"))).some((x) => x.startsWith("idle")) && /^Saved/.test(status), `${states.join(" > ")} | ${status}`);
+  }
   // Change a decision inline (Q2): works like Reopen for what depends on it.
   {
     const card = page.locator(".dz[data-key=platform]");
@@ -641,6 +728,8 @@ try {
     await page.keyboard.press(String(pickIdx));
     check("picking a new answer warns which dependents will be re-asked", ((await card.locator(".dz-warn").textContent()) ?? "").includes("Storage"));
     check("the primary becomes 'Save and re-ask 1'", (await card.getByRole("button", { name: "Save and re-ask 1" }).count()) === 1);
+    // The Save button turns primary with a short colour transition; let it finish so axe reads the settled colours.
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
     const axeChange = await new AxeBuilder({ page }).analyze();
     check("axe: changing a decision (dark)", axeChange.violations.length === 0, axeIds(axeChange));
     await shot(page, "plan-editor-change-dark");
