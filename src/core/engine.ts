@@ -2,9 +2,23 @@ import type { z } from "zod";
 import type { FailureCode } from "./classify.ts";
 import { extractCandidate } from "./extract.ts";
 import { findBanned } from "./filter.ts";
-import { roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { commentSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { type CommentThread, checkEdits, plainQuote, sectionAt } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
-import { type PlanReply, PlanReplySchema, type RoundReply, RoundReplySchema, planJsonSchema, roundJsonSchema } from "./schema.ts";
+import {
+  type CommentReply,
+  CommentReplySchema,
+  type EditReply,
+  EditReplySchema,
+  type PlanReply,
+  PlanReplySchema,
+  type RoundReply,
+  RoundReplySchema,
+  commentJsonSchema,
+  editJsonSchema,
+  planJsonSchema,
+  roundJsonSchema,
+} from "./schema.ts";
 import {
   type Session,
   applyRound,
@@ -168,4 +182,60 @@ export async function synthesize(
     return { ok: false };
   }
   return { ok: true, plan: result.value, markdown: renderPlanMarkdown(s, result.value) };
+}
+
+/** Everything the user wrote in a thread is theirs: words in it never trip the banned filter. */
+export function commentUserText(s: Session, t: CommentThread): string {
+  return [userText(s), t.quote, ...t.messages.filter((m) => m.by === "you").map((m) => m.text)].join("\n");
+}
+
+/** The thread and the plan, for a reply or for "Apply feedback". The plan is data, not instructions. */
+export function buildCommentPrompt(s: Session, t: CommentThread, ask: "reply" | "edits", md = s.plan?.markdown ?? ""): string {
+  const thread = {
+    section: sectionAt(md, t.at) || undefined,
+    quote: t.quote,
+    messages: t.messages.map((m) => ({ by: m.by === "you" ? "user" : "you", text: m.text })),
+  };
+  return [
+    "The plan (Markdown):",
+    `<plan>${md}</plan>`,
+    "",
+    "The comment thread (JSON):",
+    `<state>${JSON.stringify(thread)}</state>`,
+    "",
+    ask === "reply"
+      ? `Reply to the user's last message in the thread, about the passage "${plainQuote(t.quote).slice(0, 200)}".`
+      : "Apply the feedback in this thread to the plan as edits.",
+  ].join("\n");
+}
+
+/** The agent's reply in a comment thread (N2). */
+export async function replyToComment(s: Session, t: CommentThread, adapter: ProviderAdapter, opts: RunOptions): Promise<Validated<CommentReply>> {
+  return runValidated<CommentReply>(
+    adapter,
+    { kind: "comment", systemPrompt: commentSystemPrompt(), userPrompt: buildCommentPrompt(s, t, "reply"), jsonSchema: commentJsonSchema() },
+    CommentReplySchema,
+    () => null,
+    opts,
+    commentUserText(s, t),
+  );
+}
+
+/** "Apply feedback": edits checked against the current plan text, to show as suggestions (N4). */
+export async function suggestEdits(
+  s: Session,
+  t: CommentThread,
+  adapter: ProviderAdapter,
+  opts: RunOptions,
+  base = s.plan?.markdown ?? "",
+): Promise<Validated<EditReply>> {
+  // `base` is the plan as it was when Apply was pressed: the user keeps editing meanwhile (§4.1).
+  return runValidated<EditReply>(
+    adapter,
+    { kind: "edit", systemPrompt: editSystemPrompt(), userPrompt: buildCommentPrompt(s, t, "edits", base), jsonSchema: editJsonSchema() },
+    EditReplySchema,
+    (reply) => checkEdits(base, reply.edits),
+    opts,
+    commentUserText(s, t),
+  );
 }

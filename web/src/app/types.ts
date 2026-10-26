@@ -1,3 +1,4 @@
+import type { CommentThread, Suggestion } from "../../../src/core/comments.ts";
 // Mirrors of what the local server sends. Kept separate from server code on purpose.
 export type ProviderId = "claude" | "codex" | "grok" | "pi";
 export type FailureCode = "auth" | "rate_limit" | "timeout" | "not_found" | "malformed" | "unknown";
@@ -144,11 +145,18 @@ export interface SessionView {
     external?: { key: string; from: string; to: string; deps: string[] }[];
   };
   busy: boolean;
+  /** "Apply feedback" is running: the plan is read-only until it's done. */
+  applying?: boolean;
+  comments?: CommentThread[];
+  suggestions?: Suggestion[];
+  reviewUndo?: { action: "accept" | "reject"; items: Suggestion[] };
   progress?: string;
   tree: TreeState;
   acceptStreak: number;
   nudge: boolean;
 }
+
+export type { CommentThread, Suggestion };
 
 export const UNKNOWN_OPTION = "__unknown";
 export const OTHER_OPTION = "__other";

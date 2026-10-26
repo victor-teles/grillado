@@ -2,7 +2,7 @@
 // A stand-in for the claude / codex / grok / pi CLIs. It speaks each CLI's output format and plays
 // a small deterministic interview, so tests and the e2e run exercise the real adapters end to end.
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
-// leak-once | slow | broken-version | long), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
+// leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once), FAKE_COMMENT_DELAY_MS, FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -98,6 +98,8 @@ if (process.env.FAKE_DELAY_MS) await new Promise((r) => setTimeout(r, Number(pro
 
 const state = JSON.parse(prompt.match(/<state>([\s\S]*?)<\/state>/)?.[1] ?? "{}");
 const isPlan = /"type":"plan"/.test(system);
+const isComment = /"type":"reply"/.test(system);
+const isEdit = /"type":"edits"/.test(system);
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -200,7 +202,32 @@ function planReply() {
   };
 }
 
-const reply = isPlan ? planReply() : roundReply();
+// Comment threads: a reply that names the passage, and "Apply feedback" as two edits (the quoted
+// passage, and the first decision in the list). FAKE_COMMENT=leak-once | bad-edit-once exercise the
+// banned filter and the edit check (one retry each).
+function commentReply() {
+  const plan = prompt.match(/<plan>([\s\S]*?)<\/plan>/)?.[1] ?? "";
+  const quote = String(state.quote ?? "");
+  const words = quote.replace(/\[R\d+:[^\]]*\]/g, "").trim();
+  if (isComment) {
+    if (process.env.FAKE_COMMENT === "leak-once" && once("comment-leak")) return { type: "reply", text: "Per the grilling method, yes." };
+    const n = (state.messages ?? []).filter((m) => m.by === "user").length;
+    const lead = n > 1 ? "Sure, that works too." : "Good catch.";
+    return { type: "reply", text: `${lead} I can say that under ${state.section ?? "this section"} and spell out "${words.slice(0, 40)}".` };
+  }
+  if (process.env.FAKE_COMMENT === "bad-edit-once" && once("bad-edit")) return { type: "edits", summary: "x", edits: [{ before: "text that is not in the plan", after: "y" }] };
+  // A comment on a decision block: answers change through the decision itself, so no edits.
+  const inFence = [...plan.matchAll(/^```[\s\S]*?^```/gm)].some((m) => m[0].includes(quote));
+  if (inFence || !plan.includes(quote)) return { type: "edits", summary: "Nothing to change in the text", edits: [] };
+  const edits = [{ before: quote, after: `${quote}, shared by everyone at home` }];
+  const item = /^- (Yes, one core flow)/m.exec(plan);
+  if (item && !quote.includes(item[1])) edits.push({ before: item[1], after: "Yes, one core flow, shipped first" });
+  return { type: "edits", summary: "Spelled it out", edits };
+}
+
+// FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
+if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
+const reply = isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude") {
