@@ -5,6 +5,10 @@ export const COPY = {
   decisionsLead: "Every answer from this session. Change one in the plan; what depends on it is asked again.",
   waiting: "Asking again: {list}. {agent} is writing the next questions; the plan is read-only until then.",
   agentChip: "Agent: {agent}",
+  answered: "Answered by {who} · {when}",
+  answeredBy: "Answered by {who}",
+  resolvedNewest: "Newest first",
+  resolvedRounds: "Rounds {first}–{last}",
 } as const;
 
 /** Fill `{name}` slots. Unknown slots are left as they are so a missing value is visible, not silent. */

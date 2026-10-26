@@ -9,6 +9,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { DecisionFields } from "../../../../src/core/decision-block.ts";
 import { OTHER_OPTION, type Question } from "../types";
+import { answeredLine } from "./decision-meta";
 
 export interface Pick {
   optionId: string;
@@ -33,6 +34,7 @@ export function DecisionCard({
   readOnly,
   onActive,
   onSave,
+  agentName,
 }: {
   fields: DecisionFields;
   state: CardState;
@@ -46,6 +48,8 @@ export function DecisionCard({
   readOnly?: boolean;
   onActive: (on: boolean) => void;
   onSave: (pick: Pick) => Promise<void>;
+  /** The selected agent's display name, for "Answered by …" when `by: agent`. */
+  agentName: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const changeBtn = useRef<HTMLButtonElement>(null);
@@ -206,6 +210,7 @@ export function DecisionCard({
       <div className="dz-h">
         <span className="dz-lbl">Decision</span>
         <span className="dz-id">{fields.id}</span>
+        {state === "settled" && answeredLine(fields, agentName) ? <span className="dz-when">{answeredLine(fields, agentName)}</span> : null}
         {badge.kind === "kept" ? (
           <span className="dz-badge" data-kind="kept">
             Kept the suggestion

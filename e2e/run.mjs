@@ -367,6 +367,8 @@ try {
   await cites.nth(1).click();
   check("a citation moves focus to its decision card", await page.evaluate(() => document.activeElement?.matches(".dz[data-key=platform]")));
   check("focusing a card highlights the passages that cite it", (await page.locator("[data-testid=plan] mark.ctx").count()) === 1 && ((await page.locator("mark.ctx").textContent()) ?? "").includes("Mobile app"), (await page.locator("[data-testid=plan] mark.ctx").allTextContents()).join(" | "));
+  // v1.1 backlog item 2: each block says who answered and when (meta line, from by: and at:).
+  check("decision card says who answered and when", /^Answered by you · [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$/.test(((await page.locator(".dz[data-key=platform] .dz-when").textContent()) ?? "").trim()), await page.locator(".dz[data-key=platform] .dz-when").textContent());
   check("card points at its passages (aria-describedby)", !!(await page.locator(".dz[data-key=platform]").getAttribute("aria-describedby")));
   const axePlan = await new AxeBuilder({ page }).analyze();
   check("axe: plan view (light)", axePlan.violations.length === 0, axePlan.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
@@ -377,6 +379,13 @@ try {
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Decisions", level: 1 }).waitFor();
   check("Decisions tab lists every answer by round", (await page.locator(".drow").count()) === 3 && (await page.getByRole("heading", { name: "Round 2" }).count()) === 1);
+  // The "n resolved" accordion: open when nothing is open, chevron + "Newest first"; collapsing hides the log.
+  const accH = page.locator(".acc-h");
+  check("'3 resolved' accordion starts open, newest first", (await accH.getAttribute("aria-expanded")) === "true" && ((await accH.textContent()) ?? "").replace(/\s+/g, " ").trim() === "3 resolved Newest first", await accH.textContent());
+  await accH.click();
+  check("collapsing the accordion hides the rows and names the rounds", (await page.locator("#acc-resolved").isHidden()) && (await accH.getAttribute("aria-expanded")) === "false" && ((await accH.textContent()) ?? "").includes("Rounds 1–2"), await accH.textContent());
+  await accH.press("Enter");
+  check("Enter on the accordion header opens it again", (await accH.getAttribute("aria-expanded")) === "true" && (await page.locator(".drow").count()) === 3);
   const axeTab = await new AxeBuilder({ page }).analyze();
   check("axe: Decisions tab (light)", axeTab.violations.length === 0, axeTab.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
   await page.getByRole("button", { name: "Show in plan: Storage" }).click();
@@ -958,6 +967,13 @@ try {
     check("axe: plan with open decisions (light)", axeE.violations.length === 0, axeE.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));
     await answerBtn.click();
     check("Answer opens the options in place", (await firstCard.getByRole("radiogroup").count()) === 1);
+    // Decisions tab with open decisions: "Still open" first, the resolved log collapsed (v1.1 frame d-tab-early).
+    await pg.getByRole("tab", { name: /Decisions/ }).click();
+    await pg.getByRole("heading", { name: "Decisions", level: 1 }).waitFor();
+    const accE = pg.locator(".acc-h");
+    check("with open decisions the Decisions tab shows Still open first and the resolved log collapsed", (await pg.locator(".dtab h2").first().textContent())?.startsWith("Still open") && (await accE.getAttribute("aria-expanded")) === "false" && (await pg.locator("#acc-resolved").isHidden()), `${await pg.locator(".dtab h2").first().textContent()} | ${await accE.textContent()}`);
+    const axeD = await new AxeBuilder({ page: pg }).analyze();
+    check("axe: Decisions tab with open decisions, resolved collapsed (mobile)", axeD.violations.length === 0, axeIds(axeD));
     await ctx.close();
     await stop(s6, "SIGINT");
   }

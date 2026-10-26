@@ -13,7 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { DecisionCard } from "./editor/DecisionCard";
 import { passages as findPassages } from "./editor/blocks";
 import { type DecisionRenderer, type EditorMode, ModeToggle, PlanEditor, SaveStatus, usePlanDraft } from "./editor/PlanEditor";
-import { IAlert, IDl, IFolder, IInfo, IMore } from "./icons";
+import { IAlert, IDl, IDown, IFolder, IInfo, IMore } from "./icons";
 import { type Act, dependentsOf } from "./Session";
 import type { Decision, Question, SessionView } from "./types";
 
@@ -127,6 +127,7 @@ export function PlanView({ session, act, agentName, banner }: { session: Session
         readOnly={readOnly}
         onActive={setActive}
         onSave={(pick) => save(key, open, pick)}
+        agentName={agentName}
       />
     );
   };
@@ -322,7 +323,8 @@ function DecisionsTab({
   onShow: (key: string) => void;
   renderOpen: DecisionRenderer;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  // With decisions still open they come first and the resolved log starts collapsed (v1.1 frame d-tab-early).
+  const [expanded, setExpanded] = useState(!openKeys.length);
   const decisions = Object.values(session.decisions);
   const byRound = useMemo(() => {
     const m = new Map<number, Decision[]>();
@@ -353,7 +355,15 @@ function DecisionsTab({
       <section className="acc">
         <h2>
           <button type="button" className="acc-h" aria-expanded={expanded} aria-controls="acc-resolved" onClick={() => setExpanded(!expanded)}>
-            {decisions.length} resolved
+            <IDown s={14} />
+            {decisions.length} resolved{" "}
+            <span className="acc-sub">
+              {expanded || !byRound.length
+                ? COPY.resolvedNewest
+                : byRound.length === 1
+                  ? `Round ${byRound[0][0]}`
+                  : fmt(COPY.resolvedRounds, { first: byRound[byRound.length - 1][0], last: byRound[0][0] })}
+            </span>
           </button>
         </h2>
         <div id="acc-resolved" hidden={!expanded}>
