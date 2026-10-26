@@ -186,6 +186,8 @@ export function DecisionCard({
       aria-roledescription="decision"
       aria-label={`Decision ${fields.id}: ${fields.question}${fields.answer && state !== "open" ? ` ${fields.answer}` : ""}`}
       aria-describedby={passages.length ? passages.join(" ") : undefined}
+      aria-keyshortcuts={canChange ? "Enter /" : "/"}
+      aria-description="Slash adds a block below"
       contentEditable={false}
       tabIndex={0}
       onMouseEnter={() => !justFocusedElsewhere(ref.current) && activate(true)}

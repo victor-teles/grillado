@@ -361,8 +361,8 @@ export type NewBlock = { pointer: boolean };
 /** The hint under the block editor (its aria-describedby): Esc closes the menu first; phones have no Esc. */
 function hintOf(fields: boolean, menu: boolean, mobile?: boolean): ReactNode {
   const k = (t: string) => <span className="kb4">{t}</span>;
-  if (fields) return mobile ? <>{k("Tab")} next field</> : <>{k("Tab")} next field · {k("Esc")} finish</>;
-  if (mobile) return "Markdown";
+  if (mobile) return "Markdown"; // phone keyboards have no Tab or Esc
+  if (fields) return <>{k("Tab")} next field · {k("Esc")} finish</>;
   return menu ? <>Markdown · {k("Esc")} close menu</> : <>Markdown · {k("Esc")} to finish</>;
 }
 

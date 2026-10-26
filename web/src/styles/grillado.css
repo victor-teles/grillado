@@ -27,7 +27,7 @@
   --sans:"Inter Variable",ui-sans-serif,system-ui,sans-serif;--mono:"Geist Mono Variable",ui-monospace,monospace;
 }
 /* Light inks a step darker than the board tokens so small text on --sel clears 4.5:1. */
-html.light{--success-ink:oklch(0.47 0.14 153);--warning-ink:oklch(0.5 0.15 55)}
+html.light{--success-ink:oklch(0.47 0.14 153);--warning-ink:oklch(0.5 0.1 90)}
 /* dark: the warning ink moves to amber-yellow so it never reads as ember (heat, open, the agent at work) */
 html:not(.light){--warning-ink:oklch(0.84 0.15 92)}
 
