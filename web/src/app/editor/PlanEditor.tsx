@@ -15,6 +15,7 @@ import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
 import type { CodeEditorHandle } from "./cm";
 import { LivePreview } from "./Diagram";
+import { SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "./SourcePreview";
 import { type CiteRenderer, type DocMarks, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
 import { canHover, jumpTo, selecting } from "./link";
 import { formatEdit, formatKey } from "./selection";
@@ -432,6 +433,9 @@ function BlockEditor({
   };
   const preview = parseBlocks(text).find((b) => b.kind === "fence" && b.lang === "mermaid");
   const [now, setNow] = useState(0);
+  // Mobile diagrams: Source | Preview in the accessory row instead of the preview under the source.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const sp = useSourcePreview(mobile && !!preview, rootRef, ref, finish);
   const [merr, setMerr] = useState<{ line?: number; message: string; raw: string } | null>(null);
   const [mdet, setMdet] = useState(false);
   const errId = useId();
@@ -455,7 +459,7 @@ function BlockEditor({
     s.openAt(slash, true);
   };
   return (
-    <div className="blk" data-editing="" data-block={kind} data-fields={f ? "" : undefined}>
+    <div ref={rootRef} className="blk" data-editing="" data-block={kind} data-fields={f ? "" : undefined} data-view={mobile && preview ? sp.view : undefined}>
       <div className="blk-ed">
         {f ? (
           // Field chips: a mirror under the transparent textarea marks the template's fields.
@@ -480,7 +484,9 @@ function BlockEditor({
             s.input(text, next);
           }}
           onSelect={() => s.moved()}
-          onBlur={() => finish(false)}
+          onBlur={(e) => {
+            if (!sp.keeps(e.relatedTarget)) finish(false);
+          }}
           onKeyDown={(e) => {
             if (s.key(e)) {
               e.stopPropagation();
@@ -534,10 +540,20 @@ function BlockEditor({
       <SlashMenu s={s} host={host} agentName={agentName} mobile={mobile} dock={dock + 48} />
       {mobile ? (
         <div className="acc4" role="toolbar" aria-label="Editing" style={{ bottom: dock }} onMouseDown={(e) => e.preventDefault()}>
-          <button type="button" className="btn quiet" onClick={addBlock}>
-            <PlusIcon />
-            Block
-          </button>
+          {preview ? (
+            <SourcePreviewSwitch
+              view={sp.view}
+              onView={(v) => {
+                sp.set(v);
+                if (v === "preview") setNow((n) => n + 1);
+              }}
+            />
+          ) : (
+            <button type="button" className="btn quiet" onClick={addBlock}>
+              <PlusIcon />
+              Block
+            </button>
+          )}
           <span className="sp" />
           <button type="button" className="btn quiet" onClick={() => finish(true)}>
             Done
@@ -566,24 +582,6 @@ function chips(text: string, fields: { start: number; end: number }[], active: n
   });
   out.push(`${text.slice(at)}\u200b`);
   return out;
-}
-
-/** Pixels the on-screen keyboard covers at the bottom of the layout viewport (mobile). */
-function useKeyboardDock(on: boolean) {
-  const [px, setPx] = useState(0);
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!on || !vv) return;
-    const update = () => setPx(Math.max(0, window.innerHeight - (vv.height + vv.offsetTop)));
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
-  }, [on]);
-  return px;
 }
 
 /** Renders a decision block from its last valid fields. */

@@ -7,6 +7,7 @@ import type { Placed } from "../comments/model";
 import { Diagram, LivePreview } from "../editor/Diagram";
 import { accOf, kindName } from "../editor/diagram";
 import { useMobile } from "../chrome";
+import { SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "../editor/SourcePreview";
 import { ICheck, IEdit, IMinus, IPlus, IX } from "../icons";
 
 const MOD = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? "") ? "⌘" : "Ctrl+";
@@ -131,8 +132,13 @@ function SourceEditor({ initial, onDone }: { initial: string; onDone: (t: string
     ended.current = true;
     onDone(ref.current?.value ?? text);
   };
+  // Mobile: Source | Preview in the accessory row instead of the preview under the source (§11).
+  const mobile = useMobile();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const sp = useSourcePreview(mobile, rootRef, ref, finish);
+  const dock = useKeyboardDock(mobile);
   return (
-    <div className="ned5" onClick={(e) => e.stopPropagation()}>
+    <div ref={rootRef} className="ned5" data-view={mobile ? sp.view : undefined} onClick={(e) => e.stopPropagation()}>
       <textarea
         ref={ref}
         className="blk-edit mono"
@@ -140,7 +146,9 @@ function SourceEditor({ initial, onDone }: { initial: string; onDone: (t: string
         spellCheck={false}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onBlur={finish}
+        onBlur={(e) => {
+          if (!sp.keeps(e.relatedTarget)) finish();
+        }}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape") {
@@ -156,8 +164,29 @@ function SourceEditor({ initial, onDone }: { initial: string; onDone: (t: string
         <LivePreview code={text} now={now} />
       </div>
       <p className="blk-hint" aria-hidden="true">
-        Mermaid · <span className="kb4">⌘↵</span> draw now · <span className="kb4">Esc</span> finish
+        {mobile ? (
+          "Mermaid"
+        ) : (
+          <>
+            Mermaid · <span className="kb4">⌘↵</span> draw now · <span className="kb4">Esc</span> finish
+          </>
+        )}
       </p>
+      {mobile ? (
+        <div className="acc4" role="toolbar" aria-label="Editing" style={{ bottom: dock }} onMouseDown={(e) => e.preventDefault()}>
+          <SourcePreviewSwitch
+            view={sp.view}
+            onView={(v) => {
+              sp.set(v);
+              if (v === "preview") setNow((n) => n + 1);
+            }}
+          />
+          <span className="sp" />
+          <button type="button" className="btn quiet" onClick={finish}>
+            Done
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

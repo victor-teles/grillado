@@ -249,7 +249,8 @@ export function useComments(o: Opts) {
     requestAnimationFrame(() => {
       const el = o.docRef.current?.querySelector<HTMLElement>(`[data-sg="${CSS.escape(focusId)}"]`);
       el?.scrollIntoView({ block: "center" });
-      el?.focus({ preventScroll: true });
+      // Unless focus is already in it: tapping Edit on an unfocused suggestion opens its editor first.
+      if (!el?.contains(document.activeElement)) el?.focus({ preventScroll: true });
     });
   }, [focusId]);
   const go = (d: 1 | -1) => {
