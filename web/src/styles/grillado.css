@@ -394,9 +394,9 @@ button:disabled{cursor:default}
 .blk:hover .gut-cite,.gut-cite:focus-visible,.gut-cite.on,.gut-i:has(.peekcard) .gut-cite{opacity:1}
 .gut-cite.on{color:var(--foreground);background:color-mix(in oklab,var(--primary) var(--link-a),transparent);transition-duration:var(--d-link-in)}
 .gut-cite.st{color:var(--muted-foreground)}
-.peekcard{position:absolute;top:100%;left:0;margin-top:6px;z-index:5;width:300px;box-sizing:border-box;padding:12px 14px;border-radius:12px;background:var(--popover);color:var(--popover-foreground);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);display:grid;white-space:normal;font-size:var(--t-body);line-height:20px;cursor:default}
+.peekcard{position:absolute;top:100%;left:0;margin-top:6px;height:auto;min-height:0;align-content:start;z-index:5;width:300px;box-sizing:border-box;padding:12px 14px;border-radius:12px;background:var(--popover);color:var(--popover-foreground);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);display:grid;white-space:normal;font-size:var(--t-body);line-height:20px;cursor:default}
 .peekcard[data-up]{top:auto;bottom:100%;margin:0 0 6px}
-.peekcard .q{color:var(--muted-foreground)}
+.peekcard .pq{color:var(--muted-foreground)}
 .peekcard .a{font-size:15px;font-weight:600;line-height:22px;margin-top:2px}
 .peekcard .a .yc{margin-left:8px;font-size:var(--t-meta);font-weight:500;color:var(--gr-ember-ink)}
 .peekcard .m{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);margin-top:6px}

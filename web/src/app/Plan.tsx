@@ -410,7 +410,7 @@ function GutCite({
       </button>
       {peek ? (
         <span className="peekcard" id={pid} role="tooltip" data-up={peek.up ? "" : undefined} onPointerLeave={() => (lastClose = performance.now())}>
-          <span className="q">{question}</span>
+          <span className="pq">{question}</span>
           {answer ? (
             <span className="a">
               {answer}
