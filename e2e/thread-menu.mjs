@@ -182,7 +182,7 @@ try {
     await comment("Shared shopping", "Say who shares it");
     await comment(b1, "Why this one?");
     await comment(b2, "And Android?");
-    await pg.waitForFunction(() => document.querySelectorAll(".crail .th .msg").length >= 6, null, { timeout: 15000 });
+    await pg.waitForFunction(() => document.querySelectorAll(".crail .th .msg:not([data-streaming])").length >= 6 && !document.querySelector(".crail .th .msg[aria-busy], .crail .th .stop"), null, { timeout: 15000 });
     const [A, C, B] = await threadIds(pg);
     check(`${theme}: three threads in plan order (Problem, then two in Implementation decisions)`, !!(A && B && C) && (await tabCount(pg)) === "3", `${A} ${C} ${B}`);
 

@@ -2,35 +2,90 @@ import os from "node:os";
 import { classifyFailure, summarizeError } from "../classify.ts";
 import { type AdapterOptions, type AdapterSpec, createAdapter, failureFromProcess, lastJsonLine, readIfExists } from "./base.ts";
 import { runProcess } from "./process.ts";
-import type { ProviderAdapter, ProviderId } from "./types.ts";
+import { partialStringField } from "./partial-json.ts";
+import type { ProviderAdapter, ProviderEvent, ProviderId, RunFiles, RunRequest } from "./types.ts";
 
 const modelArgs = (flag: string, model?: string) => (model ? [flag, model] : []);
 
 /** Claude Code (C1). Tools off with `--tools ""`; `dontAsk` as a backstop. Uses the user's own login (no --bare). */
+const claudeArgs = (req: RunRequest, files: RunFiles, format: string[]) => ({
+  args: [
+    "-p",
+    ...format,
+    "--json-schema",
+    JSON.stringify(req.jsonSchema),
+    "--tools",
+    "",
+    "--permission-mode",
+    "dontAsk",
+    "--system-prompt-file",
+    files.systemPromptFile,
+    "--no-session-persistence",
+    ...modelArgs("--model", req.model),
+  ],
+  stdin: req.userPrompt,
+});
+
+/**
+ * Claude Code's stream (#97): with `--json-schema`, the reply arrives as a `StructuredOutput` tool
+ * call whose input streams as `input_json_delta` chunks. This reads the chunks so far and hands out
+ * the new part of one string field. A second StructuredOutput call (Claude Code's own schema retry)
+ * starts the text over. Text blocks outside the tool call are not the reply and are ignored. The
+ * validated object still comes from the final `result` line, through `parse`.
+ */
+export function claudeStreamReader(field: string): (line: string) => ProviderEvent[] {
+  let open = -1; // index of the StructuredOutput block being written, or -1
+  let json = "";
+  let sent = "";
+  return (line) => {
+    let msg: any;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return [];
+    }
+    if (msg?.type !== "stream_event") return [];
+    const ev = msg.event ?? {};
+    if (ev.type === "content_block_start") {
+      if (ev.content_block?.type === "tool_use" && ev.content_block?.name === "StructuredOutput") {
+        open = ev.index;
+        json = "";
+        if (sent) {
+          sent = "";
+          return [{ type: "text-reset" }];
+        }
+      }
+      return [];
+    }
+    if (ev.type === "content_block_stop" && ev.index === open) {
+      open = -1;
+      return [];
+    }
+    if (ev.type !== "content_block_delta" || ev.index !== open || ev.delta?.type !== "input_json_delta") return [];
+    json += String(ev.delta.partial_json ?? "");
+    const now = partialStringField(json, field);
+    if (now === undefined || now === sent) return [];
+    if (!now.startsWith(sent)) {
+      sent = now;
+      return [{ type: "text-reset" }, { type: "text-delta", text: now }];
+    }
+    const add = now.slice(sent.length);
+    sent = now;
+    return [{ type: "text-delta", text: add }];
+  };
+}
+
 export const claudeSpec: AdapterSpec = {
   id: "claude",
   displayName: "Claude Code",
   bin: "claude",
   installHint: "npm i -g @anthropic-ai/claude-code",
   loginHint: "Run `claude` in a terminal and use /login",
-  buildInvocation: (req, files) => ({
-    args: [
-      "-p",
-      "--output-format",
-      "json",
-      "--json-schema",
-      JSON.stringify(req.jsonSchema),
-      "--tools",
-      "",
-      "--permission-mode",
-      "dontAsk",
-      "--system-prompt-file",
-      files.systemPromptFile,
-      "--no-session-persistence",
-      ...modelArgs("--model", req.model),
-    ],
-    stdin: req.userPrompt,
-  }),
+  buildInvocation: (req, files) => claudeArgs(req, files, ["--output-format", "json"]),
+  stream: {
+    buildInvocation: (req, files) => claudeArgs(req, files, ["--output-format", "stream-json", "--verbose", "--include-partial-messages"]),
+    reader: claudeStreamReader,
+  },
   parse: (res) => {
     let out: Record<string, unknown> | undefined;
     try {

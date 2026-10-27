@@ -25,6 +25,7 @@ import { ActionSheet } from "../ActionSheet";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
 import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, heldAnchor, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
 import { hit, lineRoom, useDropOnResize } from "./spot";
+import { notePinned, onReplyText, replyText, scrollBox, setReplyText, takeStreamed, wasPinned } from "./stream";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = mac ? "⌘" : "Ctrl+";
@@ -476,6 +477,8 @@ export function useComments(o: Opts) {
         ready.current.add(k);
         if (t.run.edits) setLive(A(CCOPY.readyLive(t.run.edits)));
       } else if (t.run?.kind === "apply" && t.run.state === "running") setLive(A(CCOPY.writingLive));
+      // A streamed reply is announced once when it's done; its text is not read again (#97).
+      if (t.run?.kind === "reply" && t.run.state !== "running" && takeStreamed(t.id) && t.run.state === "done") setLive(A(CCOPY.replied));
     }
   }, [threads]);
 
@@ -1527,6 +1530,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
   const row = statusRow(t, list);
   const replying = t.run?.kind === "reply" && t.run.state === "running";
   const replyFailed = t.run?.kind === "reply" && t.run.state === "error";
+  const streaming = useStreaming(t.id, replying ? (t.run?.partial ?? "") : "");
   const pendingHere = list.some((s) => s.threadId === t.id && s.status === "pending");
   // After an apply run, a new reply is needed before applying again; Stop and errors have Try again.
   const applyOk = canApply(t) && !pendingHere && t.run?.kind !== "apply";
@@ -1534,6 +1538,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
   const sendReply = async () => {
     const text = reply.trim();
     if (!text) return;
+    notePinned(document.getElementById(`th-${t.id}`));
     if (await act(`comments/${t.id}/reply`, { text })) setReply("");
   };
   return (
@@ -1578,10 +1583,20 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
               <span className="m">{time(m.at)}</span>
             )}
           </div>
-          <p>{m.text}</p>
+          <p>
+            {m.text}
+            {m.stopped ? (
+              <>
+                {" "}
+                <span className="stopped">(stopped)</span>
+              </>
+            ) : null}
+          </p>
         </div>
       ))}
-      {replying ? (
+      {replying && streaming ? (
+        <StreamingReply t={t} agentName={agentName} onStop={() => void act(`comments/${t.id}/stop`)} />
+      ) : replying ? (
         <div className="msg" aria-live="polite">
           <div className="who">
             <b className="m">{A(CCOPY.replying)}</b>
@@ -1589,6 +1604,15 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
               Stop
             </button>
           </div>
+        </div>
+      ) : null}
+      {replyFailed && t.run?.partial ? (
+        // Error mid-stream: what was written stays; Try again replaces it (#97).
+        <div className="msg" data-partial="">
+          <div className="who">
+            <b>{agentName}</b>
+          </div>
+          <p>{t.run.partial}</p>
         </div>
       ) : null}
       {replyFailed ? (
@@ -1631,6 +1655,72 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
         }}
       />
     </section>
+  );
+}
+
+/** True while this thread's reply has streamed text to show; flips once, not per delta (#97). */
+function useStreaming(threadId: string, initial: string): boolean {
+  const [on, setOn] = useState(() => !!(initial || replyText(threadId)));
+  useEffect(() => {
+    if (initial && !replyText(threadId)) setReplyText(threadId, initial);
+    setOn(!!replyText(threadId));
+    return onReplyText(threadId, (text) => setOn(!!text));
+  }, [threadId, initial]);
+  return on;
+}
+
+/**
+ * A reply while it streams (#97): the author line with Stop, then the text so far and a static caret.
+ * New text is appended as a text node, at most once a frame, never by re-rendering the thread. The
+ * rail stays scrolled to the bottom only if it already was.
+ */
+function StreamingReply({ t, agentName, onStop }: { t: CommentThread; agentName: string; onStop: () => void }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    let shown = "";
+    let frame = 0;
+    // The rail (or phone sheet), found while the message is still in it.
+    const box = scrollBox(el);
+    // Pinned to the bottom on mount and on every paint, while the reader was at the bottom.
+    const paint = () => {
+      frame = 0;
+      const pin = box ? wasPinned(box) : false;
+      const text = replyText(t.id);
+      if (text !== shown) {
+        if (text.startsWith(shown)) el.append(document.createTextNode(text.slice(shown.length)));
+        else el.textContent = text;
+        shown = text;
+      }
+      if (box && pin && box.scrollTop !== box.scrollHeight - box.clientHeight) box.scrollTop = box.scrollHeight;
+    };
+    paint();
+    const off = onReplyText(t.id, () => {
+      if (!frame) frame = requestAnimationFrame(paint);
+    });
+    return () => {
+      off();
+      if (frame) cancelAnimationFrame(frame);
+      // The finished (or stopped) message replaces this one and is taller (time, Apply feedback):
+      // a pinned rail follows it once more, so Reply stays in view.
+      if (box && wasPinned(box)) requestAnimationFrame(() => (box.scrollTop = box.scrollHeight));
+    };
+  }, [t.id]);
+  return (
+    <div className="msg" aria-busy="true" data-streaming="">
+      <div className="who">
+        <b>{agentName}</b>
+        <span className="m">replying</span>
+        <button type="button" className="btn quiet stop" onClick={onStop}>
+          Stop
+        </button>
+      </div>
+      <p>
+        <span ref={textRef} />
+        <span className="caret" aria-hidden="true" />
+      </p>
+    </div>
   );
 }
 

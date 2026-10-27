@@ -51,6 +51,8 @@ export const api = {
 export type ServerEvent =
   | { type: "session"; session: SessionView }
   | { type: "progress"; sessionId: string; label: string }
+  /** A comment reply's text so far, where the agent streams (#97); "" when it starts over. */
+  | { type: "reply-text"; sessionId: string; threadId: string; text: string }
   | { type: "app" };
 
 /** Live updates. Calls `onDown` when the server is gone (Ctrl+C or Quit). */

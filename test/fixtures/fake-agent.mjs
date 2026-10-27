@@ -4,11 +4,14 @@
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
 // leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
+// FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const [name, ...args] = process.argv.slice(2);
+// FAKE_CTL: a JSON file of env overrides read at every run, so one e2e server can switch modes.
+if (process.env.FAKE_CTL && existsSync(process.env.FAKE_CTL)) Object.assign(process.env, JSON.parse(readFileSync(process.env.FAKE_CTL, "utf8") || "{}"));
 const mode = process.env.FAKE_MODE ?? "ok";
 const stateDir = process.env.FAKE_STATE_DIR ?? "/tmp";
 
@@ -219,6 +222,7 @@ function commentReply() {
     if (process.env.FAKE_COMMENT === "leak-once" && once("comment-leak")) return { type: "reply", text: "Per the grilling method, yes." };
     const asked = (state.messages ?? []).filter((m) => m.by === "user");
     const where = state.section ?? "this section";
+    if (process.env.FAKE_REPLY_TEXT) return { type: "reply", text: process.env.FAKE_REPLY_TEXT };
     if (asked.length <= 1) return { type: "reply", text: `Good catch. I can say that under ${where} and spell out "${words.slice(0, 40)}".` };
     // A follow-up gets an answer to what it asks, not the first reply again.
     if (/\bwho\b/i.test(String(asked.at(-1)?.text ?? ""))) return { type: "reply", text: `Anyone in the household. Everyone who shares the list can add, tick off or remove items, and I'll say so under ${where}.` };
@@ -283,7 +287,9 @@ if (isAddPlan && process.env.FAKE_ADDPLAN_DELAY_MS) await new Promise((r) => set
 const reply = isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
-if (name === "claude") {
+if (name === "claude" && flag("--output-format") === "stream-json") {
+  await claudeStream(reply, text);
+} else if (name === "claude") {
   const out = { type: "result", is_error: false, result: text };
   if (typeof reply !== "string") out.structured_output = reply;
   console.log(JSON.stringify(out));
@@ -299,4 +305,66 @@ if (name === "claude") {
   const m = { role: "assistant", content: [{ type: "text", text: `Here you go:\n\`\`\`json\n${text}\n\`\`\`` }], stopReason: "stop" };
   console.log(JSON.stringify({ type: "session" }));
   console.log(JSON.stringify({ type: "message_end", message: m }));
+}
+
+// Claude Code's `--output-format stream-json --include-partial-messages` (#97): a text block first
+// (not the reply), then the structured reply as a StructuredOutput tool call whose input arrives in
+// `input_json_delta` chunks, then the result line. FAKE_STREAM=hold stops halfway and waits (Stop
+// ends it), fail errors halfway, retry-once makes a first StructuredOutput call that Claude Code
+// rejects and calls again (the streamed text starts over).
+async function claudeStream(reply, text) {
+  const pause = () => new Promise((r) => setTimeout(r, Number(process.env.FAKE_STREAM_MS ?? 25)));
+  const line = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
+  const ev = (event) => line({ type: "stream_event", event, session_id: "fake", uuid: "u" });
+  const mode = process.env.FAKE_STREAM ?? "";
+  line({ type: "system", subtype: "init", session_id: "fake", tools: ["StructuredOutput"] });
+  ev({ type: "message_start", message: { id: "m1", role: "assistant", content: [] } });
+  ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Here is my reply." } });
+  ev({ type: "content_block_stop", index: 0 });
+  const call = async (json, index, { stopAt } = {}) => {
+    ev({ type: "content_block_start", index, content_block: { type: "tool_use", id: `t${index}`, name: "StructuredOutput", input: {} } });
+    const size = 7;
+    for (let i = 0; i < json.length; i += size) {
+      if (stopAt !== undefined && i >= stopAt) return false;
+      ev({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: json.slice(i, i + size) } });
+      await pause();
+    }
+    ev({ type: "content_block_stop", index });
+    return true;
+  };
+  if (typeof reply === "string") {
+    ev({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
+    ev({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: reply } });
+    ev({ type: "content_block_stop", index: 1 });
+    line({ type: "result", subtype: "success", is_error: false, result: reply });
+    return;
+  }
+  if (mode === "retry-once" && once("stream-retry")) {
+    await call(JSON.stringify({ type: reply.type, text: "A first try that Claude Code rejects" }).replace(/"type":"[a-z]+"/, '"type":"wrong"'), 1);
+    line({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: "Output does not match the schema" }] } });
+    ev({ type: "message_start", message: { id: "m2", role: "assistant", content: [] } });
+  }
+  const half = Math.floor(text.length * 0.55);
+  if (process.env.FAKE_STREAM_CUT && (mode === "hold" || mode === "fail")) {
+    const at = text.indexOf(process.env.FAKE_STREAM_CUT) + process.env.FAKE_STREAM_CUT.length;
+    ev({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "t2", name: "StructuredOutput", input: {} } });
+    for (let i = 0; i < at; i += 7) { ev({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: text.slice(i, Math.min(i + 7, at)) } }); await pause(); }
+    if (mode === "hold") { await new Promise((r) => setTimeout(r, 120_000)); return; }
+    line({ type: "result", subtype: "error_during_execution", is_error: true, result: "API Error: 529 Overloaded", api_error_status: 529 }); process.exit(1);
+  }
+  if (mode === "hold") {
+    await call(text, 2, { stopAt: half });
+    await new Promise((r) => setTimeout(r, 120_000));
+    return;
+  }
+  if (mode === "fail") {
+    await call(text, 2, { stopAt: half });
+    line({ type: "result", subtype: "error_during_execution", is_error: true, result: "API Error: 529 Overloaded", api_error_status: 529 });
+    process.exit(1);
+  }
+  await call(text, 2);
+  ev({ type: "message_stop" });
+  line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "StructuredOutput", input: reply }] } });
+  line({ type: "result", subtype: "success", is_error: false, result: "", structured_output: reply });
 }

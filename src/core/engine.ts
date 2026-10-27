@@ -3,6 +3,7 @@ import type { FailureCode } from "./classify.ts";
 import { extractCandidate } from "./extract.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
+import { StreamGuard } from "./stream-guard.ts";
 import { addPlanSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
@@ -48,6 +49,11 @@ export interface RunOptions {
   onProgress?: (label: string) => void;
   /** The first reply didn't validate and the agent is asked again (the activity log's repair step). */
   onRepair?: (problem: string) => void;
+  /**
+   * The streamed reply so far, where the provider streams (#97). Called with "" when what was shown
+   * goes away (a retry, or text the banned filter would reject). Only text that is safe to show.
+   */
+  onText?: (text: string) => void;
 }
 
 export type Validated<T> = { ok: true; value: T } | { ok: false; code: FailureCode; message: string };
@@ -122,6 +128,13 @@ export async function runValidated<T>(
   exempt: string,
 ): Promise<Validated<T>> {
   let problem = "";
+  const guard = new StreamGuard(exempt);
+  let shown = "";
+  const show = (text: string) => {
+    if (text === shown) return;
+    shown = text;
+    opts.onText?.(text);
+  };
   for (let attempt = 1; attempt <= 2; attempt++) {
     if (attempt === 2) opts.onRepair?.(problem);
     const userPrompt =
@@ -129,15 +142,27 @@ export async function runValidated<T>(
         ? base.userPrompt
         : `${base.userPrompt}\n\nYour previous reply was rejected. Return only JSON matching the schema; error: ${problem}`;
     const req: RunRequest = { ...base, userPrompt, cwd: opts.cwd, timeoutMs: opts.timeoutMs, model: opts.model };
+    if (!opts.onText) delete req.stream;
     let raw: unknown;
     let gotResult = false;
-    for await (const ev of adapter.run(req, opts.signal)) {
-      if (ev.type === "progress") opts.onProgress?.(attempt === 1 ? ev.label : "Taking another pass");
-      else if (ev.type === "error") return { ok: false, code: ev.code, message: ev.message };
-      else {
-        raw = ev.raw;
-        gotResult = true;
+    guard.reset();
+    show("");
+    // However the stream ends (finished, failed, or stopped), what it held for a next word is let go.
+    try {
+      for await (const ev of adapter.run(req, opts.signal)) {
+        if (ev.type === "text-delta") show(guard.push(ev.text));
+        else if (ev.type === "text-reset") {
+          guard.reset();
+          show("");
+        } else if (ev.type === "progress") opts.onProgress?.(attempt === 1 ? ev.label : "Taking another pass");
+        else if (ev.type === "error") return { ok: false, code: ev.code, message: ev.message };
+        else {
+          raw = ev.raw;
+          gotResult = true;
+        }
       }
+    } finally {
+      if (opts.onText) show(guard.settle());
     }
     if (!gotResult) return { ok: false, code: "unknown", message: "The agent finished without a reply." };
     const candidate = extractCandidate(raw);
@@ -241,7 +266,7 @@ export function buildCommentPrompt(s: Session, t: CommentThread, ask: "reply" | 
 export async function replyToComment(s: Session, t: CommentThread, adapter: ProviderAdapter, opts: RunOptions): Promise<Validated<CommentReply>> {
   return runValidated<CommentReply>(
     adapter,
-    { kind: "comment", systemPrompt: commentSystemPrompt(), userPrompt: buildCommentPrompt(s, t, "reply"), jsonSchema: commentJsonSchema() },
+    { kind: "comment", systemPrompt: commentSystemPrompt(), userPrompt: buildCommentPrompt(s, t, "reply"), jsonSchema: commentJsonSchema(), stream: { field: "text" } },
     CommentReplySchema,
     () => null,
     opts,

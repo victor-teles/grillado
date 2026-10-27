@@ -13,6 +13,8 @@ export interface CommentMessage {
   client?: string;
   text: string;
   at: string;
+  /** The agent's reply was stopped while it streamed: this is what it had written (#97). */
+  stopped?: boolean;
 }
 
 export interface CommentRun {
@@ -27,6 +29,8 @@ export interface CommentRun {
   /** The thread is on a decision block: answers change through the decision, not suggestions (#22). */
   decision?: string;
   message?: string;
+  /** A reply's text so far while it streams, and what it had written when it failed (#97). */
+  partial?: string;
 }
 
 export interface CommentThread {
@@ -290,11 +294,11 @@ export function adoptThreads(s: CommentState, other: CommentState): number {
   return extra.length;
 }
 
-export function addMessage(s: CommentState, threadId: string, by: CommentMessage["by"], text: string): CommentThread {
+export function addMessage(s: CommentState, threadId: string, by: CommentMessage["by"], text: string, extra: { stopped?: boolean } = {}): CommentThread {
   const t = thread(s, threadId);
   const body = text.trim();
   if (!body) throw new Error("Write a reply first.");
-  t.messages.push({ id: newId(), by, text: body.slice(0, MAX_COMMENT), at: now() });
+  t.messages.push({ id: newId(), by, text: body.slice(0, MAX_COMMENT), at: now(), ...(extra.stopped ? { stopped: true } : {}) });
   t.resolved = false;
   return t;
 }
