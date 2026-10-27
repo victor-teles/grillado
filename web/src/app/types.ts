@@ -75,6 +75,8 @@ export type FoundView =
       hidden: boolean;
       partial: boolean;
       scannedAt: string | null;
+      ms: number | null;
+      paths: number | null;
       rows: FoundRow[];
       agent: { running: string | null; waiting: string[]; failed: Record<string, string> };
     };

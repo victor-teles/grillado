@@ -560,6 +560,9 @@ export class FoundService {
       hidden: this.hidden(),
       partial: this.last?.partial ?? c?.partial ?? false,
       scannedAt: this.last?.scannedAt ?? c?.scannedAt ?? null,
+      /** This launch's scan: wall time in ms and paths looked at (the budget e2e reads them). */
+      ms: this.last?.ms ?? null,
+      paths: this.last?.stats.paths ?? null,
       rows: this.last?.rows ?? (c ? this.cachedRows(c) : []),
       plans: this.planStates(),
       /** §4: the agent import running now, the ones waiting (in order), and the last failure per row. */
