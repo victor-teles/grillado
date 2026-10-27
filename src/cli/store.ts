@@ -7,6 +7,8 @@ import type { Session } from "../core/session.ts";
 
 export interface Config {
   defaultProvider?: ProviderId;
+  /** Project roots where the user hid "Found in this project" (v1.3 item 1, #141). */
+  foundHidden?: string[];
 }
 
 export function defaultDataDir(env = process.env): string {
@@ -14,7 +16,7 @@ export function defaultDataDir(env = process.env): string {
 }
 
 /** Atomic write: a crash never leaves a half-written session file. */
-function writeAtomic(file: string, data: string) {
+export function writeAtomic(file: string, data: string) {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, data, { mode: 0o600 });
@@ -34,7 +36,7 @@ const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
  * Hold `<file>.lock` while `fn` runs, so the web app and `grillado mcp` never interleave a
  * read-modify-write on one session. A lock older than 10 s was left by a crash and is taken over.
  */
-function withLock<T>(file: string, fn: () => T): T {
+export function withLock<T>(file: string, fn: () => T): T {
   const lock = `${file}.lock`;
   mkdirSync(path.dirname(lock), { recursive: true });
   for (let i = 0; ; i++) {

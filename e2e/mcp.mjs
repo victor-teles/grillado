@@ -99,7 +99,7 @@ const m = await mcpClient();
 try {
   const c = m.client;
   const { tools } = await c.listTools();
-  check("five tools", JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(["add_comment", "get_decisions", "get_plan", "list_plans", "start_plan"]));
+  check("seven tools", JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(["add_comment", "get_decisions", "get_plan", "import_source", "list_plans", "list_project_sources", "start_plan"]));
   check("no banned words in tool or server descriptions", !/grill-me|grilling|pocock/i.test(JSON.stringify(tools)));
   check("list_plans with no plans says so", /No plans yet/.test(textOf(await call(c, "list_plans"))));
 

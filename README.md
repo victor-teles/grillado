@@ -20,6 +20,7 @@ the answer behind every decision.
 --provider <id>     claude | codex | grok | pi
 --model <id>        Passed through to the agent CLI
 --no-open           Don't open a browser; just print the URL
+--no-scan           Don't look in this folder for plans to import (also GRILLADO_NO_SCAN=1)
 --data-dir <path>   Sessions and plans (default ~/.grillado, or $GRILLADO_HOME)
 ```
 
@@ -32,7 +33,9 @@ Requires Node.js 22 or newer.
 network. Tools: `list_plans`, `get_plan` (Markdown plus the decisions and their answers; a plan
 that isn't finished comes back marked as a draft), `get_decisions`, `start_plan` (sends an idea to
 Grillado and returns the link to answer its questions in the browser) and `add_comment` (shows in
-the plan's Comments rail as from the coding agent). Each plan is also a resource,
+the plan's Comments rail as from the coding agent), plus `list_project_sources` and
+`import_source` (the planning sessions and plan files found in a project, and importing one as a
+plan). Each plan is also a resource,
 `grillado://plans/<id>`.
 
 Set it up once, for every project (`npx -y` skips npx's install prompt). If you use a custom

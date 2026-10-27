@@ -1,0 +1,2 @@
+.cursor/plans/
+node_modules/

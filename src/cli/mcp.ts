@@ -7,6 +7,8 @@ import { z } from "zod";
 import { MAX_COMMENT, MAX_QUOTE, addCoderComment } from "../core/comments.ts";
 import { PROVIDER_IDS } from "../core/providers/types.ts";
 import { type Session, createSession } from "../core/session.ts";
+import { ImportError } from "../core/found/import.ts";
+import { FoundService } from "./found.ts";
 import { shellQuote } from "./launch.ts";
 import { type Store, defaultDataDir } from "./store.ts";
 
@@ -77,10 +79,12 @@ function load(store: Store, id: string): Session {
 const text = (t: string) => ({ type: "text" as const, text: t });
 const json = (v: unknown) => text(JSON.stringify(v, null, 2));
 
+type Result = { content: ReturnType<typeof text>[]; structuredContent?: Record<string, unknown> };
+
 /** Tool errors come back as `isError` results the agent can read, not protocol errors. */
-async function safely(fn: () => { content: ReturnType<typeof text>[]; structuredContent?: Record<string, unknown> }) {
+async function safely(fn: () => Result | Promise<Result>) {
   try {
-    return fn();
+    return await fn();
   } catch (err: any) {
     return { content: [text(String(err?.message ?? err))], isError: true };
   }
@@ -88,7 +92,13 @@ async function safely(fn: () => { content: ReturnType<typeof text>[]; structured
 
 /** appLine: how to start the web app for this build and data dir, for start_plan's app-closed hint
  *  (main passes launch.ts's appLine; the fallback is the published package with this data dir). */
-export function createMcpServer(store: Store, version = "0.0.0-dev", appLine = `npx grillado${store.dir === defaultDataDir() ? "" : ` --data-dir ${shellQuote(store.dir)}`}`): McpServer {
+export function createMcpServer(
+  store: Store,
+  version = "0.0.0-dev",
+  appLine = `npx grillado${store.dir === defaultDataDir() ? "" : ` --data-dir ${shellQuote(store.dir)}`}`,
+  /** Where the coding agents keep their data (tests point it at fixtures). */
+  agentHome: { home?: string; env?: NodeJS.ProcessEnv } = {},
+): McpServer {
   const mcp = new McpServer({ name: "grillado", version });
   const clientName = () => mcp.server.getClientVersion()?.name;
 
@@ -196,6 +206,58 @@ export function createMcpServer(store: Store, version = "0.0.0-dev", appLine = `
         });
         if (!t) throw new UnknownPlan(plan);
         return { content: [text(`Comment added to plan ${plan}. It's in Grillado's Comments rail.`)], structuredContent: { plan, thread: t.id } };
+      }),
+  );
+
+  // v1.3 item 1: what's in the agent's project that Grillado could import. Same scan as the web app.
+  const services = new Map<string, FoundService>();
+  const found = (dir?: string) => {
+    const cwd = dir || process.cwd();
+    let f = services.get(cwd);
+    if (!f) services.set(cwd, (f = new FoundService({ store, cwd, ...agentHome, off: (agentHome.env ?? process.env).GRILLADO_NO_SCAN === "1" })));
+    if (f.skip) throw new Error(f.skip === "off" ? "The project scan is off (GRILLADO_NO_SCAN)." : `Not a project folder (${f.skip === "home" ? "the home folder" : f.skip === "root" ? "a filesystem root" : "Grillado's data folder"}). Pass the project's path.`);
+    return f;
+  };
+  const projectPath = z.string().min(1).max(4096).optional().describe("The project folder (default: the folder the MCP server runs in)");
+
+  mcp.registerTool(
+    "list_project_sources",
+    {
+      title: "List plans found in a project",
+      description:
+        "List the planning sessions (Claude Code, Codex) and plan files (Cursor plans, PLAN.md, docs/plans) found in a project that Grillado can import as a plan. Read-only: nothing is imported.",
+      inputSchema: { path: projectPath },
+    },
+    async ({ path }) =>
+      safely(async () => {
+        const f = found(path);
+        const r = await f.scan();
+        const sources = r.rows;
+        const head = `${r.project.name}${r.partial ? " (partial: the scan ran out of time)" : ""}`;
+        return { content: [sources.length ? json({ project: head, sources }) : text(`Nothing to import found in ${head}.`)], structuredContent: { project: r.project, partial: r.partial, sources } };
+      }),
+  );
+
+  mcp.registerTool(
+    "import_source",
+    {
+      title: "Import a found plan",
+      description:
+        "Import one source from list_project_sources as a Grillado plan (or update the plan it was imported into before). Only its text is copied: the idea, the answered questions and the plan. Returns the plan id.",
+      inputSchema: { id: z.string().regex(/^[0-9a-f]{16}$/, "An id from list_project_sources.").describe("The source id from list_project_sources"), path: projectPath },
+    },
+    async ({ id, path }) =>
+      safely(async () => {
+        try {
+          const r = await found(path).import(id, store.readConfig().defaultProvider ?? PROVIDER_IDS[0]);
+          const info = store.readServerInfo();
+          const url = info ? `http://127.0.0.1:${info.port}/s/${r.planId}?t=${info.token}` : null;
+          const what = { created: "Imported as", updated: "Updated", unchanged: "Already imported, unchanged:", conflict: "The plan was edited in Grillado; the new version is in plan.conflict.md of" }[r.result];
+          return { content: [text(`${what} plan ${r.planId}.${url ? ` Open ${url}` : ""}`)], structuredContent: { ...r, url, uri: URI + r.planId } };
+        } catch (err) {
+          if (err instanceof ImportError) throw new Error(`${err.message} (${err.code})`);
+          throw err;
+        }
       }),
   );
 

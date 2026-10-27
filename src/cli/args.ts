@@ -10,12 +10,14 @@ export interface CliArgs {
   model?: string;
   help: boolean;
   version: boolean;
+  /** Look in the launch folder for plans and planning sessions (v1.3 item 1). --no-scan turns it off. */
+  scan: boolean;
 }
 
 export class UsageError extends Error {}
 
 export function parseArgs(argv: string[]): CliArgs {
-  const out: CliArgs = { open: true, help: false, version: false };
+  const out: CliArgs = { open: true, help: false, version: false, scan: true };
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i];
     if (raw === "mcp" && i === 0) {
@@ -44,6 +46,9 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--no-open":
         out.open = false;
         break;
+      case "--no-scan":
+        out.scan = false;
+        break;
       case "--data-dir":
         out.dataDir = value();
         break;
@@ -62,7 +67,7 @@ export function parseArgs(argv: string[]): CliArgs {
         throw new UsageError(`Unknown option "${raw}"`);
     }
   }
-  if (out.command === "mcp" && (out.port !== undefined || out.provider || out.model || !out.open)) throw new UsageError("mcp only takes --data-dir");
+  if (out.command === "mcp" && (out.port !== undefined || out.provider || out.model || !out.open || !out.scan)) throw new UsageError("mcp only takes --data-dir");
   return out;
 }
 
@@ -77,6 +82,8 @@ Options:
   --provider <id>     claude | codex | grok | pi (skips the picker)
   --model <id>        Pass a model id through to the agent CLI
   --no-open           Don't open the browser; just print the URL
+  --no-scan           Don't look in this folder for plans and planning sessions from your
+                      coding agent (also GRILLADO_NO_SCAN=1). Nothing is imported unless you click.
   --data-dir <path>   Where sessions and plans live (default ~/.grillado, or $GRILLADO_HOME)
   -v, --version       Print the version
   -h, --help          Show this help
