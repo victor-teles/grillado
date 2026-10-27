@@ -115,6 +115,8 @@ const tokenColour = (pg, v) =>
 async function axe(pg, name) {
   await pg.mouse.move(0, 0);
   await pg.waitForTimeout(300);
+  // Let colour transitions settle (e.g. Copy Markdown dropping to --muted as the reply starts), so axe reads end colours.
+  await pg.waitForFunction(() => document.getAnimations().every((x) => !(x instanceof CSSTransition) || x.playState !== "running"), null, { timeout: 3000 }).catch(() => {});
   const r = await new AxeBuilder({ page: pg }).analyze();
   check(`axe: ${name}`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message ?? ""}`).join("; "));
 }
@@ -412,12 +414,12 @@ try {
       const kept = lastTh().locator(".msg").filter({ has: sp.locator(".stopped") }).last();
       await kept.waitFor({ timeout: 10000 });
       check(`${theme}: Stop keeps the held first word: “Good catch. Talk to Matt (stopped)”`, (await kept.locator("p").textContent()) === "Good catch. Talk to Matt (stopped)", await kept.locator("p").textContent());
-      if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, `d-stream-stopped-matt-r3-${theme}.png`) });
+      if (SHOTS) { await sp.waitForTimeout(500); await sp.screenshot({ path: path.join(SHOTS, `d-stream-stopped-matt-r3-${theme}.png`) }); }
       await send("And then?", { FAKE_STREAM: "fail", FAKE_REPLY_TEXT: matt, FAKE_STREAM_CUT: "Talk to Matt " });
       await lastTh().locator(".crow[role=alert]").waitFor({ timeout: 15000 });
       const fp = await lastTh().locator(".msg[data-partial] p").textContent();
       check(`${theme}: an error keeps the held first word: “Good catch. Talk to Matt” · Couldn't reply`, fp === "Good catch. Talk to Matt", fp);
-      if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, `d-stream-error-matt-r3-${theme}.png`) });
+      if (SHOTS) { await sp.waitForTimeout(500); await sp.screenshot({ path: path.join(SHOTS, `d-stream-error-matt-r3-${theme}.png`) }); }
       sa.mode({});
       await lastTh().getByRole("button", { name: "Try again" }).click();
       await sp.waitForFunction(() => !document.querySelector(".crail .th .stop") && !document.querySelector(".th .msg[data-partial]"), null, { timeout: 20000 });
