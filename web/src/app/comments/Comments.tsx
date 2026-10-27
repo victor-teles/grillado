@@ -865,7 +865,7 @@ export function useComments(o: Opts) {
               o.docRef.current,
             )
           : null}
-        {okMark && o.docRef.current ? createPortal(<OkMark key={okMark.id} id={okMark.id} bye={okMark.bye} wrap={o.docRef.current} />, o.docRef.current) : null}
+        {okMark && o.docRef.current ? createPortal(<OkMark key={okMark.id} id={okMark.id} bye={okMark.bye} wrap={o.docRef.current} onDrop={clearMark} />, o.docRef.current) : null}
         {toolbar}
         {composer}
         {sheet}
@@ -895,10 +895,11 @@ function cssMs(name: string, fallback: number): number {
 
 /**
  * "✓ Accepted" (#102): absolutely placed so it never takes layout space, 8px after the end of the
- * accepted text's last line (the line's end, not the insertion's) when it fits the column, otherwise 16px past the column on that line.
- * Hidden from the a11y tree: the review bar's live region says "Accepted · ⌘Z to undo".
+ * accepted text's last line (the line's end, not the insertion's) when it fits the column, otherwise 16px past the column on that line
+ * if the scroller has room for it there. Otherwise it isn't shown, and neither is it after a resize: it never makes the plan
+ * scroll sideways and is never moved (#116). Hidden from the a11y tree: the review bar's live region says "Accepted · ⌘Z to undo".
  */
-function OkMark({ id, bye, wrap }: { id: string; bye: boolean; wrap: HTMLElement }) {
+function OkMark({ id, bye, wrap, onDrop }: { id: string; bye: boolean; wrap: HTMLElement; onDrop: () => void }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
@@ -919,10 +920,18 @@ function OkMark({ id, bye, wrap }: { id: string; bye: boolean; wrap: HTMLElement
     const w = wrap.getBoundingClientRect();
     const d = doc.getBoundingClientRect();
     const colRight = d.right - parseFloat(getComputedStyle(doc).paddingRight || "0");
-    const fits = end + 8 + el.offsetWidth <= colRight;
-    const x = fits ? end + 8 : colRight + 16;
+    const room = w.left + wrap.clientWidth - 8;
+    const x = end + 8 + el.offsetWidth <= colRight ? end + 8 : colRight + 16 + el.offsetWidth <= room ? colRight + 16 : null;
+    if (x === null) return onDrop();
     setPos({ left: x - w.left + wrap.scrollLeft, top: last.top + (last.height - el.offsetHeight) / 2 - w.top + wrap.scrollTop });
-  }, [id, wrap]);
+  }, [id, wrap]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Measured once: if the plan's width changes during the hold, the mark goes rather than moves.
+  useEffect(() => {
+    let first = true;
+    const ro = new ResizeObserver(() => (first ? (first = false) : onDrop()));
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [wrap]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <span ref={ref} className={`okm${bye ? " bye" : ""}`} aria-hidden="true" data-ok={id} style={pos ? { left: pos.left, top: pos.top } : { visibility: "hidden", left: 0, top: 0 }}>
       <ICheck s={14} />
