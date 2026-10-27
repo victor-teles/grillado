@@ -80,8 +80,12 @@ async function toPlan(pg, url) {
 }
 const planMd = (pg) => pg.evaluate(async () => (await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan.md`)).text());
 const TA = ".blk-edit:not(.blk-bd)";
+// Holds until no finite CSS animation or transition is running (spinners loop forever and are skipped).
+const settle = (pg, timeout = 5000) =>
+  pg.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getComputedTiming().iterations === Infinity), null, { timeout }).catch(() => {});
+const gone = (loc, timeout = 5000) => loc.first().waitFor({ state: "detached", timeout }).catch(() => {});
 async function axe(pg, name) {
-  await pg.waitForTimeout(400); // let fades finish
+  await settle(pg); // let fades finish
   const r = await new AxeBuilder({ page: pg }).analyze();
   check(`axe: ${name}`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message ?? ""} ${v.nodes[0]?.html?.slice(0, 160) ?? ""}`).join("; "));
 }
@@ -121,7 +125,7 @@ async function mobileSwitch(pg, root, theme, what, shot) {
   if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-preview-m-${theme}.png`) });
   await axe(pg, `${theme} mobile ${what}: Preview`);
   await src.tap();
-  await pg.waitForTimeout(100);
+  await pg.waitForFunction(() => document.activeElement?.tagName === "TEXTAREA", null, { timeout: 5000 }).catch(() => {});
   check(`${theme} mobile ${what}: Source brings the source back, focused`, (await src.getAttribute("aria-checked")) === "true" && (await shown(ta)) && (await ta.evaluate((e) => e === document.activeElement)));
   // keyboard: ←/→ move the checked option (one tab stop)
   await src.focus();
@@ -131,7 +135,7 @@ async function mobileSwitch(pg, root, theme, what, shot) {
   check(`${theme} mobile ${what}: ← back to Source`, (await src.getAttribute("aria-checked")) === "true");
   await pv.tap();
   await pg.locator(".acc4").getByRole("button", { name: "Done" }).tap();
-  await pg.waitForTimeout(200);
+  await gone(pg.locator(".acc4"));
   check(`${theme} mobile ${what}: Done from Preview finishes the edit`, (await pg.locator(".acc4").count()) === 0 && (await ta.count()) === 0);
 }
 // MF-SP1: a broken source shows the error bar (message, Details, announced) in Source and in Preview.
@@ -150,16 +154,17 @@ async function mobileError(pg, root, theme, what, shot) {
   if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-error-source-m-${theme}.png`) });
   await axe(pg, `${theme} mobile ${what}: error in Source`);
   await sw.getByRole("radio", { name: "Preview" }).tap();
-  await pg.waitForTimeout(200);
+  await root.locator(".lp5.dim").waitFor({ timeout: 5000 }).catch(() => {});
+  await settle(pg);
   check(`${theme} mobile ${what}: error bar stays in Preview, over the dimmed last good version`, (await ok()) && (await root.locator(".lp5.dim").count()) === 1 && /Last version that worked/.test(await txt(root.locator(".lp5 .lbl"))));
   if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-error-preview-m-${theme}.png`) });
   await axe(pg, `${theme} mobile ${what}: error in Preview`);
   await sw.getByRole("radio", { name: "Source" }).tap();
   await ta.fill(orig);
-  await pg.waitForTimeout(1300);
+  await gone(bar, 8000);
   check(`${theme} mobile ${what}: fixing the source clears the bar`, (await bar.count()) === 0);
   await pg.locator(".acc4").getByRole("button", { name: "Done" }).tap();
-  await pg.waitForTimeout(200);
+  await gone(pg.locator(".acc4"));
 }
 const txt = async (loc) => ((await loc.first().textContent({ timeout: 5000 }).catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
 async function openAsk(pg, mobile = false) {
@@ -587,7 +592,7 @@ try {
     await mfig.locator(".tapz").tap();
     await mp.locator(".fs5").waitFor();
     if (one) check("mobile: full screen at 100%", (await txt(mp.locator(".fs5 .zv"))) === "100%");
-    await mp.waitForTimeout(300); // the fade is over before the shot
+    await settle(mp); // the fade is over before the shot
     check(`${theme} mobile: full screen Close is on screen, 44px`, await mp.getByRole("button", { name: "Close full screen" }).evaluate((b) => { const r = b.getBoundingClientRect(); return r.right <= innerWidth && r.width >= 44; }));
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i5-full-m-${theme}.png`) });
     await axe(mp, `${theme} mobile: full screen`);
@@ -599,13 +604,15 @@ try {
       await mfig.focus();
       await mp.keyboard.press("Enter");
       await mobileSwitch(mp, mp.locator(".blk[data-editing]"), theme, "plan diagram", "i5-medit");
-      await mp.waitForTimeout(400);
+      await gone(mp.locator(".blk[data-editing]"));
+      await settle(mp);
       check(`${theme} mobile: finishing from Preview leaves the plan as it was`, (await planMd(mp)) === before);
       await mp.locator(".doc figure.mm5 .mmw svg").first().waitFor({ timeout: 8000 });
       await mp.locator(".doc figure.mm5").first().focus();
       await mp.keyboard.press("Enter");
       await mobileError(mp, mp.locator(".blk[data-editing]"), theme, "plan diagram", "i5-medit");
-      await mp.waitForTimeout(400);
+      await gone(mp.locator(".blk[data-editing]"));
+      await settle(mp);
       check(`${theme} mobile: the error round trip leaves the plan as it was`, (await planMd(mp)) === before);
       await mp.locator(".doc figure.mm5 .mmw svg").first().waitFor({ timeout: 8000 });
       // Tapping out of Preview finishes too (here on the title, which opens that block instead).
@@ -613,7 +620,7 @@ try {
       await mp.keyboard.press("Enter");
       await mp.locator(".acc4").getByRole("radio", { name: "Preview" }).tap();
       await mp.locator(".doc h1").first().tap();
-      await mp.waitForTimeout(200);
+      await gone(mp.locator("[data-view], .mseg"));
       check(`${theme} mobile: tapping out of Preview finishes the edit`, (await mp.locator("[data-view], .mseg").count()) === 0 && !(await mp.locator(".doc figure.mm5").first().evaluate((f) => !!f.closest("[data-editing]"))));
     }
     await mctx.close();
