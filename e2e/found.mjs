@@ -289,7 +289,8 @@ try {
     await select(pg, "claude");
     await fakeView(pg, (v) => ({ ...v, state: "scanning", cached: false, rows: [] }));
     await pg.reload();
-    await found(pg).waitFor({ timeout: 10000 });
+    // The first paint has the real view (it comes with the app state); the faked skeleton follows.
+    await found(pg).locator("li[aria-hidden=true] .sk").first().waitFor({ timeout: 10000 });
     const sec = found(pg).locator("section.found");
     check(`${theme} §1 scanning: 3 skeleton rows, aria-hidden, aria-busy, "Looking for plans…"`, (await found(pg).locator("li[aria-hidden=true] .sk").count()) === 6 && (await sec.getAttribute("aria-busy")) === "true" && (await txt(found(pg).locator(".fh .busy"))) === "Looking for plans…");
     if (one) {
@@ -360,7 +361,7 @@ try {
     // A row that couldn't be read, and one in progress (states a scan of these fixtures doesn't hold).
     await fakeView(pg, (v) => ({ ...v, rows: v.rows.map((r, i) => (i === 1 ? { ...r, status: "error" } : i === 2 ? { ...r, status: "in_progress", date: new Date(Date.now() - 60_000).toISOString() } : r)) }));
     await pg.reload();
-    await pg.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
+    await found(pg).locator("[data-testid=found-row] .meta .er").first().waitFor({ timeout: 10000 }); // the faked view, after the first paint's real one
     const r2 = found(pg).getByTestId("found-row").nth(1);
     const r3 = found(pg).getByTestId("found-row").nth(2);
     check(`${theme} §2 couldn't read: words in destructive ink, quiet "Try again"`, /^Couldn’t read this (session|plan) · /.test(await seen(r2.locator(".meta"))) && (await r2.locator(".meta .er").count()) === 1 && (await r2.getByRole("button", { name: "Try again" }).getAttribute("class"))?.includes("quiet"), await seen(r2.locator(".meta")));
