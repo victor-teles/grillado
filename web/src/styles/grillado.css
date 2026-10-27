@@ -591,7 +591,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   }
   /* Fix-up of #4, MF2: item 3's enter states. translate/scale, not transform: .review and .toast
      already use transform to centre. Tints fade only while .planv[data-landing] is set. */
-  .seltb{transition:opacity var(--d-quick) var(--ease-out),scale var(--d-quick) var(--ease-out)}
+  .seltb,.mtb{transition:opacity var(--d-quick) var(--ease-out),scale var(--d-quick) var(--ease-out)}
   .cpop{transition:opacity var(--d-quick) var(--ease-out),translate var(--d-quick) var(--ease-out)}
   .review,.toast,.mbar{transition:opacity var(--d-base) var(--ease-out),translate var(--d-base) var(--ease-out)}
   .th .apply{transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-quick) var(--ease-out)}
@@ -600,7 +600,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .cscrim{transition:opacity var(--d-sheet) var(--ease-out)}
   .planv[data-landing] :is(ins.sg,del.sg){transition:background-color var(--d-base) var(--ease-out)}
   @starting-style{
-    .seltb{opacity:0;scale:.97}
+    .seltb,.mtb{opacity:0;scale:.97}
     .cpop{opacity:0;translate:0 4px}
     .review,.toast,.mbar{opacity:0;translate:0 8px}
     .th .apply{opacity:0}
@@ -618,9 +618,9 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   /* Sheets fade in 160ms instead of sliding (item 6 §18 F). */
   .rail[data-sheet],.csheet{transition:opacity var(--d-quick) var(--ease-out)}
   /* Fix-up of #4, MF2: item 3's bars and popovers fade only. */
-  .seltb,.cpop,.th .apply{transition:opacity var(--d-quick) var(--ease-out)}
+  .seltb,.mtb,.cpop,.th .apply{transition:opacity var(--d-quick) var(--ease-out)}
   .review,.toast,.mbar{transition:opacity var(--d-base) var(--ease-out)}
-  @starting-style{.seltb,.cpop,.review,.toast,.mbar,.th .apply{opacity:0}}
+  @starting-style{.seltb,.mtb,.cpop,.review,.toast,.mbar,.th .apply{opacity:0}}
 }
 
 /* v1.2 review: rings only after keyboard use (see main.tsx); text fields keep their focus look. */
@@ -1058,8 +1058,8 @@ html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{transition:no
 @starting-style{html[data-kbd] .pop5,html[data-kbd] .fs5,html[data-kbd] .scrim.fsx{opacity:1;transform:none}}
 /* Fix-up of #4, MF2: the same for item 3. Toolbars, the popover, bars, Apply feedback and sheets
    opened or moved from the keys appear at once; ⌥↓ moves the thread highlight without a fade. */
-html[data-kbd] :is(.seltb,.cpop,.review,.toast,.mbar,.th,.th .apply,mark.cmk,.csheet,.cscrim),html[data-kbd] .planv[data-landing] :is(ins.sg,del.sg){transition:none}
-@starting-style{html[data-kbd] :is(.seltb,.cpop,.review,.toast,.mbar,.th .apply,.cscrim){opacity:1;scale:none;translate:none}html[data-kbd] .csheet{translate:none}}
+html[data-kbd] :is(.seltb,.mtb,.cpop,.review,.toast,.mbar,.th,.th .apply,mark.cmk,.csheet,.cscrim),html[data-kbd] .planv[data-landing] :is(ins.sg,del.sg){transition:none}
+@starting-style{html[data-kbd] :is(.seltb,.mtb,.cpop,.review,.toast,.mbar,.th .apply,.cscrim){opacity:1;scale:none;translate:none}html[data-kbd] .csheet{translate:none}}
 .planv:has(.toast) .doc{padding-bottom:180px}
 .sgb5 .hd .icon-btn.e44{width:44px;height:44px;margin:-8px -8px -8px 0}
 .sgb5 .hd .sgt{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1154,6 +1154,75 @@ body:has([data-testid=diagram-run],[data-testid=diagram-failed],.review) .back6{
   .evh .chev,.ev6[data-open] .evh .chev,.gh6 button .chev{transition:none}
 }
 
-/* v1.2 item 1: editor-started sessions in Recent, and editor comments in the rail (#107, #108). */
+/* ---------- v1.2 item 1: "Use in your editor" (handoff §3–§6, §10) ---------- */
+.dark{--well:var(--background)}
+.light{--well:var(--sel)}
+.ue-entry{height:32px;padding:0 10px;gap:6px;color:var(--muted-foreground)}
+.ue-entry[aria-expanded=true]{background:var(--muted);color:var(--foreground)}
 .rrow .meta .src1{color:var(--foreground)}
+.ue{width:480px;max-width:calc(100vw - 24px);padding:14px 16px 16px;display:grid;gap:14px}
+.ue .uh{display:flex;align-items:center;margin:-4px -8px -4px 0}
+.ue .uh b{flex:1;font-size:var(--t-h);font-weight:600;line-height:24px}
+.ue .ud{margin:0;font-size:var(--t-body);line-height:20px;color:var(--muted-foreground);text-wrap:pretty}
+.ue .sw{display:grid;grid-template-columns:repeat(3,1fr);margin:0;width:100%}
+.ue .sw button{height:30px;padding:0 8px;font-size:var(--t-meta)}
+.ue .sw button[aria-selected=true]{background:var(--background);color:var(--foreground)}
+.light .ue .sw button[aria-selected=true]{background:var(--card);box-shadow:0 0 0 1px var(--hair)}
+.ue .sw button:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.ue .step{display:grid;gap:8px}
+.ue .sl{font-size:var(--t-body);font-weight:500;line-height:20px}
+.ue .sl code,.ue .sn code{font:400 13px/18px var(--mono);color:var(--foreground)}
+.ue .sn{margin:0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);text-wrap:pretty}
+.ue .sn code{font-size:12px;line-height:16px;overflow-wrap:anywhere}
+.ue .well{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px;border-radius:10px;background:var(--well);padding:6px 6px 6px 12px}
+.ue .well pre{margin:0;padding:4px 0;font:400 13px/20px var(--mono);color:var(--foreground);white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2}
+.ue .well pre .k1{color:var(--muted-foreground)}
+/* Copy (§5): quiet, icon + label; both icons share one cell, both labels another, so nothing moves. */
+.cbtn{height:28px;padding:0 10px 0 8px;gap:6px;border-radius:8px;font-size:var(--t-meta)}
+.cbtn .ic,.cbtn .lb{display:grid}
+.cbtn .ic>*,.cbtn .lb>*{grid-area:1/1;display:grid;place-items:center}
+.cbtn .lb>*{place-items:center start}
+.cbtn .a{opacity:1;transition:opacity var(--d-quick) var(--ease-out)}
+.cbtn .b{opacity:0;transition:opacity var(--d-quick) var(--ease-out)}
+.cbtn.done .a{opacity:0;transition-duration:var(--d-press)}
+.cbtn.done .b{opacity:1;transition-duration:var(--d-press)}
+.cbtn .ic .b{color:var(--success-ink)}
+.cbtn .lb .b{color:var(--foreground)}
+.ue .ask{display:grid;gap:8px;padding-top:14px;border-top:1px solid var(--hair)}
+.ue .ask .rq{display:flex;align-items:center;gap:8px;border-radius:10px;background:var(--well);padding:4px 4px 4px 12px;font-size:var(--t-body);line-height:20px}
+.ue .ask .rq span{flex:1;padding:6px 0}
+.ue .ask .rq .icon-btn{width:28px;height:28px}
+.ue .err1{display:flex;gap:8px;align-items:flex-start;margin:0;font-size:var(--t-meta);line-height:16px;color:var(--foreground)}
+.ue .err1 svg{flex:none;color:var(--warning-ink);margin-top:1px}
+.ue .kb1{font:500 var(--t-meta)/1 var(--sans);color:var(--muted-foreground);letter-spacing:.02em;margin-left:2px}
+.ue .sn.alt{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ue .sn.alt .copy-inl{margin:-4px 0}
+/* phones: the same content in a bottom sheet (§4) */
+.csheet.ue{width:auto;max-width:none;padding:0 0 calc(12px + env(safe-area-inset-bottom));gap:0;max-height:88dvh;display:flex}
+.csheet.ue .uh{height:44px;margin:0;padding:0 8px 0 20px}
+.csheet.ue .uh .icon-btn{width:44px;height:44px}
+.csheet.ue .ub{padding:0 20px 8px;display:grid;gap:16px;overflow:auto;min-height:0}
+.csheet.ue .sw{padding:2px}
+.csheet.ue .sw button{height:44px;font-size:15px}
+.csheet.ue .ud,.csheet.ue .sl{font-size:15px;line-height:22px}
+.csheet.ue .sn{font-size:13px;line-height:18px}
+.csheet.ue .well{padding:8px 12px;grid-template-columns:minmax(0,1fr)}
+.csheet.ue .mcopy{width:100%;height:44px;border-radius:12px;justify-content:center;font-size:15px}
+.csheet.ue .mcopy .ic svg{width:16px;height:16px}
+.csheet.ue .ask .rq{padding:0 0 0 12px;font-size:15px}
+.csheet.ue .ask .rq .icon-btn{width:44px;height:44px}
+.csheet.ue .copy-inl{width:44px;height:44px;margin:-10px 0}
+/* a comment written by the editor (§9) */
 .th .msg .who .via{display:inline-flex;align-items:center;gap:4px;font-size:var(--t-meta);color:var(--muted-foreground)}
+/* §10: keyboard opens and copies are instant; reduced motion keeps the fades only. */
+html[data-kbd] .ue,html[data-kbd] .ue *{transition:none!important}
+@starting-style{html[data-kbd] .ue{opacity:1;transform:none;translate:none}}
+@media (prefers-reduced-motion:reduce){
+  .ue.pop5{transform:none!important}
+  .cbtn:active{transform:none!important}
+}
+/* §9 / #96: an editor's comment that arrives live fades in, 160ms opacity, with every input and
+   motion setting (the html prefix outranks the data-kbd "no transitions" rule). */
+html .th.in1{transition:opacity var(--d-quick) var(--ease-out)}
+@media (prefers-reduced-motion:no-preference){html .th.in1{transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-quick) var(--ease-out),text-decoration-color var(--d-quick) var(--ease-out)}}
+@starting-style{.th.in1{opacity:0}}

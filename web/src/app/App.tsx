@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, subscribe } from "./api";
-import { Header, useTheme } from "./chrome";
+import { Header, useMobile, useTheme } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { Landing, NoAgent, Picker } from "./Home";
+import { IPlug } from "./icons";
+import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
 import { SessionScreen } from "./Session";
 import type { AppState, ProviderId, SessionView } from "./types";
 
@@ -18,6 +20,11 @@ export function App() {
   const [notice, setNotice] = useState("");
   const [picking, setPicking] = useState(false);
   const [theme, toggleTheme] = useTheme();
+  const mobile = useMobile();
+  // v1.2 item 1: "Use in your editor" on Home (desktop header button; phones: More sheet row).
+  const [ue, setUe] = useState(false);
+  const ueBtn = useRef<HTMLButtonElement>(null);
+  const moreBtn = useRef<HTMLButtonElement>(null);
 
   const refreshApp = useCallback(async () => {
     try {
@@ -118,6 +125,7 @@ export function App() {
 
   let body: React.ReactNode;
   let showAgent = true;
+  let home = false;
   if (!ready.length && !session) {
     showAgent = false;
     body = <NoAgent state={app} onRescan={async () => setApp(await api.rescan())} />;
@@ -130,7 +138,8 @@ export function App() {
         <SessionScreen session={session} app={app} act={act} onSwitch={() => setPicking(true)} />
       </main>
     );
-  else
+  else {
+    home = true;
     body = (
       <Landing
         state={app}
@@ -144,6 +153,13 @@ export function App() {
         onOpen={go}
       />
     );
+  }
+  const ueEntry = home ? (
+    <button ref={ueBtn} type="button" className="btn quiet ue-entry" aria-haspopup="dialog" aria-expanded={ue} onClick={() => setUe((x) => !x)}>
+      <IPlug s={14} />
+      {UCOPY.title}
+    </button>
+  ) : null;
 
   const wrappable = session && (session.status === "answering" || session.status === "asking") && !picking;
   return (
@@ -159,6 +175,9 @@ export function App() {
         onQuit={quit}
         theme={theme}
         onTheme={toggleTheme}
+        extra={ueEntry}
+        onEditor={home ? () => setUe(true) : undefined}
+        moreRef={moreBtn}
       />
       {notice ? (
         <p role="alert" className="notice gr-notice">
@@ -166,6 +185,19 @@ export function App() {
         </p>
       ) : null}
       {body}
+      {ue && home ? (
+        <UseInEditor
+          launch={app.mcp}
+          agent={app.selected}
+          mobile={mobile}
+          anchor={mobile ? moreBtn : ueBtn}
+          onClose={(focus) => {
+            setUe(false);
+            const back = mobile ? moreBtn : ueBtn;
+            if (focus) back.current?.focus();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -24,10 +24,18 @@ export interface SessionSummary {
   /** Open decisions listed in the plan (wrapped up early). */
   open?: number;
   updatedAt: string;
-  /** Started over `grillado mcp`: the client's raw clientInfo.name ("" when it sent none). Shown via editorName(). */
+  /** The MCP client that started it with start_plan (v1.2 item 1). */
   from?: string;
-  /** Started over MCP and not opened in the web app yet. */
+  /** Started over MCP and not opened yet: its first round starts when it is. */
   queued?: boolean;
+}
+
+/** How an editor starts `grillado mcp` (server-provided, handoff §2a). */
+export interface McpLaunch {
+  command: string;
+  args: string[];
+  env?: { GRILLADO_HOME: string };
+  line: string;
 }
 
 export interface AppState {
@@ -37,6 +45,8 @@ export interface AppState {
   remembered: ProviderId | null;
   sessions: SessionSummary[];
   dataDir: string;
+  /** How an editor starts `grillado mcp`; always sent. */
+  mcp: McpLaunch;
 }
 
 export type SessionStatus = "asking" | "answering" | "confirm" | "synthesizing" | "plated";

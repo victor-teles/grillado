@@ -37,6 +37,7 @@ import {
 } from "../core/session.ts";
 import { textHash } from "../core/text-hash.ts";
 import { buildTree } from "../core/tree.ts";
+import { type McpLaunch, mcpLaunch } from "./launch.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
 import type { Store } from "./store.ts";
 
@@ -54,7 +55,7 @@ export interface ServerOptions {
   timeoutMs?: number;
   onQuit?: () => void;
   /** How an editor starts `grillado mcp`, for "Use in your editor" (v1.2 item 1). */
-  mcpLaunch?: import("./launch.ts").McpLaunch;
+  mcpLaunch?: McpLaunch;
 }
 
 export interface ProviderInfo {
@@ -474,7 +475,8 @@ export class GrilladoServer {
         queued: !!s.queued,
       })),
       dataDir: tildify(this.opts.store.dir),
-      mcp: this.opts.mcpLaunch ?? null,
+      // Always present (review N4): without one passed in, the build next to the web dir.
+      mcp: this.opts.mcpLaunch ?? mcpLaunch(path.resolve(this.opts.webDir, "..", "cli.js"), this.opts.store.dir),
     };
   }
 

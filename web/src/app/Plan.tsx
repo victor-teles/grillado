@@ -17,9 +17,10 @@ import { jumpTo, offscreen } from "./editor/link";
 import { countText, planCounts } from "./counts";
 import { passages as findPassages } from "./editor/blocks";
 import { type DecisionRenderer, type EditorMode, type GutRenderer, ModeToggle, PlanEditor, SaveStatus, usePlanDraft } from "./editor/PlanEditor";
-import { IAlert, ICheck, IChev, IDl, IDown, IFolder, IMore } from "./icons";
+import { IAlert, ICheck, IChev, IDl, IDown, IFolder, IMore, IPlug } from "./icons";
 import { type Act, dependentsOf } from "./Session";
-import type { Decision, Question, SessionView } from "./types";
+import type { Decision, McpLaunch, Question, SessionView } from "./types";
+import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
 import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "../../../src/core/decision-block.ts";
 
 const nameOf = (d: { label?: string; title: string }) => d.label || d.title;
@@ -42,7 +43,7 @@ function questionRound(s: SessionView, key: string): number | undefined {
 
 type Tab = "doc" | "decisions";
 
-export function PlanView({ session, act, agentName, agentNameOf, banner }: { session: SessionView; act: Act; agentName: string; agentNameOf?: (id: string) => string; banner?: ReactNode }) {
+export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: { session: SessionView; act: Act; agentName: string; agentNameOf?: (id: string) => string; banner?: ReactNode; mcp: McpLaunch }) {
   const plan = session.plan!;
   const mobile = useMobile();
   const waiting = session.status !== "plated" ? (plan.waiting ?? []) : [];
@@ -142,8 +143,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
     } catch {
       // fall through to copying the path
     }
-    await copy(plan.path);
-    setNote("Copied the path to plan.md");
+    setNote((await copy(plan.path)) ? "Copied the path to plan.md" : `Couldn’t reach the clipboard. plan.md is at ${plan.path}`);
   };
   const save = async (key: string, open: boolean, pick: { optionId: string; text?: string }) => {
     await draft.flush();
@@ -165,6 +165,10 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
 
   // Item 3: comments, Apply feedback and suggestions.
   const moreRef = useRef<HTMLButtonElement>(null);
+  // v1.2 item 1: "Use in your editor…" in ⋯, anchored to ⋯ like Add diagrams (handoff §3).
+  const [ue, setUe] = useState(false);
+  // Opens once the ⋯ menu has returned focus, so its focus trap can't take focus off the tab.
+  const ueNext = useRef(false);
   const dg = useDiagrams({ session, draft, agentName, mobile, enabled: !readOnly && tab === "doc", moreRef, setNote });
   const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, decisionInfo, onDecisionRow: showDecisionRow, agentNameOf, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
 
@@ -291,11 +295,20 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button ref={moreRef} type="button" className={`icon-btn${dg.open ? " on5" : ""}`} aria-label="Plan actions" onPointerDown={() => void draft.flush()}>
+              <button ref={moreRef} type="button" className={`icon-btn${dg.open || ue ? " on5" : ""}`} aria-label="Plan actions" onPointerDown={() => void draft.flush()}>
                 <IMore s={16} />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="pmenu">
+            <DropdownMenuContent
+              align="end"
+              className="pmenu"
+              onCloseAutoFocus={(e) => {
+                if (!ueNext.current) return;
+                ueNext.current = false;
+                e.preventDefault();
+                setUe(true);
+              }}
+            >
               {dg.menuItem}
               {mobile && tab === "doc" ? (
                 <>
@@ -307,6 +320,11 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
                 </>
               ) : null}
               {cm.menuItem}
+              {mobile && cm.menuItem ? <DropdownMenuSeparator /> : null}
+              <DropdownMenuItem onSelect={() => (ueNext.current = true)}>
+                <IPlug s={16} />
+                {UCOPY.menu}
+              </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <a href={`/api/sessions/${session.id}/plan.md`} download>
                   <IDl s={16} />
@@ -396,6 +414,19 @@ export function PlanView({ session, act, agentName, agentNameOf, banner }: { ses
           {cm.overlay}
           {dg.bar}
           {dg.popover}
+          {ue ? (
+            <UseInEditor
+              launch={mcp}
+              agent={session.provider}
+              planTitle={plan.title || session.idea.split("\n")[0]}
+              mobile={mobile}
+              anchor={moreRef}
+              onClose={(focus) => {
+                setUe(false);
+                if (focus) moreRef.current?.focus();
+              }}
+            />
+          ) : null}
         </div>
         {cm.rail}
       </div>
