@@ -1,8 +1,9 @@
 // What of a streamed reply may be shown yet (#97). The banned filter runs on the whole reply once it
 // is in, but a streamed reply is on screen before then, so this holds text back until it is safe:
 // only whole words are released (so "grill" never shows before we know what follows), a tail that
-// could still become one of our own instruction sentences waits, and once anything banned shows up nothing more is released for that attempt (the reply
-// will be rejected and asked again, and the partial text is dropped).
+// could still become one of our own instruction sentences waits, and once anything banned shows up
+// nothing more is released for that attempt (the reply will be rejected and asked again, and the
+// partial text is dropped).
 import { findBanned } from "./filter.ts";
 import { promptFragments } from "./prompts.ts";
 
