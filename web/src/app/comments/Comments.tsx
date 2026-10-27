@@ -8,6 +8,7 @@
 // Styling hooks: .seltb .cpop .cmk(.on) .rail.cm .rtabs .th(.on) .th .row .rempty .racc
 //   ins.sg del.sg(.f) .ipill .review .toast .sheet .scrim .mtb .mbar
 import { type MutableRefObject, type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api } from "../api";
 import type { DocMarks } from "../Markdown";
@@ -21,6 +22,7 @@ import type { CommentThread, SessionView, Suggestion } from "../types";
 import { SuggestionBlock } from "../diagrams/SuggestionBlock";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
 import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
+import { hit, lineRoom } from "./spot";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = mac ? "⌘" : "Ctrl+";
@@ -129,7 +131,11 @@ export function useComments(o: Opts) {
   const drafts = useRef(new Map<string, string>());
 
   // ---------- where things are in the current text ----------
-  const placed = useMemo(() => place(draft.text, list), [draft.text, list]);
+  // `phases` marks a single accept/reject still playing out on the page (#102). Those are already
+  // decided: the counts, the pill and ⌥↑/↓ skip them, and only the doc marks still draw them.
+  const [phases, setPhases] = useState<Record<string, "out" | "ok" | "rej">>({});
+  const allPlaced = useMemo(() => place(draft.text, list), [draft.text, list]);
+  const placed = useMemo(() => allPlaced.filter((p) => !phases[p.s.id]), [allPlaced, phases]);
   const anchors = useMemo(() => open.map((t) => ({ t, r: anchorOf(draft.text, t) })), [draft.text, open]);
   const focused = placed.find((p) => p.s.id === focusId) ?? null;
   const index = focused ? placed.indexOf(focused) : -1;
@@ -195,8 +201,122 @@ export function useComments(o: Opts) {
     }
   };
 
+  // ---------- the held accept (v1.1 polish #102) ----------
+  // One suggestion accepted (or rejected) with others still pending plays out on the page first:
+  // the deletion fades (120ms) and leaves, then the green fades to plain (220ms) while "✓ Accepted"
+  // holds beside it for --d-ok-hold. The write goes out once the text is plain, so nothing jumps;
+  // under data-kbd it goes out at once and every step is instant. Accept all, the last
+  // suggestion, diagrams and phones keep the old path.
+  const [okMark, setOkMark] = useState<{ id: string; bye: boolean } | null>(null);
+  const pend = useRef<{ id: string; op: "accept" | "reject"; sent: boolean; send: () => Promise<void>; timers: ReturnType<typeof setTimeout>[] } | null>(null);
+  const markT = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const clearMark = () => {
+    markT.current.forEach(clearTimeout);
+    markT.current = [];
+    setOkMark(null);
+  };
+  const dropPhase = (id: string) =>
+    setPhases((ph) => {
+      if (!(id in ph)) return ph;
+      const n = { ...ph };
+      delete n[id];
+      return n;
+    });
+  // A phase outlives its write until the suggestion has left the list (the SSE update).
+  useEffect(() => {
+    setPhases((ph) => {
+      const keep = Object.keys(ph).filter((id) => allPlaced.some((p) => p.s.id === id));
+      return keep.length === Object.keys(ph).length ? ph : Object.fromEntries(keep.map((id) => [id, ph[id]]));
+    });
+  }, [allPlaced]);
+  useEffect(
+    () => () => {
+      // Leaving the page mid-hold still writes the decision.
+      const p = pend.current;
+      if (p && !p.sent) void p.send();
+      markT.current.forEach(clearTimeout);
+    },
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const flushPending = async () => {
+    const p = pend.current;
+    if (!p) return;
+    p.timers.forEach(clearTimeout);
+    if (!p.sent) await p.send();
+  };
+  const hold = async (op: "accept" | "reject", p: Placed, next: Placed | null) => {
+    await flushPending();
+    const id = p.s.id;
+    const kbd = document.documentElement.hasAttribute("data-kbd");
+    const t = (name: string, fallback: number) => (kbd ? 0 : cssMs(name, fallback));
+    const press = t("--d-press", 120);
+    const base = t("--d-base", 220);
+    const quick = t("--d-quick", 160);
+    const hold = cssMs("--d-ok-hold", 2000);
+    const me = {
+      id,
+      op,
+      sent: false,
+      timers: [] as ReturnType<typeof setTimeout>[],
+      send: async () => {
+        me.sent = true;
+        const ok = await act("suggestions", { op, ids: [id] });
+        if (pend.current === me) pend.current = null;
+        if (!ok) {
+          dropPhase(id);
+          setOkMark((m) => (m?.id === id ? null : m));
+          setBar("");
+        }
+      },
+    };
+    pend.current = me;
+    setBar(op === "accept" ? "Accepted" : "Rejected");
+    setLive(op === "accept" ? "Accepted" : "Rejected");
+    setFocus(next?.s.id ?? null);
+    const at = (ms: number, f: () => void) => (ms ? me.timers.push(setTimeout(f, ms)) : f());
+    if (op === "reject") {
+      setPhases((ph) => ({ ...ph, [id]: "rej" }));
+      at(press, () => void me.send());
+      return;
+    }
+    setPhases((ph) => ({ ...ph, [id]: kbd ? "ok" : "out" }));
+    at(press, () => {
+      setPhases((ph) => ({ ...ph, [id]: "ok" }));
+      clearMark();
+      setOkMark({ id, bye: false });
+      // The hold counts from the accept itself: fade at --d-ok-hold, gone 160ms later.
+      markT.current = [setTimeout(() => setOkMark((m) => (m?.id === id ? { id, bye: true } : m)), hold - press), setTimeout(() => setOkMark((m) => (m?.id === id ? null : m)), hold - press + quick)];
+    });
+    at(press + base, () => void me.send());
+  };
+  // Undo before the write went out just puts the suggestion back.
+  const unhold = () => {
+    const p = pend.current;
+    if (!p || p.sent) return false;
+    p.timers.forEach(clearTimeout);
+    pend.current = null;
+    dropPhase(p.id);
+    clearMark();
+    setBar("");
+    setLive("Undone");
+    setFocus(p.id);
+    return true;
+  };
+
   // ---------- review ----------
   const review = async (op: "accept" | "reject" | "undo", ids?: string[] | "all", code?: string) => {
+    if (op === "undo") {
+      clearMark();
+      if (unhold()) return;
+    }
+    const one = op !== "undo" && Array.isArray(ids) && ids.length === 1 && code === undefined ? placed.find((p) => p.s.id === ids[0]) : undefined;
+    if (one && !one.block && !mobile && placed.length > 1) {
+      await draft.flush();
+      const rest = placed.filter((p) => p.s.id !== one.s.id);
+      const after = rest.find((p) => placed.indexOf(p) > placed.indexOf(one)) ?? rest[0] ?? null;
+      return hold(op as "accept" | "reject", one, after);
+    }
+    await flushPending();
     await draft.flush();
     const next = op === "undo" || ids === "all" ? null : placed.find((p) => !ids?.includes(p.s.id) && placed.indexOf(p) > index) ?? placed.find((p) => !ids?.includes(p.s.id)) ?? null;
     const ok = await act("suggestions", code === undefined ? { op, ids } : { op, ids, code });
@@ -336,7 +456,7 @@ export function useComments(o: Opts) {
       if (e.shiftKey) return void review("reject", "all");
       if (focused) return void review("reject", [focused.s.id]);
     }
-    if (mod && !e.shiftKey && e.key.toLowerCase() === "z" && session.reviewUndo && !o.docRef.current?.querySelector(".blk-edit")) {
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "z" && (session.reviewUndo || (pend.current && !pend.current.sent)) && !o.docRef.current?.querySelector(".blk-edit")) {
       e.preventDefault();
       void review("undo");
     }
@@ -378,7 +498,7 @@ export function useComments(o: Opts) {
             ...anchors.filter((x) => x.r).map(({ t, r }) => ({ id: t.id, start: r!.start, end: r!.end, active: activeId === t.id || hoverId === t.id, label: `Comment: ${t.messages[0]?.text.slice(0, 80) ?? ""}`, details: railShown ? `th-${t.id}` : undefined })),
             ...(composing ? [{ id: "new", start: composing.at, end: composing.end, active: true, label: "New comment" }] : []),
           ],
-          edits: placed.filter((p) => !p.block).map((p) => ({ id: p.s.id, start: p.start, end: p.end, after: p.after, focused: p.s.id === focusId })),
+          edits: allPlaced.filter((p) => !p.block).map((p) => ({ id: p.s.id, start: p.start, end: p.end, after: p.after, focused: p.s.id === focusId && !phases[p.s.id], phase: phases[p.s.id] })),
           inserts: [...placed.filter((p) => p.block && !p.s.replace).map((p) => ({ key: p.s.id, at: p.end, node: sgBlock(p) })), ...(o.inserts ?? [])],
           replaces: placed.filter((p) => p.block && p.s.replace).map((p) => ({ start: p.start, node: sgBlock(p) })),
           onAnchor: (id) => id !== "new" && openThread(id),
@@ -675,6 +795,7 @@ export function useComments(o: Opts) {
     rawNote,
     overlay: (
       <>
+        {okMark && o.docRef.current ? createPortal(<OkMark key={okMark.id} id={okMark.id} bye={okMark.bye} wrap={o.docRef.current} onDrop={clearMark} />, o.docRef.current) : null}
         {toolbar}
         {composer}
         {sheet}
@@ -693,6 +814,55 @@ export function useComments(o: Opts) {
       </>
     ),
   };
+}
+
+/** A CSS time token in ms (`--d-ok-hold: 2000ms`), so the JS timings follow the stylesheet. */
+function cssMs(name: string, fallback: number): number {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? (v.endsWith("ms") ? n : v.endsWith("s") ? n * 1000 : n) : fallback;
+}
+
+/**
+ * "✓ Accepted" (#102): absolutely placed so it never takes layout space, 8px after the end of the
+ * text on the accepted text's last line (the line's end, not the insertion's) when it fits the column
+ * and touches neither the block's Edit slot nor a cite (#119). Otherwise 16px past the column on
+ * that line, if the line has no cite and the scroller has room. Otherwise it isn't shown, and
+ * neither is it after a resize: it never makes the plan scroll sideways and is never moved (#116).
+ * Hidden from the a11y tree: the review bar's live region says "Accepted · ⌘Z to undo".
+ */
+function OkMark({ id, bye, wrap, onDrop }: { id: string; bye: boolean; wrap: HTMLElement; onDrop: () => void }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const ins = [...wrap.querySelectorAll<HTMLElement>(`ins.sg[data-sg="${CSS.escape(id)}"]`)].pop();
+    const L = ins && lineRoom(ins);
+    if (!el || !L) return;
+    const w = wrap.getBoundingClientRect();
+    const ow = el.offsetWidth;
+    const top = L.last.top + (L.last.height - el.offsetHeight) / 2;
+    const free = (x: number) => !hit({ left: x, right: x + ow, top, bottom: top + el.offsetHeight }, L.taken);
+    const room = w.left + wrap.clientWidth - 8;
+    const inline = L.end + 8;
+    const margin = L.colRight + 16;
+    const x = inline + ow <= L.colRight && free(inline) ? inline : !L.cited && margin + ow <= room && free(margin) ? margin : null;
+    if (x === null) return onDrop();
+    setPos({ left: x - w.left + wrap.scrollLeft, top: top - w.top + wrap.scrollTop });
+  }, [id, wrap]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Measured once: if the plan's width changes during the hold, the mark goes rather than moves.
+  useEffect(() => {
+    let first = true;
+    const ro = new ResizeObserver(() => (first ? (first = false) : onDrop()));
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [wrap]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <span ref={ref} className={`okm${bye ? " bye" : ""}`} aria-hidden="true" data-ok={id} style={pos ? { left: pos.left, top: pos.top } : { visibility: "hidden", left: 0, top: 0 }}>
+      <ICheck s={14} />
+      Accepted
+    </span>
+  );
 }
 
 // ---------- selection toolbar (§2.1): Comment ⌘⌥M · Edit, nothing else (#27) ----------
