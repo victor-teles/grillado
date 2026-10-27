@@ -3,7 +3,8 @@
 // (aria-busy), Stop in the row and the Reply box disabled; done drops the caret, shows the time and
 // announces "{agent} replied" once; Stop keeps the partial text with "(stopped)" and Apply feedback;
 // an error keeps it with "Couldn't reply · Try again", and Try again replaces it. A banned name never
-// reaches the screen. Codex replies whole, as before. Desktop and phone, dark and light, axe.
+// reaches the screen. The rail follows the text only when it was at the bottom. Codex replies whole,
+// as before. Desktop and phone, dark and light, axe.
 // Uses the built dist/cli.js and the fake CLIs (never a real agent). One server and one browser at a
 // time; only processes started here are killed.
 //   node e2e/streaming.mjs            checks only
@@ -301,6 +302,59 @@ try {
     s.mode({});
     await ctx.close();
     await s.stop();
+
+    // 5 · Scroll anchoring: the rail follows the streamed text only if it was already at the bottom;
+    // scrolled up, it stays where the reader left it (§1 #97 rendering).
+    {
+      const sa = await server({ FAKE_STREAM_MS: "160" });
+      const sctx = await browser.newContext({ viewport: { width: 1440, height: 520 } });
+      await sctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const sp = await sctx.newPage();
+      await toPlan(sp, sa.url);
+      await selectText(sp, "Shared shopping list");
+      await sp.getByRole("toolbar", { name: "Selection" }).waitFor();
+      await sp.keyboard.press("Control+Alt+KeyM");
+      await sp.getByRole("dialog", { name: "New comment" }).getByRole("textbox").fill("Say who shares it. ".repeat(14).trim());
+      await sp.keyboard.press("Control+Enter");
+      const srail = sp.getByRole("complementary", { name: "Comments" });
+      const reply = srail.getByRole("textbox", { name: "Reply" });
+      await sp.waitForFunction(() => !document.querySelector(".th .msg[data-streaming]") && /^Good catch/.test([...document.querySelectorAll(".crail .th .msg p")].at(-1)?.textContent ?? ""), null, { timeout: 20000 });
+      // The rail's scroll box, and a sampler that records it while the reply streams.
+      const sample = (scrollUp) =>
+        sp.evaluate(async (up) => {
+          const m = document.querySelector(".th .msg[data-streaming]");
+          let box = m.parentElement;
+          while (box && !/auto|scroll/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+          box.scrollTop = box.scrollHeight;
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          if (up) box.scrollTop -= up;
+          await new Promise((r) => requestAnimationFrame(r));
+          const start = { top: box.scrollTop, sh: box.scrollHeight, overflow: box.scrollHeight > box.clientHeight };
+          const out = [];
+          while (document.querySelector(".th .msg[data-streaming]")) {
+            out.push({ top: box.scrollTop, gap: box.scrollHeight - box.scrollTop - box.clientHeight, sh: box.scrollHeight });
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          return { start, out };
+        }, scrollUp);
+      // At the bottom: it follows.
+      await reply.fill("And who changes it?");
+      await reply.press("Enter");
+      await sp.locator(".th .msg[data-streaming]").waitFor({ timeout: 10000 });
+      const a = await sample(0);
+      const aGrew = Math.max(...a.out.map((x) => x.sh)) > a.start.sh;
+      check(`${theme}: at the bottom, the rail stays at the bottom as the reply grows`, a.start.overflow && aGrew && a.out.length >= 5 && a.out.every((x) => x.gap < 4), JSON.stringify({ start: a.start, n: a.out.length, maxGap: Math.max(...a.out.map((x) => x.gap)), sh: [a.out[0]?.sh, a.out.at(-1)?.sh] }));
+      await sp.waitForFunction(() => !document.querySelector(".crail .th .stop"), null, { timeout: 15000 });
+      // Scrolled up: it stays where the reader left it.
+      await reply.fill("Who else can add items?");
+      await reply.press("Enter");
+      await sp.locator(".th .msg[data-streaming]").waitFor({ timeout: 10000 });
+      const b = await sample(150);
+      const bGrew = Math.max(...b.out.map((x) => x.sh)) > b.start.sh;
+      check(`${theme}: scrolled up, the rail does not move while the reply grows`, bGrew && b.out.length >= 5 && b.out.every((x) => Math.abs(x.top - b.start.top) <= 1) && b.out.at(-1).gap > b.out[0].gap, JSON.stringify({ start: b.start, n: b.out.length, tops: [...new Set(b.out.map((x) => x.top))], gaps: [b.out[0]?.gap, b.out.at(-1)?.gap] }));
+      await sctx.close();
+      await sa.stop();
+    }
 
     // ---------------------------------------------------------------- phone
     const s2 = await server({ FAKE_COMMENT_DELAY_MS: "600", FAKE_STREAM_MS: "90" });

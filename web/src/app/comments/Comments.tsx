@@ -1720,7 +1720,8 @@ function StreamingReply({ t, agentName, onStop }: { t: CommentThread; agentName:
 function scrollBox(el: HTMLElement): HTMLElement | null {
   for (let p = el.parentElement; p; p = p.parentElement) {
     const o = getComputedStyle(p).overflowY;
-    if ((o === "auto" || o === "scroll") && p.scrollHeight > p.clientHeight) return p;
+    // The rail itself, even while it still fits: a rail that fits is at the bottom, so it stays there.
+    if (o === "auto" || o === "scroll") return p;
   }
   return null;
 }
