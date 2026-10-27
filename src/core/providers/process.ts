@@ -22,7 +22,7 @@ export function killAllChildren() {
 export function runProcess(
   bin: string,
   args: string[],
-  opts: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: string; timeoutMs: number; signal?: AbortSignal },
+  opts: { cwd: string; env?: NodeJS.ProcessEnv; stdin?: string; timeoutMs: number; signal?: AbortSignal; onStdout?: (chunk: string) => void },
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
     const target = spawnTarget(bin);
@@ -79,6 +79,7 @@ export function runProcess(
 
     child.stdout?.setEncoding("utf8").on("data", (d: string) => {
       if (stdout.length < MAX_OUTPUT) stdout += d;
+      opts.onStdout?.(d);
     });
     child.stderr?.setEncoding("utf8").on("data", (d: string) => {
       if (stderr.length < MAX_OUTPUT) stderr += d;

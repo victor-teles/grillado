@@ -20,10 +20,19 @@ export interface RunRequest {
   cwd: string;
   model?: string;
   timeoutMs: number;
+  /**
+   * Stream this top-level string field of the reply as `text-delta` events, where the provider gives
+   * real deltas (#97: Claude Code only for now). Providers that can't ignore it and reply whole.
+   */
+  stream?: { field: string };
 }
 
 export type ProviderEvent =
   | { type: "progress"; label: string }
+  /** More of the streamed field's text, appended to what came before (#97). Provider-agnostic. */
+  | { type: "text-delta"; text: string }
+  /** The provider started the reply over (e.g. its own schema retry): drop the streamed text. */
+  | { type: "text-reset" }
   | { type: "result"; raw: unknown }
   | { type: "error"; code: FailureCode; message: string };
 
