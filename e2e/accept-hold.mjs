@@ -129,7 +129,7 @@ const state = (pg, id) =>
     const ok = q(".okm");
     const wrap = q(".docwrap");
     const doc = q(".doc");
-    const pill = q(".ipill");
+    const pill = q(".ipill:not(.hp)");
     const r = (el) => el && el.getBoundingClientRect();
     const tint = (el) => el && getComputedStyle(el).backgroundColor;
     let mark = null;
@@ -238,12 +238,12 @@ try {
     const B = ids[1];
     check(`${theme}: two suggestions, the first with a deletion`, ids.length === 2 && (await pg.locator(`del.sg[data-sg="${A}"]`).count()) === 1, ids.join(","));
 
-    // Focus with ⌥↓ (a click inside a comment's anchor opens the thread), then act with the mouse.
+    // Focus with ⌥↓, then act with the mouse.
     const focusSg = async (id) => {
       await pg.locator("[data-testid=plan]").focus();
       for (let i = 0; i < 4 && !(await pg.evaluate((id) => !!document.querySelector(`.f[data-sg="${id}"]`), id)); i++) await pg.keyboard.press("Alt+ArrowDown");
       await until(pg, (id) => !!document.querySelector(`.f[data-sg="${id}"]`), id, `focus ${id}`);
-      await pg.locator(".ipill").waitFor();
+      await pg.locator(".ipill:not(.hp)").waitFor();
       await pointer(pg);
     };
     const focusA = () => focusSg(A);
@@ -252,7 +252,7 @@ try {
       await pg.evaluate(() => window.__release());
       await pg.clock.resume();
     };
-    const pillBtn = (name) => pg.locator(".ipill").getByRole("button", { name: new RegExp(`^${name}`) });
+    const pillBtn = (name) => pg.locator(".ipill:not(.hp)").getByRole("button", { name: new RegExp(`^${name}`) });
 
     // ---- pointer accept: the whole timeline
     await focusA();

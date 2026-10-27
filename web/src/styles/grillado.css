@@ -691,6 +691,12 @@ html[data-kbd] :is(del.sg.out,ins.sg.out,ins.sg.ok,.okm){transition:none}
 .ipill{white-space:nowrap;display:inline-flex;align-items:center;gap:0;margin-left:6px;padding:1px;border-radius:9px;background:var(--popover);box-shadow:0 0 0 1px var(--hair);vertical-align:1px;line-height:1}
 .ipill .ix{font-size:var(--t-meta);color:var(--muted-foreground);padding:0 6px}
 .ipill .btn{height:24px;padding:0 8px;gap:4px;font-size:var(--t-meta);color:var(--foreground)}
+.ipill .btn .kb{margin-left:2px}
+/* v1.1 polish #103: the hover pill floats over the text (absolute in .docwrap), so nothing reflows under the pointer */
+ins.sg.hov{background:color-mix(in oklab,var(--success) calc(var(--sg-a) + 5%),transparent)}
+.ipill.hp{position:absolute;z-index:3;margin:0;transition:opacity var(--d-press) var(--ease-out)}
+@starting-style{.ipill.hp{opacity:0}}
+html[data-kbd] .ipill.hp{transition:none}
 /* rail */
 .crail{flex:none;width:var(--rail-w);min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--hair);background:var(--rail)}
 .rtabs{display:flex;gap:4px;padding:0 12px;height:44px;align-items:center;border-bottom:1px solid var(--hair);flex:none}
