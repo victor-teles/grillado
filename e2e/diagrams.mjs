@@ -37,9 +37,9 @@ const started = new Set();
 process.on("exit", () => {
   for (const c of started) if (c.exitCode === null) c.kill("SIGKILL");
 });
-async function server(extra = {}) {
+async function server(extra = {}, bin = fakeBins(["claude", "codex"])) {
   const home = mkdtempSync(path.join(WORK, "home-"));
-  const e = { PATH: `${fakeBins(["claude", "codex"])}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, ...extra };
+  const e = { PATH: `${bin}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, ...extra };
   const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { env: e, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
@@ -56,6 +56,7 @@ async function server(extra = {}) {
   });
   return {
     url,
+    bin,
     stop: () =>
       new Promise((r) => {
         if (child.exitCode !== null) return r();
@@ -524,7 +525,7 @@ try {
     await s.stop();
 
     // ---------------------------------------------------------------- the agent stops responding
-    if (one) {
+    {
       const s3 = await server({ FAKE_DIAGRAM: "fail" });
       const fctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
       await fctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
@@ -536,12 +537,81 @@ try {
       check("failure bar: hit its usage limit · Nothing was changed · Try again", /Claude Code hit its usage limit\s*Nothing was changed\s*Dismiss\s*Try again/.test(await txt(fp.getByTestId("diagram-failed"))), await txt(fp.getByTestId("diagram-failed")));
       check("Try again is the blue one", (await fp.getByTestId("diagram-failed").locator(".btn.primary").textContent()) === "Try again" && (await fp.$eval(".copy-md", (e) => !e.matches(".btn.primary") || getComputedStyle(e).backgroundColor !== getComputedStyle(document.querySelector("[data-testid=diagram-failed] .btn.primary")).backgroundColor)));
       if (SHOTS) await fp.screenshot({ path: path.join(SHOTS, `i5-failed-d-${theme}.png`) });
-      await axe(fp, "dark desktop: failure bar");
+      await axe(fp, `${theme} desktop: failure bar`);
       await fp.getByRole("button", { name: "Try again" }).click();
       await fp.getByTestId("diagram-failed").waitFor({ timeout: 15000 });
       check("Try again re-sends the rest", true);
       await fctx.close();
       await s3.stop();
+    }
+
+    // ---------------------------------------------------------------- mobile failure bar (review-pr22 #2)
+    // Both phrases; the reason and what was kept on one row, Dismiss and Try again on their own row,
+    // everything inside the screen at 390, 360 and 320.
+    for (const code of ["rate_limit", "not_found"]) {
+      const sf = await server(code === "rate_limit" ? { FAKE_DIAGRAM: "fail" } : {});
+      const fctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: "reduce" });
+      await fctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const fm = await fctx.newPage();
+      await toPlan(fm, sf.url);
+      // The CLI gone after the plan was made: the run can't start it (ENOENT → not_found).
+      if (code === "not_found") renameSync(path.join(sf.bin, "claude"), path.join(sf.bin, "claude.off"));
+      await openAsk(fm, true);
+      await fm.locator(".csheet.ask5 .btn.primary").tap();
+      const bar = fm.getByTestId("diagram-failed");
+      await bar.waitFor({ timeout: 15000 });
+      const words = code === "rate_limit" ? "Claude Code hit its usage limit" : "Claude Code isn’t installed";
+      for (const width of [390, 360, 320]) {
+        await fm.setViewportSize({ width, height: 844 });
+        await settle(fm);
+        const g = await bar.evaluate((b) => {
+          const box = (e) => {
+            const r = e.getBoundingClientRect();
+            return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), h: Math.round(r.height) };
+          };
+          const btns = [...b.querySelectorAll(".r2 .btn")].map((e) => ({ name: e.textContent.trim(), ...box(e) }));
+          const why = box(b.querySelector(".lb5"));
+          return { vw: innerWidth, vh: innerHeight, bar: box(b), btns, why, text: b.textContent.replace(/\s+/g, " ").trim(), scroll: document.documentElement.scrollWidth - innerWidth };
+        });
+        const inside = (x) => x.l >= 0 && x.r <= g.vw && x.t >= 0 && x.b <= g.vh;
+        check(`${theme} phone ${width} failure bar (${code}): says "${words}" and what was kept`, g.text.startsWith(words) && /Nothing was changed|suggestions? kept/.test(g.text), g.text);
+        check(`${theme} phone ${width} failure bar (${code}): Dismiss and Try again on their own row, inside the screen, 44px`, g.btns.length === 2 && g.btns[0].name === "Dismiss" && g.btns[1].name === "Try again" && g.btns.every((x) => inside(x) && x.h >= 44) && g.btns[0].t >= g.why.b && g.btns[0].r <= g.btns[1].l && inside(g.bar) && g.scroll <= 0, JSON.stringify(g));
+        if (SHOTS && width !== 360) await fm.screenshot({ path: path.join(SHOTS, `i5-failed-m${width}-${code}-${theme}.png`) });
+      }
+      await axe(fm, `${theme} phone 320: failure bar (${code})`);
+      await fctx.close();
+      await sf.stop();
+    }
+
+    // ---------------------------------------------------------------- question round, the CLI gone (review-pr22 #3)
+    {
+      const sq = await server();
+      const qctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+      await qctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const qp = await qctx.newPage();
+      await qp.goto(sq.url);
+      await qp.getByRole("radio", { name: /Claude Code/ }).click();
+      await qp.getByRole("button", { name: /Continue/ }).click();
+      await qp.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
+      await qp.keyboard.press("Enter");
+      await qp.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
+      renameSync(path.join(sq.bin, "claude"), path.join(sq.bin, "claude.off"));
+      await qp.getByRole("button", { name: /Send round/ }).click();
+      const card = qp.getByTestId("problem");
+      if (!(await card.waitFor({ timeout: 20000 }).then(() => true, () => false))) {
+        if (SHOTS) await qp.screenshot({ path: path.join(SHOTS, `card-not-found-${theme}-missing.png`) });
+        throw new Error(`no problem card: ${(await qp.locator("body").innerText()).slice(0, 400).replace(/\n+/g, " ⏎ ")}`);
+      }
+      const c = await card.evaluate((b) => ({ code: b.dataset.code, title: b.querySelector(".t")?.textContent, body: b.querySelector(".t + p, p:not(.t)")?.textContent, cmd: b.querySelector("code")?.textContent, btns: [...b.querySelectorAll(".acts button")].map((x) => x.textContent.trim()) }));
+      check(`${theme} question round, CLI gone: "Claude Code isn’t installed", how to install it, answers kept`, c.code === "not_found" && c.title === "Claude Code isn’t installed" && c.cmd === "npm i -g @anthropic-ai/claude-code" && /Install it with .*then retry\. Your answers are kept\./.test(c.body ?? ""), JSON.stringify(c));
+      check(`${theme} question round, CLI gone: Retry stays (and Switch agent, with another agent ready)`, c.btns.at(-1) === "Retry" && c.btns.includes("Switch agent"), JSON.stringify(c.btns));
+      if (SHOTS) {
+        const bb = await card.boundingBox();
+        await qp.screenshot({ path: path.join(SHOTS, `card-not-found-${theme}.png`), clip: { x: Math.max(0, bb.x - 16), y: Math.max(0, bb.y - 16), width: bb.width + 32, height: bb.height + 32 } });
+      }
+      await axe(qp, `${theme} desktop: not-installed card`);
+      await qctx.close();
+      await sq.stop();
     }
 
     // ---------------------------------------------------------------- mobile

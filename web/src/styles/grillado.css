@@ -1121,6 +1121,12 @@ body:has(.acc4) .mbar{display:none}
 .bad5 .fi{display:grid;color:var(--destructive-ink)}
 .mbar.run5{display:flex;align-items:center;gap:10px;padding:6px 8px 6px 14px;min-height:56px}
 .mbar.run5 .r1{flex:1;padding-left:0;gap:10px}
+/* failed on a phone (review-pr22 #2): the reason and what was kept on the first row, wrapping; Dismiss and Try again on the two-button row */
+.mbar.run5.bad5{display:grid;align-items:stretch;gap:6px;padding:6px 8px 8px}
+.mbar.bad5 .r1{padding-left:6px;align-items:center}
+.mbar.bad5 .t5{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:8px;min-width:0;padding:4px 0}
+.mbar.bad5 .lb5{text-align:left;white-space:normal;min-width:0}
+.mbar.bad5 .dt{margin-right:0}
 /* full screen (§7) */
 .scrim.fsx{position:fixed;inset:0;z-index:60;background:rgb(0 0 0/var(--scrim-a))}
 .fs5{position:fixed;inset:var(--fs-inset);z-index:61;display:grid;grid-template-rows:auto 1fr auto;border-radius:16px;background:var(--background);color:var(--foreground);box-shadow:0 0 0 1px var(--hair),0 24px 64px -12px rgb(0 0 0/.5);overflow:hidden;outline:0;transition:opacity var(--d-base) var(--ease-out),transform var(--d-base) var(--ease-out)}

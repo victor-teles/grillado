@@ -191,6 +191,8 @@ export interface TreeState {
 }
 export interface SessionView {
   id: string;
+  /** Snapshot order from the server: a higher one is newer. */
+  rev?: number;
   createdAt: string;
   updatedAt: string;
   provider: ProviderId;

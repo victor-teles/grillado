@@ -199,21 +199,44 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
       </div>
     );
   } else if (failed) {
-    bar = (
-      <div className={`${mobile ? "mbar" : "review"} run5 bad5`} role="alert" data-testid="diagram-failed">
-        <span className="fi">
-          <IAlert s={16} />
-        </span>
-        <button type="button" className="lb5 tolog" title="Open in Activity" onClick={() => openActivity({ kind: "diagrams" })}>
-          {A(reasonText(run?.code, "{agent}"))}
-        </button>
-        <span className="dt">{run?.added ? `${run.added} ${run.added === 1 ? "suggestion" : "suggestions"} kept` : DCOPY.nothing}</span>
+    const why = (
+      <button type="button" className="lb5 tolog" title="Open in Activity" onClick={() => openActivity({ kind: "diagrams" })}>
+        {A(reasonText(run?.code, "{agent}"))}
+      </button>
+    );
+    const left = <span className="dt">{run?.added ? `${run.added} ${run.added === 1 ? "suggestion" : "suggestions"} kept` : DCOPY.nothing}</span>;
+    const acts = (
+      <>
         <button type="button" className="btn quiet" onClick={() => setDismissed(runKey)}>
           Dismiss
         </button>
         <button type="button" className="btn primary" onClick={() => void post({ op: "retry" })}>
           Try again
         </button>
+      </>
+    );
+    // On a phone the reason gets the whole first row and the two buttons a row of their own (review-pr22 #2).
+    bar = mobile ? (
+      <div className="mbar run5 bad5" role="alert" data-testid="diagram-failed">
+        <div className="r1">
+          <span className="fi">
+            <IAlert s={16} />
+          </span>
+          <span className="t5">
+            {why}
+            {left}
+          </span>
+        </div>
+        <div className="r2">{acts}</div>
+      </div>
+    ) : (
+      <div className="review run5 bad5" role="alert" data-testid="diagram-failed">
+        <span className="fi">
+          <IAlert s={16} />
+        </span>
+        {why}
+        {left}
+        {acts}
       </div>
     );
   } else if (none) {

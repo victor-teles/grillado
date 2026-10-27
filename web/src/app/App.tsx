@@ -8,6 +8,7 @@ import { IPlug } from "./icons";
 import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
 import { SessionScreen } from "./Session";
 import type { AppState, ProviderId, SessionView } from "./types";
+import { newer } from "./newer";
 
 const sessionIdFromPath = () => /^\/s\/([\w-]+)$/.exec(location.pathname)?.[1] ?? null;
 const stepOf = (s: SessionView) => (s.status === "confirm" ? 2 : s.status === "synthesizing" || s.status === "plated" ? 3 : 1);
@@ -48,7 +49,7 @@ export function App() {
     return subscribe(
       (e) => {
         if (e.type === "app") void refreshApp();
-        else if (e.type === "session") setSession((cur) => (cur && cur.id === e.session.id ? e.session : cur));
+        else if (e.type === "session") setSession((cur) => (cur && cur.id === e.session.id ? newer(cur, e.session) : cur));
         else if (e.type === "progress") setSession((cur) => (cur && cur.id === e.sessionId ? { ...cur, progress: e.label } : cur));
         // Not React state: the streaming message appends it itself (#97).
         else if (e.type === "reply-text") setReplyText(e.threadId, e.text);
@@ -77,7 +78,9 @@ export function App() {
       if (!session) return;
       try {
         setNotice("");
-        setSession(await api.action(session.id, action, body));
+        // The reply can land after a pushed update it predates (a run that fails at once, review-pr22 #3).
+        const next = await api.action(session.id, action, body);
+        setSession((cur) => (cur && cur.id === next.id ? newer(cur, next) : next));
       } catch (err) {
         // Round submits show their own error in the bar.
         if (action !== "answers") setNotice(err instanceof Error ? err.message : "That didn't work.");

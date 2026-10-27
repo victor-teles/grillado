@@ -95,6 +95,8 @@ export class GrilladoServer {
   private selected: ProviderId | null = null;
   private sessions = new Map<string, Session>();
   private inflight = new Map<string, AbortController>();
+  /** Every session snapshot gets the next number, so the browser can drop one older than what it shows. */
+  private rev = 0;
   /** Agent runs on comment threads, by thread id. They don't lock the plan, except "Apply feedback". */
   private commentRuns = new Map<string, AbortController>();
   private diagramRuns = new Map<string, AbortController>();
@@ -504,6 +506,7 @@ export class GrilladoServer {
   private view(s: Session) {
     return {
       ...s,
+      rev: ++this.rev,
       error: s.error ? { ...s.error, message: redact(s.error.message, userText(s)) } : undefined,
       busy: this.inflight.has(s.id),
       applying: this.applying(s),
