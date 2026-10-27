@@ -4,7 +4,7 @@
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
 // leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
-// FAKE_CTL (JSON env overrides, read per run), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
+// FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -222,6 +222,7 @@ function commentReply() {
     if (process.env.FAKE_COMMENT === "leak-once" && once("comment-leak")) return { type: "reply", text: "Per the grilling method, yes." };
     const asked = (state.messages ?? []).filter((m) => m.by === "user");
     const where = state.section ?? "this section";
+    if (process.env.FAKE_REPLY_TEXT) return { type: "reply", text: process.env.FAKE_REPLY_TEXT };
     if (asked.length <= 1) return { type: "reply", text: `Good catch. I can say that under ${where} and spell out "${words.slice(0, 40)}".` };
     // A follow-up gets an answer to what it asks, not the first reply again.
     if (/\bwho\b/i.test(String(asked.at(-1)?.text ?? ""))) return { type: "reply", text: `Anyone in the household. Everyone who shares the list can add, tick off or remove items, and I'll say so under ${where}.` };
@@ -345,6 +346,13 @@ async function claudeStream(reply, text) {
     ev({ type: "message_start", message: { id: "m2", role: "assistant", content: [] } });
   }
   const half = Math.floor(text.length * 0.55);
+  if (process.env.FAKE_STREAM_CUT && (mode === "hold" || mode === "fail")) {
+    const at = text.indexOf(process.env.FAKE_STREAM_CUT) + process.env.FAKE_STREAM_CUT.length;
+    ev({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "t2", name: "StructuredOutput", input: {} } });
+    for (let i = 0; i < at; i += 7) { ev({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: text.slice(i, Math.min(i + 7, at)) } }); await pause(); }
+    if (mode === "hold") { await new Promise((r) => setTimeout(r, 120_000)); return; }
+    line({ type: "result", subtype: "error_during_execution", is_error: true, result: "API Error: 529 Overloaded", api_error_status: 529 }); process.exit(1);
+  }
   if (mode === "hold") {
     await call(text, 2, { stopAt: half });
     await new Promise((r) => setTimeout(r, 120_000));

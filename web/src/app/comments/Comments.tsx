@@ -1681,10 +1681,11 @@ function StreamingReply({ t, agentName, onStop }: { t: CommentThread; agentName:
     if (!el) return;
     let shown = "";
     let frame = 0;
+    // The rail (or phone sheet), found while the message is still in it.
+    const box = scrollBox(el);
     // Pinned to the bottom on mount and on every paint, while the reader was at the bottom.
     const paint = () => {
       frame = 0;
-      const box = scrollBox(el);
       const pin = box ? wasPinned(box) : false;
       const text = replyText(t.id);
       if (text !== shown) {
@@ -1701,6 +1702,9 @@ function StreamingReply({ t, agentName, onStop }: { t: CommentThread; agentName:
     return () => {
       off();
       if (frame) cancelAnimationFrame(frame);
+      // The finished (or stopped) message replaces this one and is taller (time, Apply feedback):
+      // a pinned rail follows it once more, so Reply stays in view.
+      if (box && wasPinned(box)) requestAnimationFrame(() => (box.scrollTop = box.scrollHeight));
     };
   }, [t.id]);
   return (

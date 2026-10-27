@@ -225,7 +225,7 @@ try {
       await pg.mouse.move(600, 880);
       await pg.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
       await pg.waitForTimeout(150);
-      await pg.screenshot({ path: path.join(SHOTS, `${name}-r2-${theme}.png`) });
+      await pg.screenshot({ path: path.join(SHOTS, `${name}-r3-${theme}.png`) });
     };
     await toPlan(pg, s.url);
     const rail = pg.getByRole("complementary", { name: "Comments" });
@@ -365,7 +365,7 @@ try {
           const out = [];
           while (document.querySelector(".th .msg[data-streaming]")) {
             await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-            out.push({ top: Math.round(box.scrollTop), gap: Math.round(box.scrollHeight - box.scrollTop - box.clientHeight), sh: box.scrollHeight });
+            if (document.querySelector(".th .msg[data-streaming]")) out.push({ top: Math.round(box.scrollTop), gap: Math.round(box.scrollHeight - box.scrollTop - box.clientHeight), sh: box.scrollHeight });
             await new Promise((r) => setTimeout(r, 60));
           }
           return out;
@@ -384,9 +384,57 @@ try {
         const grew = o.length >= 5 && o.at(-1).sh > o[0].sh;
         if (where === "bottom") check(`${theme} 1100×520: replying from the bottom, the rail stays pinned to the bottom while the reply streams`, box.sh > box.ch && grew && o.every((x) => x.gap < 4), summary(o));
         else check(`${theme} 1100×520: scrolled up, the rail stays where the reader left it`, grew && o.every((x) => x.top === 0) && o.at(-1).gap > o[0].gap, summary(o));
-        if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, `d-stream-scroll-${where}-r2-${theme}.png`) });
-        await sp.waitForFunction(() => !document.querySelector(".crail .th .stop"), null, { timeout: 20000 });
+        await sp.waitForFunction(() => !document.querySelector(".crail .th .stop") && !document.querySelector(".th .msg[data-streaming]"), null, { timeout: 20000 });
+        await sp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        await sp.waitForTimeout(150);
+        const end = await sp.evaluate(() => ({ top: Math.round(window.__box.scrollTop), gap: Math.round(window.__box.scrollHeight - window.__box.scrollTop - window.__box.clientHeight), replyBelow: Math.round([...document.querySelectorAll(".crail .th textarea.reply")].at(-1).getBoundingClientRect().bottom - window.__box.getBoundingClientRect().bottom) }));
+        if (where === "bottom") check(`${theme} 1100×520: when it finishes, the taller done message keeps the rail pinned: gap 0, Reply in view`, end.gap < 4 && end.replyBelow <= 0, JSON.stringify(end));
+        else check(`${theme} 1100×520: scrolled up, finishing does not move the rail either`, end.top === 0, JSON.stringify(end));
+        if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, `d-stream-scroll-${where}-r3-${theme}.png`) });
       }
+
+      // 6 · Stop and errors keep a held first word (review round 2): "Talk to Matt" stays "Matt";
+      // "As Matt Pocock" still never shows.
+      await watch(sp);
+      const lastTh = () => sp.locator(".crail .th").last();
+      const send = async (text, env, wait = true) => {
+        sa.mode(env);
+        const r = lastTh().locator("textarea.reply");
+        await r.fill(text);
+        await r.press("Enter");
+        if (wait) await streamingMsg(sp).waitFor({ timeout: 10000 });
+      };
+      const matt = "Good catch. Talk to Matt about it soon.";
+      await send("Who decides?", { FAKE_STREAM: "hold", FAKE_REPLY_TEXT: matt, FAKE_STREAM_CUT: "Talk to Matt " });
+      await sp.waitForFunction(() => (document.querySelector(".th .msg[data-streaming] p > span:first-child")?.textContent ?? "") === "Good catch. Talk to", null, { timeout: 10000 });
+      check(`${theme}: while “Matt” could still become a banned name, it is held`, true);
+      await streamingMsg(sp).getByRole("button", { name: "Stop" }).click();
+      const kept = lastTh().locator(".msg").filter({ has: sp.locator(".stopped") }).last();
+      await kept.waitFor({ timeout: 10000 });
+      check(`${theme}: Stop keeps the held first word: “Good catch. Talk to Matt (stopped)”`, (await kept.locator("p").textContent()) === "Good catch. Talk to Matt (stopped)", await kept.locator("p").textContent());
+      if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, `d-stream-stopped-matt-r3-${theme}.png`) });
+      await send("And then?", { FAKE_STREAM: "fail", FAKE_REPLY_TEXT: matt, FAKE_STREAM_CUT: "Talk to Matt " });
+      await lastTh().locator(".crow[role=alert]").waitFor({ timeout: 15000 });
+      const fp = await lastTh().locator(".msg[data-partial] p").textContent();
+      check(`${theme}: an error keeps the held first word: “Good catch. Talk to Matt” · Couldn't reply`, fp === "Good catch. Talk to Matt", fp);
+      if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, `d-stream-error-matt-r3-${theme}.png`) });
+      sa.mode({});
+      await lastTh().getByRole("button", { name: "Try again" }).click();
+      await sp.waitForFunction(() => !document.querySelector(".crail .th .stop") && !document.querySelector(".th .msg[data-partial]"), null, { timeout: 20000 });
+      for (const [mode, cutAt] of [["hold", "As Matt "], ["hold", "As Matt Pocock "], ["fail", "As Matt Pocock "]]) {
+        await send("And who said so?", { FAKE_STREAM: mode, FAKE_REPLY_TEXT: "Good catch. As Matt Pocock says, keep it small.", FAKE_STREAM_CUT: cutAt }, false);
+        await sp.waitForTimeout(2000);
+        // Tripped, the attempt shows nothing, so Stop is back in the plain replying row.
+        if (mode === "hold") await lastTh().getByRole("button", { name: "Stop" }).click();
+        await sp.waitForFunction(() => !document.querySelector(".crail .th .stop"), null, { timeout: 15000 });
+        if (mode === "fail") {
+          sa.mode({});
+          await lastTh().getByRole("button", { name: "Try again" }).click();
+          await sp.waitForFunction(() => !document.querySelector(".crail .th .stop") && !document.querySelector(".th .msg[data-partial]"), null, { timeout: 20000 });
+        }
+      }
+      const seenP = (await watched(sp)).seen.concat(await sp.evaluate(() => [...document.querySelectorAll(".crail .th .msg p")].map((p) => p.textContent)));
+      check(`${theme}: “As Matt Pocock” never shows, on Stop or on an error, at any cut`, seenP.length > 0 && !seenP.some((t) => /pocock/i.test(t)), seenP.filter((t) => /pocock/i.test(t)).slice(0, 2).join(" | "));
       await sctx.close();
       await sa.stop();
     }
@@ -400,7 +448,7 @@ try {
       if (!SHOTS) return;
       await mp.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
       await mp.waitForTimeout(260);
-      await mp.screenshot({ path: path.join(SHOTS, `${name}-r2-${theme}.png`) });
+      await mp.screenshot({ path: path.join(SHOTS, `${name}-r3-${theme}.png`) });
     };
     await toPlan(mp, s2.url);
     s2.mode({ FAKE_STREAM: "hold" });
@@ -432,6 +480,57 @@ try {
     await axe(mp, `${theme} phone: stopped`);
     await mctx.close();
     await s2.stop();
+
+    // Phone 390×480: the sheet stays pinned while the reply streams from the bottom and after it is done.
+    {
+      const s4 = await server({ FAKE_COMMENT_DELAY_MS: "300", FAKE_STREAM_MS: "150" });
+      const pctx = await browser.newContext({ viewport: { width: 390, height: 480 }, hasTouch: true, isMobile: true });
+      await pctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const pp = await pctx.newPage();
+      await toPlan(pp, s4.url);
+      await selectText(pp, "Shared shopping");
+      const ptb = pp.getByRole("toolbar", { name: "Selection" });
+      await ptb.waitFor();
+      await ptb.getByRole("button", { name: "Comment" }).click();
+      const pd = pp.getByRole("dialog", { name: "New comment" });
+      await pd.getByRole("textbox").fill("Say who shares it");
+      await pd.getByRole("button", { name: /^Comment/ }).click();
+      await pd.waitFor({ state: "detached" });
+      await pp.getByRole("button", { name: "Plan actions" }).click();
+      await pp.getByRole("menuitem", { name: /Comments/ }).click();
+      const psheet = pp.getByRole("dialog", { name: "Comments" });
+      await psheet.locator(".apply").waitFor({ timeout: 20000 });
+      const pbox = () =>
+        pp.evaluate(() => {
+          let b = document.querySelector(".csheet .th").parentElement;
+          while (b && !/auto|scroll/.test(getComputedStyle(b).overflowY)) b = b.parentElement;
+          window.__pbox = b;
+          return { gap: Math.round(b.scrollHeight - b.scrollTop - b.clientHeight), over: b.scrollHeight > b.clientHeight };
+        });
+      await psheet.getByRole("textbox", { name: "Reply" }).fill("And who changes it?");
+      await pbox();
+      await pp.evaluate(() => (window.__pbox.scrollTop = window.__pbox.scrollHeight));
+      await pp.waitForTimeout(100);
+      await psheet.getByRole("textbox", { name: "Reply" }).press("Enter");
+      await psheet.locator(".msg[data-streaming]").waitFor({ timeout: 10000 });
+      const pg2 = await pp.evaluate(async () => {
+        const b = window.__pbox;
+        const out = [];
+        while (document.querySelector(".csheet .msg[data-streaming]")) {
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          // Only while it is still streaming: the done swap is checked on its own below.
+          if (document.querySelector(".csheet .msg[data-streaming]")) out.push(Math.round(b.scrollHeight - b.scrollTop - b.clientHeight));
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        await new Promise((r) => setTimeout(r, 150));
+        return { during: out, after: Math.round(b.scrollHeight - b.scrollTop - b.clientHeight), over: b.scrollHeight > b.clientHeight };
+      });
+      check(`${theme} phone 390×480: from the bottom, the sheet stays pinned while it streams and after it is done (gap 0)`, pg2.over && pg2.during.length >= 5 && pg2.during.every((g) => g < 4) && pg2.after < 4, JSON.stringify({ n: pg2.during.length, gaps: [...new Set(pg2.during)], after: pg2.after }));
+      if (SHOTS) await pp.screenshot({ path: path.join(SHOTS, `m-stream-scroll-done-r3-${theme}.png`) });
+      await pctx.close();
+      await s4.stop();
+    }
   }
 
   // ---------------------------------------------------------------- other agents: unchanged
