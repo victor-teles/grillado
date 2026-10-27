@@ -103,6 +103,14 @@ const holdTransitions = (pg) =>
       true,
     );
     window.__step = () => {
+      // A transition whose transitionrun hasn't been dispatched yet (no frame under the paused clock)
+      // started at this fake instant: hold it from now.
+      for (const el of document.querySelectorAll(".okm"))
+        for (const a of el.getAnimations())
+          if (a.transitionProperty && !held.some((h) => h.a === a)) {
+            a.pause();
+            held.push({ a, at: performance.now() });
+          }
       for (const h of held) h.a.currentTime = Math.min(performance.now() - h.at, h.a.effect.getTiming().duration);
     };
     window.__release = () => {
@@ -377,6 +385,18 @@ try {
     check(`${theme} ⌘↵: then goes`, (await pg.locator(".okm").count()) === 0);
     await resume();
 
+    // ---- the plan's width changes during the hold: the mark goes, it isn't moved (#116)
+    await pg.keyboard.press("Control+z");
+    await pg.locator(`del.sg[data-sg="${A}"]`).waitFor({ timeout: 5000 });
+    await focusA();
+    await pillBtn("Accept").click();
+    await pg.locator(".okm").waitFor({ timeout: 2000 });
+    await pg.setViewportSize({ width: 1400, height: 900 });
+    await pg.locator(".okm").waitFor({ state: "detached", timeout: 1000 }).catch(() => {});
+    check(`${theme}: a resize during the hold drops the mark`, (await pg.locator(".okm").count()) === 0 && /Accepted · /.test(await pg.locator(".review").textContent()));
+    await pg.setViewportSize({ width: 1440, height: 900 });
+    await pg.waitForFunction(async () => (await (await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan.md`)).text()).includes("One list the whole household shares"), null, { timeout: 5000 });
+
     // ---- the last suggestion keeps today's path: no hold, no mark
     await focusSg(B);
     await pause();
@@ -386,6 +406,79 @@ try {
     await resume();
     await ctx.close();
     await s.stop();
+
+    // ---------------------------------------------------------------- no room for the mark (#116)
+    // 1100px with the rail open: the gutter is too narrow for the margin, so there's no mark and the
+    // plan never scrolls sideways; the bar still says "Accepted · ⌘Z to undo".
+    {
+      const f2 = path.join(mkdtempSync(path.join(WORK, "e2-")), "after2.txt");
+      const s3 = await server({ FAKE_COMMENT: "swap", FAKE_COMMENT_DELAY_MS: "300", FAKE_EDIT2_FILE: f2 });
+      const c3 = await browser.newContext({ viewport: { width: 1100, height: 800 }, reducedMotion: "no-preference" });
+      await c3.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const p3 = await c3.newPage();
+      await p3.goto(s3.url);
+      await p3.getByRole("radio", { name: /Claude Code/ }).click();
+      await p3.getByRole("button", { name: /Continue/ }).click();
+      await p3.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
+      await p3.keyboard.press("Enter");
+      await p3.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
+      await p3.getByRole("button", { name: /Send round/ }).click();
+      await p3.getByText("Keep data local first?").waitFor({ timeout: 15000 });
+      await p3.getByRole("button", { name: /Send round/ }).click();
+      await p3.getByRole("button", { name: /Yes, plate it/ }).click({ timeout: 15000 });
+      await p3.getByTestId("plan").waitFor({ timeout: 15000 });
+      await selectText(p3, "Shared shopping list");
+      await p3.getByRole("toolbar", { name: "Selection" }).waitFor();
+      await p3.keyboard.press("Control+Alt+KeyM");
+      await p3.getByRole("dialog", { name: "New comment" }).getByRole("textbox").fill("Say who shares it");
+      await p3.keyboard.press("Control+Enter");
+      const rail3 = p3.getByRole("complementary", { name: "Comments" });
+      await rail3.getByText(/^Good catch\./).waitFor({ timeout: 15000 });
+      // With the rail open, fill "Yes, one core flow" out to just short of the column's edge.
+      const fill = await p3.evaluate(() => {
+        const doc = document.querySelector(".doc");
+        const col = doc.getBoundingClientRect().right - parseFloat(getComputedStyle(doc).paddingRight);
+        const w = document.createTreeWalker(document.querySelector("[data-testid=plan]"), NodeFilter.SHOW_TEXT);
+        let n = w.nextNode();
+        while (n && !n.data.includes("Yes, one core flow")) n = w.nextNode();
+        const span = document.createElement("span");
+        n.parentNode.insertBefore(span, n.nextSibling);
+        const words = "shipped first so everyone at home can try it on their own phones this week and tell us what is missing before we add the rest".split(" ");
+        let best = { gap: Infinity, text: "" };
+        for (let i = 1; i <= words.length; i++) {
+          span.textContent = `, ${words.slice(0, i).join(" ")}`;
+          const r = [...span.getClientRects()].filter((x) => x.width > 0).pop();
+          if (col - r.right >= 0 && col - r.right < best.gap) best = { gap: col - r.right, text: span.textContent };
+        }
+        span.remove();
+        const wrap = document.querySelector(".docwrap");
+        return { ...best, gutter: wrap.getBoundingClientRect().left + wrap.clientWidth - col };
+      });
+      writeFileSync(f2, `Yes, one core flow${fill.text}`);
+      check(`${theme} 1100px: the line ends ${Math.round(fill.gap)}px from the column, with a ${Math.round(fill.gutter)}px gutter`, fill.gap < 80 && fill.gutter < 16 + 72 + 8, JSON.stringify(fill));
+      await rail3.getByRole("button", { name: "Apply feedback" }).click();
+      await rail3.getByText(/suggestions? ready/).waitFor({ timeout: 15000 });
+      const ids3 = await p3.evaluate(() => [...new Set([...document.querySelectorAll("[data-sg]")].map((e) => e.getAttribute("data-sg")))]);
+      await p3.locator("[data-testid=plan]").focus();
+      for (let i = 0; i < 4 && !(await p3.evaluate((id) => !!document.querySelector(`.f[data-sg="${id}"]`), ids3[1])); i++) await p3.keyboard.press("Alt+ArrowDown");
+      await pointer(p3);
+      await p3.locator(".ipill").getByRole("button", { name: /^Accept/ }).first().click();
+      let worst = 0;
+      for (let i = 0; i < 12; i++) {
+        // The decision gutter (.gut, item 2) already spills past a 732px scroller on its own; that's
+        // noted separately. What this checks is that nothing of the hold does.
+        worst = Math.max(worst, await p3.evaluate(() => {
+          const w = document.querySelector(".docwrap");
+          const edge = w.getBoundingClientRect().left + w.clientWidth;
+          return Math.max(0, ...[...w.querySelectorAll("*")].filter((e) => !e.closest(".gut")).map((e) => e.getBoundingClientRect().right - edge));
+        }));
+        await p3.waitForTimeout(50);
+      }
+      check(`${theme} 1100px: no room, so no mark, and nothing of the hold makes the plan scroll sideways`, worst === 0 && (await p3.locator(".okm").count()) === 0, `overflow ${worst}px, marks ${await p3.locator(".okm").count()}`);
+      check(`${theme} 1100px: …the bar still says Accepted`, /Accepted · /.test(await p3.locator(".review").textContent()));
+      await c3.close();
+      await s3.stop();
+    }
 
     // ---------------------------------------------------------------- phone: today's behaviour
     const s2 = await server({ FAKE_COMMENT: "swap", FAKE_COMMENT_DELAY_MS: "300" });
