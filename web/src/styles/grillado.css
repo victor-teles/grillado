@@ -563,8 +563,8 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 .apb[data-busy]:has(:focus-visible) .aptip{opacity:1;transition:none}
 .drow.ap .drow-m{display:block}
 .dz-h>.apb::before{content:none}
-.dz-ap-btn{border:0;background:none;padding:0 2px;border-radius:4px;font:inherit;font-weight:500;color:var(--foreground);cursor:pointer}
-@media (hover:hover){.dz-ap-btn:hover{text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair)}}
+.dz-ap-btn{border:0;background:none;padding:0 2px;border-radius:4px;font:inherit;font-weight:500;color:var(--muted-foreground);cursor:pointer}
+@media (hover:hover){.dz-ap-btn:hover{color:var(--foreground);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair)}}
 /* The card's meta line stays open while Add to plan has something to say, and never clips a focus ring. */
 .dz:has(.dz-h .apl) .dz-h{max-height:40px;opacity:1;margin-top:4px}
 .dz:has(.dz-h .apb) .dz-h{padding:2px;margin-left:-2px;margin-right:-2px}
@@ -827,10 +827,11 @@ html[data-kbd] .ipill.hp{transition:none}
 .rgone{display:flex;align-items:center;gap:6px;margin:12px 20px 0;padding:8px 12px;border-radius:10px;background:var(--muted);color:var(--muted-foreground);font-size:var(--t-meta);line-height:16px}
 .rempty .rgone{margin:0 0 16px}
 .th.res .one .ia{flex:none}
-/* One blue per screen: composer Comment → Accept all → Apply feedback → Copy Markdown. */
+/* One blue per screen: composer Comment → Accept all → Apply feedback → Copy Markdown. A pending
+   suggestion only demotes Copy Markdown on the Document tab, where its bar is; Decisions keeps it blue (#125). */
 .planv[data-composing] .review .btn.primary,.planv[data-composing] .th .apply,.planv[data-composing] .copy-md,
-.planv[data-reviewing] .th .apply,.planv[data-reviewing] .copy-md,
-.planv:has(.th .apply) .copy-md,.planv[data-reviewing] .copy-md:hover,.planv:has(.th .apply) .copy-md:hover{background:var(--muted);color:var(--foreground)}
+.planv[data-reviewing] .th .apply,.planv[data-reviewing][data-tab=doc] .copy-md,
+.planv:has(.th .apply) .copy-md,.planv[data-reviewing][data-tab=doc] .copy-md:hover,.planv:has(.th .apply) .copy-md:hover{background:var(--muted);color:var(--foreground)}
 .th:has(~.th .apply) .apply{background:var(--muted);color:var(--foreground)}
 /* mobile sheets and bars */
 .cscrim{position:fixed;inset:0;z-index:45;background:oklch(0 0 0/.4)}
@@ -1148,7 +1149,14 @@ body:has(.acc4) .mbar{display:none}
 .fs5.m .fh{height:56px;padding:0 4px 0 16px}
 .fs5.m .fh .icon-btn{width:44px;height:44px}
 .fs5.m .fsb{place-items:center start;padding:0 16px}
-.mzb{display:flex;justify-content:center;align-items:center;gap:8px;padding:10px 12px 20px;background:var(--background)}
+.mzb{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px calc(20px + env(safe-area-inset-bottom));background:var(--background)}
+/* phones (#105): caption left, a quiet Edit at the right end; 28px to see, 44px to tap */
+.mm5 figcaption.fcap{display:flex;align-items:center;gap:12px;text-align:left}
+.fcap .ct{flex:1;min-width:0}
+.fcap .fed{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 2px 0 6px;border:0;background:none;font:inherit;font-size:13px;color:var(--muted-foreground);border-radius:6px}
+.fcap .fed::before{content:"";position:absolute;inset:-8px 0}
+.fcap .fed:focus-visible{outline:0;box-shadow:0 0 0 2px var(--ring)}
+.fs5.m .fh .icon-btn[aria-expanded=true]{background:var(--muted);color:var(--foreground)}
 .mzb .icon-btn{width:44px;height:44px}
 /* mobile (§11): figures fit with a "Tap to zoom" chip */
 .tapz{position:absolute;right:10px;top:10px;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;border:0;background:var(--background);font:inherit;font-size:var(--t-meta);color:var(--foreground);box-shadow:0 0 0 1px var(--hair)}

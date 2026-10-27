@@ -251,7 +251,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
   ];
 
   return (
-    <div className="planv" data-waiting={waiting.length ? "" : undefined} data-reviewing={cm.pending ? "" : undefined} data-composing={cm.composing ? "" : undefined} data-landing={cm.landing ? "" : undefined}>
+    <div className="planv" data-tab={tab} data-waiting={waiting.length ? "" : undefined} data-reviewing={cm.pending ? "" : undefined} data-composing={cm.composing ? "" : undefined} data-landing={cm.landing ? "" : undefined}>
       <div className="dtb">
         <div className="ptabs" role="tablist" aria-label="Plan">
           {tabs.map((t, i) => (

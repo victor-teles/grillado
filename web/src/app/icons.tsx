@@ -225,6 +225,7 @@ export const IMax = mk(
   </>,
 );
 export const IMinus = mk(<path d="M5 12h14" />);
+export const ICode = mk(<path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />);
 // Item 6 (Activity): Lucide circle-help, file-text, workflow, check-check, file-diff, activity, arrow-up-right, circle-alert.
 export const IHelp = mk(
   <>

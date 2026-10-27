@@ -516,9 +516,7 @@ function BlockEditor({
           }}
         />
       </div>
-      <p className="blk-hint" id={hint} aria-hidden="true">
-        {hintOf(!!f, !!s.menu, mobile, !!preview)}
-      </p>
+      {/* The hint sits under what the source renders, not between them (#106). */}
       {preview && preview.kind === "fence" ? (
         <>
           {merr ? <MermaidError id={errId} err={merr} /> : null}
@@ -527,6 +525,9 @@ function BlockEditor({
           </div>
         </>
       ) : null}
+      <p className="blk-hint" id={hint} aria-hidden="true">
+        {hintOf(!!f, !!s.menu, mobile, !!preview)}
+      </p>
       <SlashMenu s={s} host={host} agentName={agentName} mobile={mobile} dock={dock + 48} />
       {mobile ? (
         <div className="acc4" role="toolbar" aria-label="Editing" style={{ bottom: dock }} onMouseDown={(e) => e.preventDefault()}>
