@@ -64,6 +64,9 @@ async function server(extra = {}) {
       }),
   };
 }
+// Holds until no finite CSS animation or transition is running (spinners loop forever and are skipped).
+const settle = (pg, timeout = 5000) =>
+  pg.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getComputedTiming().iterations === Infinity), null, { timeout });
 const selectText = (pg, text) =>
   pg.evaluate((t) => {
     const doc = document.querySelector("[data-testid=plan]");
@@ -225,7 +228,9 @@ try {
     check(`${theme}: the thread still reads On “Problem”, with no "text changed" line`, /On [“"]Problem[”"]/.test(head) && !head.includes("text this was on changed"), head.slice(0, 120));
     await pg.evaluate(() => window.__release());
     await pg.clock.resume();
-    await pg.waitForTimeout(2300); // the ✓ Accepted mark has gone
+    // The ✓ Accepted mark holds ~2s, then fades out and leaves; wait for that, not a fixed time.
+    await pg.locator(".okm").waitFor({ state: "detached", timeout: 10000 });
+    await settle(pg);
     await snap("d-follow");
     await axe(pg, `${theme} desktop: followed`);
 
@@ -274,7 +279,7 @@ try {
     const msnap = async (name) => {
       if (!SHOTS) return;
       await mp.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
-      await mp.waitForTimeout(250);
+      await settle(mp);
       await mp.screenshot({ path: path.join(SHOTS, `${name}-${theme}.png`) });
     };
     await mp.goto(s2.url);
@@ -286,10 +291,15 @@ try {
     const sheet = mp.getByRole("dialog", { name: "New comment" });
     await sheet.getByRole("textbox").fill("Say who shares it");
     await sheet.getByRole("button", { name: /^Comment/ }).click();
+    // Let the New comment sheet finish closing first: a Plan actions tap during its exit could miss,
+    // and the Comments sheet never opened (the 15s "Good catch." timeout seen under load).
+    await sheet.waitFor({ state: "hidden", timeout: 5000 });
     const openSheet = async () => {
       await mp.getByRole("button", { name: "Plan actions" }).click();
       await mp.getByRole("menuitem", { name: /Comments/ }).click();
-      return mp.getByRole("dialog", { name: "Comments" });
+      const d = mp.getByRole("dialog", { name: "Comments" });
+      await d.waitFor({ timeout: 5000 });
+      return d;
     };
     let msheet = await openSheet();
     await msheet.getByText(/^Good catch\./).waitFor({ timeout: 15000 });
@@ -300,7 +310,7 @@ try {
     await mbar.waitFor();
     await mbar.getByRole("button", { name: /^Accept suggestion/ }).click();
     await mp.waitForFunction((t) => document.querySelector("[data-testid=plan]").textContent.includes(t) && document.querySelectorAll("del.sg").length === 0, NEW, { timeout: 8000 });
-    await mp.waitForTimeout(300);
+    await settle(mp);
     a = await anc(mp);
     check(`${theme} phone: the comment follows the inserted text, not the title`, a.length === 1 && a[0].text === NEW && !a[0].h1 && a[0].under === "Problem", JSON.stringify(a));
     await msnap("m-follow");
