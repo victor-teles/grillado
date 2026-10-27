@@ -206,7 +206,10 @@ describe("grillado mcp, web app side (v1.2 item 1)", () => {
     const { server, store } = await start();
     expect(store.readServerInfo()).toEqual({ pid: process.pid, port: server.port, token: server.token });
     const state = JSON.parse((await request(server.port, { path: "/api/state", headers: { "x-grillado-token": server.token } })).body);
-    expect(state.mcp).toBeNull(); // main.ts passes the launch command; none here
+    // Always present (review N4): main.ts passes it; without one, the cli.js next to the web dir.
+    expect(state.mcp.command).toBe(process.execPath);
+    expect(state.mcp.args[1]).toBe("mcp");
+    expect(state.mcp.line).toContain("cli.js mcp");
     await servers.pop()!.close();
     expect(store.readServerInfo()).toBeNull();
   });

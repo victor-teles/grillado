@@ -13,6 +13,7 @@ import { api } from "../api";
 import type { DocMarks } from "../Markdown";
 import { type EditorMode, type PlanDraft } from "../editor/PlanEditor";
 import { cleanSelection, sourceRange } from "../editor/selection";
+import { editorName } from "../../../../src/core/editor.ts";
 import { IActivity, ICheck, IChev, IDown, IEdit, IMore, IMsg, IPlug, IUndo, IUp, IX } from "../icons";
 import { type ActivityFocus, ActivityPanel, openActivity } from "../activity/Activity";
 import { jumpTo } from "../editor/link";
@@ -93,6 +94,10 @@ export function useComments(o: Opts) {
   const open = threads.filter((t) => !t.resolved);
   const resolved = threads.filter((t) => t.resolved);
   const docMode = o.tab === "doc" && o.mode === "rich";
+  // Threads that arrive after the page loaded (an editor's add_comment over SSE) fade in once,
+  // 160ms opacity (item 1 §9, #96); a rail remount doesn't replay it (#87).
+  const shown = useRef<Set<string> | null>(null);
+  if (!shown.current) shown.current = new Set(threads.map((t) => t.id));
 
   // The rail stays open once opened, per session.
   const railKey = `grillado-rail-${session.id}`;
@@ -485,6 +490,10 @@ export function useComments(o: Opts) {
     ) : null;
   const railBody = (
     <Rail
+      isNew={(id) => !shown.current!.has(id)}
+      markShown={(id) => {
+        shown.current!.add(id);
+      }}
       activity={activityPanel}
       activityRunning={!!session.activity?.entries.some((e) => e.status === "running")}
       tab={railTab}
@@ -838,6 +847,8 @@ function Composer({
 type Act2 = (path: string, body?: unknown) => Promise<boolean>;
 
 function Rail(p: {
+  isNew: (id: string) => boolean;
+  markShown: (id: string) => void;
   activity: ReactNode;
   activityRunning: boolean;
   tab: "comments" | "activity";
@@ -938,7 +949,13 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
   const { t, md, list, agentName, activeId, hoverId, setActive, setHover, act, onReview, onShowDecision } = p;
   const A = (s: string) => fill(s, agentName);
   const [reply, setReply] = useState("");
+  // Only an editor's comment fades in (§9); threads you start appear as before.
+  const [fresh] = useState(() => p.isNew(t.id) && t.messages[0]?.by === "coder");
+  useEffect(() => {
+    p.markShown(t.id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const lost = !anchorOf(md, t);
+  const from = t.messages[0]?.by === "coder" ? ` from ${editorName(t.messages[0].client)}` : "";
   const row = statusRow(t, list);
   const replying = t.run?.kind === "reply" && t.run.state === "running";
   const replyFailed = t.run?.kind === "reply" && t.run.state === "error";
@@ -954,10 +971,10 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
   return (
     <section
       id={`th-${t.id}`}
-      className={`th${activeId === t.id || hoverId === t.id ? " on" : ""}`}
+      className={`th${activeId === t.id || hoverId === t.id ? " on" : ""}${fresh ? " in1" : ""}`}
       data-thread={t.id}
       tabIndex={-1}
-      aria-label={`Comment on ${sectionOf(md, t)}: “${plainQuote(t.quote).slice(0, 40)}”`}
+      aria-label={`Comment on ${sectionOf(md, t)}${from}: “${plainQuote(t.quote).slice(0, 40)}”`}
       onPointerEnter={() => setHover(t.id)}
       onPointerLeave={() => setHover(null)}
       onFocus={() => setActive(t.id)}

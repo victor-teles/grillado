@@ -6,6 +6,9 @@
 import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { shellQuote } from "../core/shell.ts";
+
+export { shellQuote };
 
 export interface McpLaunch {
   command: string;
@@ -16,8 +19,6 @@ export interface McpLaunch {
   line: string;
 }
 
-/** POSIX shell quoting for one word, as used in `line`. */
-export const shellQuote = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`);
 
 /** How this build of Grillado is run: npx (cache or a global install) or node with the checkout's cli.js. */
 function runner(cliFile: string, node: string): [string, string[]] {

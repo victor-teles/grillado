@@ -1,7 +1,7 @@
 // App chrome: header (desktop + mobile), steps, agent chip, theme, and small shared hooks.
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { IDown, IMore, IMoon, IPlate, IPower, ISun, ISwap, Mark } from "./icons";
+import { IDown, IMore, IMoon, IPlate, IPlug, IPower, ISun, ISwap, Mark } from "./icons";
 import type { ProviderView } from "./types";
 import { monogram } from "./copy";
 export { monogram };
@@ -108,6 +108,11 @@ export interface HeaderProps {
   onQuit?: () => void;
   theme: Theme;
   onTheme: () => void;
+  /** Desktop: a button before More (Home's "Use in your editor", v1.2 item 1). */
+  extra?: ReactNode;
+  /** Phones: "Use in your editor…" in the More sheet (item 1 §3). Not on desktop (Q5). */
+  onEditor?: () => void;
+  moreRef?: RefObject<HTMLButtonElement | null>;
 }
 
 /** One 52px row (48 on phones): mark + session title · stages · agent + ⋯. */
@@ -148,6 +153,7 @@ export function Header(p: HeaderProps) {
       {p.step !== undefined && !mobile ? <Steps step={p.step} /> : <span />}
       <div className="top-r">
         {p.provider && !mobile ? <AgentChip provider={p.provider} onSwitch={p.onSwitch} /> : null}
+        {mobile ? null : p.extra}
         <HeaderMenu {...p} mobile={mobile} />
       </div>
     </header>
@@ -155,14 +161,26 @@ export function Header(p: HeaderProps) {
 }
 
 function HeaderMenu(p: HeaderProps & { mobile: boolean }) {
+  // "Use in your editor…" opens its sheet only once the menu has handed focus back,
+  // so the menu's focus trap can't pull focus off the sheet's tab.
+  const editorNext = useRef(false);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="icon-btn" aria-label="More">
+        <button ref={p.moreRef} type="button" className="icon-btn" aria-label="More">
           <IMore />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-56 motion-reduce:animate-none">
+      <DropdownMenuContent
+        align="end"
+        className="min-w-56 motion-reduce:animate-none"
+        onCloseAutoFocus={(e) => {
+          if (!editorNext.current) return;
+          editorNext.current = false;
+          e.preventDefault();
+          p.onEditor?.();
+        }}
+      >
         {p.provider ? (
           <>
             <DropdownMenuLabel className="text-[12px] font-normal text-muted-foreground">
@@ -177,6 +195,12 @@ function HeaderMenu(p: HeaderProps & { mobile: boolean }) {
           {p.theme === "dark" ? <ISun s={14} /> : <IMoon s={14} />}
           {p.theme === "dark" ? "Light theme" : "Dark theme"}
         </DropdownMenuItem>
+        {p.mobile && p.onEditor ? (
+          <DropdownMenuItem onSelect={() => (editorNext.current = true)}>
+            <IPlug s={14} />
+            Use in your editor…
+          </DropdownMenuItem>
+        ) : null}
         {p.onSwitch ? (
           <DropdownMenuItem onSelect={p.onSwitch}>
             <ISwap s={14} />
