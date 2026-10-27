@@ -1,6 +1,6 @@
 // Item 3, DOM-free: where threads and suggestions sit in the current text, and what each
 // thread's status row says. Unit-tested in test/comments-ui.test.ts.
-import { locate, plainQuote, sectionAt } from "../../../../src/core/comments.ts";
+import { findSuggestion, minimal, plainQuote, refind, threadSection } from "../../../../src/core/comments.ts";
 import type { CommentThread, Suggestion } from "../types.ts";
 import { editorName } from "../../../../src/core/editor.ts";
 
@@ -47,18 +47,7 @@ export interface Placed {
   block?: boolean;
 }
 
-/** Trim what a suggestion keeps on both sides, so a pure addition shows as an insertion only. */
-export function minimal(before: string, after: string): { p: number; del: string; ins: string } {
-  const w = (c: string | undefined) => !!c && /\w/.test(c);
-  let p = 0;
-  while (p < before.length && p < after.length && before[p] === after[p]) p++;
-  // A change that starts inside a word shows the whole word: "flow" → "flows", not "s".
-  while (p > 0 && w(before[p - 1]) && (w(before[p]) || w(after[p]))) p--;
-  let q = 0;
-  while (q < before.length - p && q < after.length - p && before[before.length - 1 - q] === after[after.length - 1 - q]) q++;
-  while (q > 0 && w(before[before.length - q]) && (w(before[before.length - q - 1]) || w(after[after.length - q - 1]))) q--;
-  return { p, del: before.slice(p, before.length - q), ins: after.slice(p, after.length - q) };
-}
+export { minimal };
 
 /** Pending suggestions placed in `md` (document order); ones whose text is gone are left out. */
 export function place(md: string, list: Suggestion[]): Placed[] {
@@ -66,11 +55,11 @@ export function place(md: string, list: Suggestion[]): Placed[] {
   for (const s of list) {
     if (s.status !== "pending") continue;
     if (s.kind === "diagram") {
-      const at = locate(md, s.before, s.at, false);
+      const at = findSuggestion(md, s, s.before);
       if (at >= 0) out.push({ s, start: at, end: at + s.before.length, after: s.after, block: true });
       continue;
     }
-    const at = locate(md, s.before, s.at, true);
+    const at = findSuggestion(md, s, s.before);
     if (at < 0) continue;
     const m = minimal(s.before, s.after);
     out.push({ s, start: at + m.p, end: at + m.p + m.del.length, after: m.ins });
@@ -78,13 +67,25 @@ export function place(md: string, list: Suggestion[]): Placed[] {
   return out.sort((a, b) => a.start - b.start);
 }
 
-/** Where a thread's quote is now, or null (the "text changed" state, §3.6). */
+/** Where a thread's quote is now, in its own section, or null (the "text changed" state, §3.6, #114). */
 export function anchorOf(md: string, t: CommentThread): { start: number; end: number } | null {
-  const at = locate(md, t.quote, t.at);
+  const at = refind(md, t);
   return at < 0 ? null : { start: at, end: at + t.quote.length };
 }
 
-export const sectionOf = (md: string, t: CommentThread) => sectionAt(md, anchorOf(md, t)?.start ?? t.at) || "the plan";
+/**
+ * While a single accept is held (#102) the text isn't written yet, so nothing re-finds: an anchor
+ * on its own thread's suggestion just takes in the insertion once the deletion has left (phase "ok"),
+ * which is where the write puts it. Nothing moves when the write lands.
+ */
+export function heldAnchor(r: { start: number; end: number } | null, t: CommentThread, placed: Placed[], phases: Record<string, string>): { start: number; end: number } | null {
+  if (!r) return r;
+  const p = placed.find((x) => x.s.threadId === t.id && phases[x.s.id] === "ok" && !x.block && (x.start === x.end ? x.start > r.start && x.start < r.end : x.start < r.end && x.end > r.start));
+  return p ? { start: Math.min(r.start, p.start), end: Math.max(r.end, p.end) } : r;
+}
+
+/** "On {section}": where the anchor is now, or the section it was made in once its text is gone. */
+export const sectionOf = (md: string, t: CommentThread) => threadSection(md, t) || "the plan";
 export { plainQuote };
 
 export type Row =

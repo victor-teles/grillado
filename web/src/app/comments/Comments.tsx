@@ -21,7 +21,7 @@ import { jumpTo } from "../editor/link";
 import type { CommentThread, SessionView, Suggestion } from "../types";
 import { SuggestionBlock } from "../diagrams/SuggestionBlock";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
-import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
+import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, heldAnchor, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
 import { hit, lineRoom, useDropOnResize } from "./spot";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -137,7 +137,7 @@ export function useComments(o: Opts) {
   const [phases, setPhases] = useState<Record<string, "out" | "ok" | "rej">>({});
   const allPlaced = useMemo(() => place(draft.text, list), [draft.text, list]);
   const placed = useMemo(() => allPlaced.filter((p) => !phases[p.s.id]), [allPlaced, phases]);
-  const anchors = useMemo(() => open.map((t) => ({ t, r: anchorOf(draft.text, t) })), [draft.text, open]);
+  const anchors = useMemo(() => open.map((t) => ({ t, r: heldAnchor(anchorOf(draft.text, t), t, allPlaced, phases) })), [draft.text, open, allPlaced, phases]);
   const focused = placed.find((p) => p.s.id === focusId) ?? null;
   const index = focused ? placed.indexOf(focused) : -1;
 
