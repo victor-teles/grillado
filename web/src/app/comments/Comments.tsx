@@ -22,6 +22,7 @@ import type { CommentThread, SessionView, Suggestion } from "../types";
 import { SuggestionBlock } from "../diagrams/SuggestionBlock";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
 import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
+import { hit, lineRoom } from "./spot";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = mac ? "⌘" : "Ctrl+";
@@ -895,35 +896,30 @@ function cssMs(name: string, fallback: number): number {
 
 /**
  * "✓ Accepted" (#102): absolutely placed so it never takes layout space, 8px after the end of the
- * accepted text's last line (the line's end, not the insertion's) when it fits the column, otherwise 16px past the column on that line
- * if the scroller has room for it there. Otherwise it isn't shown, and neither is it after a resize: it never makes the plan
- * scroll sideways and is never moved (#116). Hidden from the a11y tree: the review bar's live region says "Accepted · ⌘Z to undo".
+ * text on the accepted text's last line (the line's end, not the insertion's) when it fits the column
+ * and touches neither the block's Edit slot nor a cite (#119). Otherwise 16px past the column on
+ * that line, if the line has no cite and the scroller has room. Otherwise it isn't shown, and
+ * neither is it after a resize: it never makes the plan scroll sideways and is never moved (#116).
+ * Hidden from the a11y tree: the review bar's live region says "Accepted · ⌘Z to undo".
  */
 function OkMark({ id, bye, wrap, onDrop }: { id: string; bye: boolean; wrap: HTMLElement; onDrop: () => void }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
     const el = ref.current;
-    const ins = wrap.querySelector<HTMLElement>(`ins.sg[data-sg="${CSS.escape(id)}"]:last-of-type`) ?? [...wrap.querySelectorAll<HTMLElement>(`ins.sg[data-sg="${CSS.escape(id)}"]`)].pop();
-    const doc = wrap.querySelector<HTMLElement>(".doc");
-    if (!el || !ins || !doc) return;
-    const rs = ins.getClientRects();
-    const last = rs[rs.length - 1];
-    if (!last) return;
-    // The end of that line, not of the insertion: text after it on the same line stays readable.
-    const block = ins.closest("p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote") ?? ins.parentElement!;
-    const range = document.createRange();
-    range.selectNodeContents(block);
-    const mid = (last.top + last.bottom) / 2;
-    let end = last.right;
-    for (const r of range.getClientRects()) if (r.width > 1 && r.top <= mid && r.bottom >= mid) end = Math.max(end, r.right);
+    const ins = [...wrap.querySelectorAll<HTMLElement>(`ins.sg[data-sg="${CSS.escape(id)}"]`)].pop();
+    const L = ins && lineRoom(ins);
+    if (!el || !L) return;
     const w = wrap.getBoundingClientRect();
-    const d = doc.getBoundingClientRect();
-    const colRight = d.right - parseFloat(getComputedStyle(doc).paddingRight || "0");
+    const ow = el.offsetWidth;
+    const top = L.last.top + (L.last.height - el.offsetHeight) / 2;
+    const free = (x: number) => !hit({ left: x, right: x + ow, top, bottom: top + el.offsetHeight }, L.taken);
     const room = w.left + wrap.clientWidth - 8;
-    const x = end + 8 + el.offsetWidth <= colRight ? end + 8 : colRight + 16 + el.offsetWidth <= room ? colRight + 16 : null;
+    const inline = L.end + 8;
+    const margin = L.colRight + 16;
+    const x = inline + ow <= L.colRight && free(inline) ? inline : !L.cited && margin + ow <= room && free(margin) ? margin : null;
     if (x === null) return onDrop();
-    setPos({ left: x - w.left + wrap.scrollLeft, top: last.top + (last.height - el.offsetHeight) / 2 - w.top + wrap.scrollTop });
+    setPos({ left: x - w.left + wrap.scrollLeft, top: top - w.top + wrap.scrollTop });
   }, [id, wrap]); // eslint-disable-line react-hooks/exhaustive-deps
   // Measured once: if the plan's width changes during the hold, the mark goes rather than moves.
   useEffect(() => {

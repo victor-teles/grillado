@@ -480,6 +480,125 @@ try {
       await s3.stop();
     }
 
+    // ---------------------------------------------------------------- a cited line (#119)
+    // "Yes, one core flow" has the R1·1 cite in the margin and the block's Edit at its top right. The
+    // line end is the text's, so the mark lands 8px after it, touching neither; at 1100px a line
+    // with room still gets its mark.
+    for (const { width, near } of [{ width: 1440 }, { width: 1100 }, { width: 1440, near: true }]) {
+      const f4 = path.join(mkdtempSync(path.join(WORK, "e4-")), "after2.txt");
+      const s4 = await server({ FAKE_COMMENT: "swap", FAKE_COMMENT_DELAY_MS: "300", FAKE_EDIT2_FILE: f4 });
+      const tag = `${theme} ${width}px cited line${near ? " ending near Edit" : ""}`;
+      const c4 = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
+      await c4.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const p4 = await c4.newPage();
+      await holdTransitions(p4);
+      await p4.goto(s4.url);
+      await p4.getByRole("radio", { name: /Claude Code/ }).click();
+      await p4.getByRole("button", { name: /Continue/ }).click();
+      await p4.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
+      await p4.keyboard.press("Enter");
+      await p4.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
+      await p4.getByRole("button", { name: /Send round/ }).click();
+      await p4.getByText("Keep data local first?").waitFor({ timeout: 15000 });
+      await p4.getByRole("button", { name: /Send round/ }).click();
+      await p4.getByRole("button", { name: /Yes, plate it/ }).click({ timeout: 15000 });
+      await p4.getByTestId("plan").waitFor({ timeout: 15000 });
+      await selectText(p4, "Shared shopping list");
+      await p4.getByRole("toolbar", { name: "Selection" }).waitFor();
+      await p4.keyboard.press("Control+Alt+KeyM");
+      await p4.getByRole("dialog", { name: "New comment" }).getByRole("textbox").fill("Say who shares it");
+      await p4.keyboard.press("Control+Enter");
+      const rail4 = p4.getByRole("complementary", { name: "Comments" });
+      await rail4.getByText(/^Good catch\./).waitFor({ timeout: 15000 });
+      if (near) {
+        // Fill the line out to end 20–60px short of Edit: the mark would touch it, and with a cite on
+        // the line there's no margin fallback, so there's no mark.
+        const fill = await p4.evaluate(() => {
+          const w = document.createTreeWalker(document.querySelector("[data-testid=plan]"), NodeFilter.SHOW_TEXT);
+          let n = w.nextNode();
+          while (n && !n.data.includes("Yes, one core flow")) n = w.nextNode();
+          const edit = n.parentElement.closest(".blk").querySelector(":scope > .blk-act").getBoundingClientRect();
+          const span = document.createElement("span");
+          n.parentNode.insertBefore(span, n.nextSibling);
+          const words = "shipped first so everyone at home can try it on their own phones this week and tell us what is missing".split(" ");
+          let best = { gap: Infinity, text: "" };
+          for (let i = 1; i <= words.length; i++) {
+            span.textContent = `, ${words.slice(0, i).join(" ")}`;
+            const r = [...span.getClientRects()].filter((x) => x.width > 0);
+            const g = edit.left - r.at(-1).right;
+            if (r.length === 1 && g >= 8 && g < 72 && Math.abs(g - 40) < Math.abs(best.gap - 40)) best = { gap: g, text: span.textContent };
+          }
+          span.remove();
+          return best;
+        });
+        writeFileSync(f4, `Yes, one core flow${fill.text}`);
+        check(`${tag}: the line ends ${Math.round(fill.gap)}px short of Edit`, fill.gap < 72, JSON.stringify(fill));
+      }
+      await rail4.getByRole("button", { name: "Apply feedback" }).click();
+      await rail4.getByText(/suggestions? ready/).waitFor({ timeout: 15000 });
+      const ids4 = await p4.evaluate(() => [...new Set([...document.querySelectorAll("[data-sg]")].map((e) => e.getAttribute("data-sg")))]);
+      await p4.locator("[data-testid=plan]").focus();
+      for (let i = 0; i < 4 && !(await p4.evaluate((id) => !!document.querySelector(`.f[data-sg="${id}"]`), ids4[1])); i++) await p4.keyboard.press("Alt+ArrowDown");
+      // A click on the pill's Accept: the pointer is then on the block, so its Edit and cite show.
+      await pointer(p4);
+      await p4.locator(".ipill").getByRole("button", { name: /^Accept/ }).first().click();
+      if (near) {
+        await p4.getByText(/^Accepted · /).waitFor({ timeout: 3000 });
+        await p4.waitForTimeout(300);
+        check(`${tag}: no mark (it would touch Edit, and a cited line has no margin)`, (await p4.locator(".okm").count()) === 0);
+        check(`${tag}: …the bar still says Accepted`, /Accepted · /.test(await p4.locator(".review").textContent()));
+        await p4.evaluate(() => window.__release());
+        await c4.close();
+        await s4.stop();
+        continue;
+      }
+      await p4.locator(".okm").waitFor({ state: "attached", timeout: 3000 });
+      // The pill is gone from under the pointer; a nudge has the page see what it is on now.
+      const at = await p4.evaluate(() => {
+        const li = [...document.querySelectorAll("[data-testid=plan] li")].find((e) => e.textContent.includes("Yes, one core flow"));
+        const r = li.querySelector(".ps").getBoundingClientRect();
+        return { x: r.left + 20, y: (r.top + r.bottom) / 2 };
+      });
+      await p4.mouse.move(at.x, at.y, { steps: 2 });
+      await p4.waitForTimeout(250);
+      const g = await p4.evaluate(() => {
+        const ok = document.querySelector(".okm");
+        const li = [...document.querySelectorAll("[data-testid=plan] li")].find((e) => e.textContent.includes("Yes, one core flow"));
+        // The accepted text (by now written, so plain text in the passage).
+        const ins = [...li.querySelectorAll("ins.sg")].pop() ?? li.querySelector(".ps");
+        const l = [...ins.getClientRects()].filter((r) => r.width > 0).pop();
+        const mid = (l.top + l.bottom) / 2;
+        // The text's own end on that line, counting no control.
+        let end = l.right;
+        const w = document.createTreeWalker(li, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode(); n; n = w.nextNode()) {
+          if (!n.data.trim() || n.parentElement.closest(".gut, .blk-act, .ipill, .okm, .sr-only")) continue;
+          const rg = document.createRange();
+          rg.selectNodeContents(n);
+          for (const r of rg.getClientRects()) if (r.width > 1 && r.top <= mid && r.bottom >= mid) end = Math.max(end, r.right);
+        }
+        const box = (e) => {
+          const r = e.getBoundingClientRect();
+          return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), op: getComputedStyle(e).opacity };
+        };
+        const blk = li.closest(".blk");
+        const m = ok && ok.style.visibility !== "hidden" ? box(ok) : null;
+        const taken = [...blk.querySelectorAll(":scope > .blk-act, .gut-cite")].map(box);
+        const touch = m ? taken.filter((t) => m.l < t.r && m.r > t.l && m.t < t.b && m.b > t.t) : [];
+        return { mark: m, end, taken, touch, cites: blk.querySelectorAll(".gut-cite").length, hover: blk.matches(":hover") };
+      });
+      check(`${tag}: the pointer is on the block, its cite and its Edit showing`, g.hover && g.cites > 0 && g.taken.length > g.cites && g.taken.every((t) => t.op === "1"), JSON.stringify(g.taken));
+      check(`${tag}: the mark is 8px after the text's end`, !!g.mark && Math.abs(g.mark.l - (g.end + 8)) <= 1, JSON.stringify({ mark: g.mark, end: g.end }));
+      check(`${tag}: …touching neither the cite nor Edit`, !!g.mark && g.touch.length === 0, JSON.stringify(g.touch));
+      if (SHOTS && width === 1440) {
+        await p4.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
+        await p4.screenshot({ path: path.join(SHOTS, `d-acc-cited-r2-${theme}.png`) });
+      }
+      await p4.evaluate(() => window.__release());
+      await c4.close();
+      await s4.stop();
+    }
+
     // ---------------------------------------------------------------- phone: today's behaviour
     const s2 = await server({ FAKE_COMMENT: "swap", FAKE_COMMENT_DELAY_MS: "300" });
     const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: "no-preference" });
