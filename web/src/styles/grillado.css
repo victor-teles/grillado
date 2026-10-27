@@ -390,6 +390,12 @@ button:disabled{cursor:default}
 @media (hover:hover) and (min-width:768px){.doc .blk>.blk-slot{display:block;float:right;width:64px;height:24px;pointer-events:none}}
 .blk-act:focus-visible{outline:none}
 .blk:has(>.blk-act:focus-visible){background:var(--sel);box-shadow:0 0 0 2px var(--ring);border-radius:8px}
+/* #117 follow-up: a code block's Edit sits inside the fence's padding (pre is 16px down and 8px in
+   from the block box), and its focus ring is drawn inside the fence, so neither crosses its top edge. */
+.doc .blk[data-block=fence]:has(>pre)>.blk-act{top:22px;right:16px;background:var(--sel)}
+.doc .blk[data-block=fence]:has(>pre):has(>.blk-act:focus-visible){background:none;box-shadow:none}
+.doc .blk[data-block=fence]:has(>pre):has(>.blk-act:focus-visible)>pre{box-shadow:inset 0 0 0 2px var(--ring)}
+.doc .blk[data-block=fence]>.blk-act:focus-visible{box-shadow:0 0 0 2px var(--ring)}
 .doc .blk[data-editing]{display:grid;gap:12px}
 .doc .blk[data-editing]:has(>.blk-edit.h2){margin-top:32px}
 .blk-edit{display:block;width:calc(100% + 20px);margin:-6px -10px;box-sizing:border-box;resize:none;border:0;border-radius:8px;background:var(--sel);color:var(--foreground);padding:6px 10px;font:400 15px/24px var(--sans);box-shadow:0 0 0 2px var(--ring);overflow:hidden;outline:none}
@@ -419,7 +425,8 @@ button:disabled{cursor:default}
 .gut-cite{display:flex;align-items:center;gap:6px;max-width:220px;height:18px;border:0;background:none;padding:0 4px;border-radius:5px;font:400 var(--t-meta)/16px var(--sans);color:var(--subtle-foreground);opacity:0;white-space:nowrap;transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-base) var(--ease-out)}
 .gut-cite .an{color:var(--foreground);font-weight:500;overflow:hidden;text-overflow:ellipsis}
 .gut-cite .ar{color:var(--muted-foreground)}
-.blk:hover .gut-cite,.gut-cite:focus-visible,.gut-cite.on,.gut-i:has(.peekcard) .gut-cite{opacity:1}
+.blk:hover .gut-cite,.blk:focus-within .gut-cite,.gut-cite:focus-visible,.gut-cite.on,.gut-i:has(.peekcard) .gut-cite{opacity:1}
+/* #121: keyboard focus anywhere in a block shows all its cites, as hover does. */
 .gut-cite.on{color:var(--foreground);background:color-mix(in oklab,var(--primary) var(--link-a),transparent);transition-duration:var(--d-link-in)}
 .gut-cite.st{color:var(--muted-foreground)}
 .peekcard{position:absolute;top:100%;left:0;margin-top:6px;height:auto;min-height:0;align-content:start;z-index:5;width:300px;box-sizing:border-box;padding:12px 14px;border-radius:12px;background:var(--popover);color:var(--popover-foreground);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);display:grid;white-space:normal;font-size:var(--t-body);line-height:20px;cursor:default}
@@ -711,6 +718,7 @@ html[data-kbd] :is(del.sg.out,ins.sg.out,ins.sg.ok,.okm){transition:none}
 ins.sg.hov{background:color-mix(in oklab,var(--success) calc(var(--sg-a) + 5%),transparent)}
 .ipill.hp{position:absolute;z-index:3;margin:0;transition:opacity var(--d-press) var(--ease-out)}
 .ipill.hp .btn.rj{color:var(--muted-foreground)}
+@media (hover:hover){.ipill.hp .btn.rj:hover{color:var(--foreground)}}
 @starting-style{.ipill.hp{opacity:0}}
 html[data-kbd] .ipill.hp{transition:none}
 /* rail */
@@ -760,6 +768,34 @@ html[data-kbd] .ipill.hp{transition:none}
 .review .note b{color:var(--foreground);font-weight:500}
 .toast svg{color:var(--success-ink)}
 .toast .btn{height:30px}
+/* v1.2 polish §2: a comment's toast (deleted, resolved, link copied) has a muted icon. */
+.toast.nt svg{color:var(--muted-foreground)}
+.csheet>.toast{z-index:2}
+.toast .btn .kb{margin-left:6px}
+/* The thread ⋯ (#98): after Resolve; a menu on desktop, an action sheet on phones. Instant. */
+.th .ia{display:inline-flex;align-items:center;gap:2px}
+.th .ia .more{width:28px;height:28px;border-radius:8px}
+.csheet .th .ia .more{width:44px;height:44px;border-radius:12px}
+.pmenu.tmenu{width:200px;min-width:0;padding:4px;border-radius:12px;border:0;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);animation:none!important}
+.tmenu .mi{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;font-size:var(--t-body);line-height:20px;color:var(--foreground)}
+.tmenu .mi svg{width:16px;height:16px;color:var(--muted-foreground)}
+.tmenu .mi[data-highlighted]{background:var(--accent);color:var(--foreground)}
+.tmenu .mi.del,.tmenu .mi.del svg,.tmenu .mi.del[data-highlighted]{color:var(--destructive-ink)}
+.tmenu .msep{height:1px;background:var(--hair);margin:4px 6px}
+.pscrim{position:fixed;inset:0;z-index:60;background:oklch(0 0 0/.45)}
+.psheet{position:fixed;left:0;right:0;bottom:0;z-index:61;border-radius:16px 16px 0 0;background:var(--popover);padding:6px 8px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -1px 0 var(--hair),0 -12px 32px -12px rgb(0 0 0/.5);touch-action:none}
+.psheet .grab{width:36px;height:4px;border-radius:2px;background:var(--border-strong);margin:4px auto 8px}
+.psheet .mt{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);padding:4px 12px 8px}
+.psheet .mi{display:flex;align-items:center;gap:12px;width:100%;height:48px;padding:0 12px;border:0;border-radius:10px;background:none;font:400 16px/22px var(--sans);color:var(--foreground);text-align:left}
+.psheet .mi svg{width:20px;height:20px;color:var(--muted-foreground)}
+.psheet .mi:active{background:var(--accent)}
+.psheet .mi.del,.psheet .mi.del svg{color:var(--destructive-ink)}
+.psheet,.pscrim{transition:opacity var(--d-quick) var(--ease-out)}
+@starting-style{.psheet,.pscrim{opacity:0}}
+/* A link to a comment that was deleted (#100). */
+.rgone{display:flex;align-items:center;gap:6px;margin:12px 20px 0;padding:8px 12px;border-radius:10px;background:var(--muted);color:var(--muted-foreground);font-size:var(--t-meta);line-height:16px}
+.rempty .rgone{margin:0 0 16px}
+.th.res .one .ia{flex:none}
 /* One blue per screen: composer Comment → Accept all → Apply feedback → Copy Markdown. */
 .planv[data-composing] .review .btn.primary,.planv[data-composing] .th .apply,.planv[data-composing] .copy-md,
 .planv[data-reviewing] .th .apply,.planv[data-reviewing] .copy-md,

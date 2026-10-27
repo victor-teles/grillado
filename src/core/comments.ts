@@ -83,6 +83,16 @@ export interface CommentState {
   reviewUndo?: ReviewUndo;
   /** The latest "Add diagrams" run (item 5). */
   diagramRun?: import("./diagrams.ts").DiagramRun;
+  /** Threads deleted here (#99): another process's copy of the session never brings them back. */
+  deletedThreads?: string[];
+  /** The last deleted thread, for its Undo (#99): where it was, and the pending suggestions that went with it. */
+  threadUndo?: ThreadUndo;
+}
+
+export interface ThreadUndo {
+  thread: CommentThread;
+  index: number;
+  suggestions: Suggestion[];
 }
 
 export const MAX_COMMENT = 2000;
@@ -270,7 +280,7 @@ export function addCoderComment(s: CommentState & { plan?: { markdown: string } 
 
 /** Threads in `other` that `s` doesn't have yet (written by another process) are added to `s`. Returns how many. */
 export function adoptThreads(s: CommentState, other: CommentState): number {
-  const have = new Set((s.comments ?? []).map((t) => t.id));
+  const have = new Set([...(s.comments ?? []).map((t) => t.id), ...(s.deletedThreads ?? []), ...(other.deletedThreads ?? [])]);
   const extra = (other.comments ?? []).filter((t) => !have.has(t.id));
   if (extra.length) s.comments = [...(s.comments ?? []), ...extra];
   return extra.length;
@@ -287,6 +297,33 @@ export function addMessage(s: CommentState, threadId: string, by: CommentMessage
 
 export function resolveThread(s: CommentState, threadId: string, resolved: boolean): void {
   thread(s, threadId).resolved = resolved;
+}
+
+/**
+ * Delete a thread (#99): no confirm, so it can be undone. The thread, its replies and its pending
+ * suggestions go; accepted and rejected records stay (they're history, and Undo of a review needs them).
+ */
+export function deleteThread(s: CommentState, threadId: string): void {
+  const t = thread(s, threadId);
+  const index = s.comments!.indexOf(t);
+  const mine = (x: Suggestion) => x.threadId === t.id && x.status === "pending";
+  s.threadUndo = { thread: t, index, suggestions: (s.suggestions ?? []).filter(mine) };
+  s.comments = s.comments!.filter((x) => x !== t);
+  s.suggestions = (s.suggestions ?? []).filter((x) => !mine(x));
+  s.deletedThreads = [...(s.deletedThreads ?? []).filter((id) => id !== t.id), t.id];
+}
+
+/** Undo the last delete: the thread comes back where it was, with its replies and suggestions. */
+export function restoreThread(s: CommentState, threadId: string): CommentThread {
+  const u = s.threadUndo;
+  if (!u || u.thread.id !== threadId) throw new Error("Nothing to undo.");
+  const list = [...(s.comments ?? [])];
+  list.splice(Math.min(u.index, list.length), 0, u.thread);
+  s.comments = list;
+  s.suggestions = [...(s.suggestions ?? []), ...u.suggestions];
+  s.deletedThreads = (s.deletedThreads ?? []).filter((id) => id !== threadId);
+  delete s.threadUndo;
+  return u.thread;
 }
 
 export function startRun(s: CommentState, threadId: string, kind: CommentRun["kind"]): CommentThread {

@@ -33,6 +33,17 @@ export const CCOPY = {
   rtfHint: "Switch to Rich to comment",
   /** After the editor's name on a comment sent over `grillado mcp` (v1.2 item 1 §9, DECISIONS #107). */
   fromEditor: "from your editor",
+  /** The thread ⋯ menu (v1.2 polish §2, DECISIONS #98–101). */
+  more: (anchor: string) => `More actions for comment on “${anchor}”`,
+  sheetTitle: (anchor: string) => `Comment on “${anchor}”`,
+  copyLink: "Copy link to comment",
+  del: "Delete",
+  deleted: "Comment deleted",
+  restored: "Comment restored",
+  copied: "Link to comment copied",
+  noClipboard: (url: string) => `Couldn’t reach the clipboard. The link is ${url}`,
+  resolvedToast: "Comment resolved",
+  gone: "That comment was deleted",
 };
 
 /** Who wrote a thread message, as the rail labels it. */

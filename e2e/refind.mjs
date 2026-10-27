@@ -249,11 +249,18 @@ try {
     const t2 = (await th.textContent()).replace(/\s+/g, " ");
     check(`${theme} detached: the thread says the text changed, still On “Problem”, with its quote`, t2.includes(LOST) && /On [“"]Problem[”"]/.test(t2) && t2.includes("“Shared shopping list”"), t2.slice(0, 200));
     const look = await th.evaluate((e) => {
+      const linkOff = (line) => {
+        const svg = line.querySelector(":scope > svg");
+        const d = [...(svg?.querySelectorAll("path") ?? [])].map((x) => x.getAttribute("d"));
+        // Lucide "unlink": two broken chain halves and four short ticks; IMsg is one speech-bubble path.
+        return { ok: !!svg && svg.classList.contains("i-linkoff") && d.length === 3 && d[0].startsWith("m18.84") && d[2] === "M8 2v3M2 8h3M16 19v3M19 16h3", d };
+      };
       const p = [...e.querySelectorAll("*")].find((x) => x.childNodes.length && [...x.childNodes].some((n) => n.nodeType === 3 && n.data.includes("The text this was on changed")));
       const cs = getComputedStyle(p);
-      return { size: cs.fontSize, colour: cs.color, muted: getComputedStyle(document.documentElement).getPropertyValue("--muted-foreground"), icon: !!p.closest("*").parentElement.querySelector("svg") };
+      return { size: cs.fontSize, colour: cs.color, muted: getComputedStyle(document.documentElement).getPropertyValue("--muted-foreground"), glyph: linkOff(p) };
     });
-    check(`${theme} detached: the line is the item 3 lost state (12px, muted, link-off icon)`, look.size === "12px" && look.icon, JSON.stringify(look));
+    check(`${theme} detached: the line is the item 3 lost state (12px, muted)`, look.size === "12px", JSON.stringify(look));
+    check(`${theme} detached: its icon is link-off (item 3 §3.6), not the message bubble`, look.glyph.ok, JSON.stringify(look.glyph));
     await snap("d-detached");
     await axe(pg, `${theme} desktop: detached`);
     await ctx.close();
@@ -304,6 +311,12 @@ try {
     await msheet.getByText(LOST).waitFor({ timeout: 5000 });
     const mt = (await msheet.textContent()).replace(/\s+/g, " ");
     check(`${theme} phone detached: the sheet says the text changed, On “Problem”, and the title has no anchor`, mt.includes(LOST) && /On [“"]Problem[”"]/.test(mt) && (await mp.locator("[data-testid=plan] h1 mark.cmk").count()) === 0, mt.slice(0, 200));
+    const mg = await msheet.locator(".th .lost").evaluate((p) => {
+      const svg = p.querySelector(":scope > svg");
+      const d = [...(svg?.querySelectorAll("path") ?? [])].map((x) => x.getAttribute("d"));
+      return { ok: !!svg && svg.classList.contains("i-linkoff") && d.length === 3 && d[0].startsWith("m18.84"), d };
+    });
+    check(`${theme} phone detached: the icon is link-off`, mg.ok, JSON.stringify(mg));
     await msnap("m-detached");
     await axe(mp, `${theme} phone: detached`);
     await mctx.close();

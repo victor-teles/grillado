@@ -189,6 +189,26 @@ export function Mark({ size = 15 }: { size?: number }) {
 }
 /** Plug: "Use in your editor" (v1.2 item 1). */
 export const IPlug = mk(<path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5" />);
+export const ILink = mk(
+  <>
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </>,
+);
+/** Lucide "unlink": a comment whose text changed (item 3 §3.6). */
+export const ILinkOff = mk(
+  <>
+    <path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71" />
+    <path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71" />
+    <path d="M8 2v3M2 8h3M16 19v3M19 16h3" />
+  </>,
+);
+export const ITrash = mk(
+  <>
+    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <path d="M10 11v6M14 11v6" />
+  </>,
+);
 export const IMsg = mk(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />);
 export const IUser = mk(
   <>

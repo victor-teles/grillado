@@ -6,7 +6,7 @@ import path from "node:path";
 import { nextRound, replyToComment, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
-import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, finishRun, pending, pruneSuggestions, refind, resolveThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
+import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, deleteThread, finishRun, pending, pruneSuggestions, refind, resolveThread, restoreThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
@@ -660,6 +660,11 @@ export class GrilladoServer {
       this.startComment(s, t.id, "reply"); // the agent replies to every comment (N2)
       return;
     }
+    if (op === "restore") {
+      restoreThread(s, threadId);
+      this.changed(s);
+      return;
+    }
     const t = (s.comments ?? []).find((c) => c.id === threadId);
     if (!t) throw new Error("That comment is gone.");
     switch (op) {
@@ -683,6 +688,12 @@ export class GrilladoServer {
         return;
       case "resolve":
         resolveThread(s, t.id, body?.resolved !== false);
+        this.changed(s);
+        return;
+      case "delete":
+        // A running reply or apply stops first (#99); it ends as "stopped" on the deleted thread.
+        this.commentRuns.get(t.id)?.abort();
+        deleteThread(s, t.id);
         this.changed(s);
         return;
       default:
