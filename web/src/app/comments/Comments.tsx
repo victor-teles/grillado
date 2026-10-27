@@ -22,13 +22,14 @@ import type { CommentThread, SessionView, Suggestion } from "../types";
 import { SuggestionBlock } from "../diagrams/SuggestionBlock";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
 import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
-import { hit, lineRoom } from "./spot";
+import { hit, lineRoom, useDropOnResize } from "./spot";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = mac ? "⌘" : "Ctrl+";
 const ALT = mac ? "⌥" : "Alt+";
 const SHIFT = mac ? "⇧" : "Shift+";
 const ENTER = mac ? "↵" : "Enter";
+const BKSP = mac ? "⌫" : "Backspace";
 const inField = (el: EventTarget | null) => el instanceof HTMLElement && !!el.closest("textarea, input, [contenteditable=true], .cm-editor");
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
@@ -303,6 +304,62 @@ export function useComments(o: Opts) {
     return true;
   };
 
+  // ---------- the hover pill (v1.1 polish #103) ----------
+  // A precise pointer that rests 120ms on a suggestion that isn't focused gets a compact floating
+  // "✓ Accept · Reject" for it. It hides 160ms after the pointer has left both the suggestion and
+  // the pill. Pointer only: keyboard, touch and screen readers have the focused pill and the bar.
+  const [hovId, setHovId] = useState<string | null>(null);
+  const hovT = useRef<{ show?: ReturnType<typeof setTimeout>; hide?: ReturnType<typeof setTimeout>; at?: string | null }>({});
+  const unhover = () => {
+    const h = hovT.current;
+    clearTimeout(h.show);
+    clearTimeout(h.hide);
+    h.at = null;
+    setHovId(null);
+  };
+  useEffect(() => {
+    const wrap = o.docRef.current;
+    if (!wrap || mobile || !docMode) return;
+    const fine = matchMedia("(hover:hover) and (pointer:fine)");
+    const T = hovT.current;
+    // What the pointer is over: a suggestion's id, the pill (keeps whatever it's for), or nothing.
+    const over = (t: EventTarget | null): string | null | "pill" => {
+      const el = t instanceof Element ? t : null;
+      if (el?.closest(".ipill.hp")) return "pill";
+      return el?.closest<HTMLElement>("ins.sg[data-sg], del.sg[data-sg]")?.dataset.sg ?? null;
+    };
+    const move = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse" || !fine.matches) return;
+      const at = over(e.target);
+      const h = hovT.current;
+      if (at === "pill") return void clearTimeout(h.hide);
+      if (at === h.at) return;
+      h.at = at;
+      clearTimeout(h.show);
+      if (at) {
+        clearTimeout(h.hide);
+        h.show = setTimeout(() => setHovId(at), 120);
+      } else h.hide = setTimeout(() => setHovId(null), 160);
+    };
+    const leave = () => {
+      const h = hovT.current;
+      h.at = null;
+      clearTimeout(h.show);
+      clearTimeout(h.hide);
+      h.hide = setTimeout(() => setHovId(null), 160);
+    };
+    wrap.addEventListener("pointerover", move);
+    wrap.addEventListener("pointerleave", leave);
+    return () => {
+      wrap.removeEventListener("pointerover", move);
+      wrap.removeEventListener("pointerleave", leave);
+      clearTimeout(T.show);
+      clearTimeout(T.hide);
+    };
+  }, [o.docRef, mobile, docMode]);
+  // Only for a pending, unfocused, inline suggestion: the focused one has its full pill already.
+  const hovered = hovId && hovId !== focusId && !phases[hovId] && placed.some((p) => p.s.id === hovId && !p.block) ? hovId : null;
+
   // ---------- review ----------
   const review = async (op: "accept" | "reject" | "undo", ids?: string[] | "all", code?: string) => {
     if (op === "undo") {
@@ -498,12 +555,12 @@ export function useComments(o: Opts) {
             ...anchors.filter((x) => x.r).map(({ t, r }) => ({ id: t.id, start: r!.start, end: r!.end, active: activeId === t.id || hoverId === t.id, label: `Comment: ${t.messages[0]?.text.slice(0, 80) ?? ""}`, details: railShown ? `th-${t.id}` : undefined })),
             ...(composing ? [{ id: "new", start: composing.at, end: composing.end, active: true, label: "New comment" }] : []),
           ],
-          edits: allPlaced.filter((p) => !p.block).map((p) => ({ id: p.s.id, start: p.start, end: p.end, after: p.after, focused: p.s.id === focusId && !phases[p.s.id], phase: phases[p.s.id] })),
+          edits: allPlaced.filter((p) => !p.block).map((p) => ({ id: p.s.id, start: p.start, end: p.end, after: p.after, focused: p.s.id === focusId && !phases[p.s.id], phase: phases[p.s.id], hov: p.s.id === hovered })),
           inserts: [...placed.filter((p) => p.block && !p.s.replace).map((p) => ({ key: p.s.id, at: p.end, node: sgBlock(p) })), ...(o.inserts ?? [])],
           replaces: placed.filter((p) => p.block && p.s.replace).map((p) => ({ start: p.start, node: sgBlock(p) })),
           onAnchor: (id) => id !== "new" && openThread(id),
           onAnchorHover: setHover,
-          onEdit: (id) => setFocus(id),
+          onEdit: (id) => void (phases[id] ? null : setFocus(id)),
           pill: (id) =>
             mobile ? null : (
               <span className="ipill" role="group" aria-label={`Suggestion ${index + 1} of ${placed.length}`} contentEditable={false}>
@@ -512,11 +569,11 @@ export function useComments(o: Opts) {
                 </span>
                 <button type="button" className="btn quiet" aria-keyshortcuts="Meta+Enter" onClick={() => void review("accept", [id])}>
                   <ICheck s={14} />
-                  Accept
+                  Accept<span className="kb">{`${MOD}${ENTER}`}</span>
                 </button>
                 <button type="button" className="btn quiet" aria-keyshortcuts="Meta+Backspace" onClick={() => void review("reject", [id])}>
                   <IX s={14} />
-                  Reject
+                  Reject<span className="kb">{`${MOD}${BKSP}`}</span>
                 </button>
               </span>
             ),
@@ -795,6 +852,21 @@ export function useComments(o: Opts) {
     rawNote,
     overlay: (
       <>
+        {hovered && o.docRef.current
+          ? createPortal(
+              <HoverPill
+                key={hovered}
+                id={hovered}
+                wrap={o.docRef.current}
+                onAct={(op) => {
+                  unhover();
+                  void review(op, [hovered]);
+                }}
+                onDrop={unhover}
+              />,
+              o.docRef.current,
+            )
+          : null}
         {okMark && o.docRef.current ? createPortal(<OkMark key={okMark.id} id={okMark.id} bye={okMark.bye} wrap={o.docRef.current} onDrop={clearMark} />, o.docRef.current) : null}
         {toolbar}
         {composer}
@@ -851,16 +923,69 @@ function OkMark({ id, bye, wrap, onDrop }: { id: string; bye: boolean; wrap: HTM
     setPos({ left: x - w.left + wrap.scrollLeft, top: top - w.top + wrap.scrollTop });
   }, [id, wrap]); // eslint-disable-line react-hooks/exhaustive-deps
   // Measured once: if the plan's width changes during the hold, the mark goes rather than moves.
-  useEffect(() => {
-    let first = true;
-    const ro = new ResizeObserver(() => (first ? (first = false) : onDrop()));
-    ro.observe(wrap);
-    return () => ro.disconnect();
-  }, [wrap]); // eslint-disable-line react-hooks/exhaustive-deps
+  useDropOnResize(wrap, onDrop);
   return (
     <span ref={ref} className={`okm${bye ? " bye" : ""}`} aria-hidden="true" data-ok={id} style={pos ? { left: pos.left, top: pos.top } : { visibility: "hidden", left: 0, top: 0 }}>
       <ICheck s={14} />
       Accepted
+    </span>
+  );
+}
+
+/**
+ * The hover pill (#103): "✓ Accept · Reject" floating over the text, so nothing reflows under the
+ * pointer. 6px right of the end of the insertion's last line if it fits the column, otherwise 4px
+ * below that line, right-aligned to its end. Either spot keeps off the block's Edit and its cites
+ * (#119, measured as the ✓ Accepted mark is): an inline spot that touches one goes below, and a
+ * below spot that touches one moves left of it, else under it. Fades in over 120ms (@starting-style).
+ * A resize of the plan or a rail toggle drops it, as it does the mark. Not in the a11y tree, no Tab stops.
+ */
+function HoverPill({ id, wrap, onAct, onDrop }: { id: string; wrap: HTMLElement; onAct: (op: "accept" | "reject") => void; onDrop: () => void }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const q = `[data-sg="${CSS.escape(id)}"]`;
+    const end = [...wrap.querySelectorAll<HTMLElement>(`ins.sg${q}`)].pop() ?? [...wrap.querySelectorAll<HTMLElement>(`del.sg${q}`)].pop();
+    const L = end && lineRoom(end);
+    if (!el || !L) return;
+    const { last, colLeft, colRight, taken } = L;
+    const w = wrap.getBoundingClientRect();
+    const ow = el.offsetWidth;
+    const oh = el.offsetHeight;
+    const at = (x: number, y: number) => ({ left: x, right: x + ow, top: y, bottom: y + oh });
+    let x = last.right + 6;
+    let y = last.top + (last.height - oh) / 2;
+    if (x + ow > colRight || hit(at(x, y), taken)) {
+      x = Math.max(colLeft, last.right - ow);
+      y = last.bottom + 4;
+      for (let t = hit(at(x, y), taken), n = 0; t && n < 4; t = hit(at(x, y), taken), n++) {
+        if (t.left - 4 - ow >= colLeft) x = t.left - 4 - ow;
+        else y = t.bottom + 4;
+      }
+    }
+    setPos({ left: x - w.left + wrap.scrollLeft, top: y - w.top + wrap.scrollTop });
+  }, [id, wrap]);
+  // Placed once: if the plan's width changes (a resize, the rail opening or closing), it goes.
+  useDropOnResize(wrap, onDrop);
+  const btn = (op: "accept" | "reject") => ({
+    type: "button" as const,
+    tabIndex: -1,
+    onMouseDown: (e: { preventDefault: () => void }) => e.preventDefault(), // focus stays where it is
+    onClick: (e: { stopPropagation: () => void }) => {
+      e.stopPropagation();
+      onAct(op);
+    },
+  });
+  return (
+    <span ref={ref} className={`ipill hp${pos ? " in" : ""}`} aria-hidden="true" data-hp={id} style={pos ?? { visibility: "hidden", left: 0, top: 0 }}>
+      <button className="btn quiet" {...btn("accept")}>
+        <ICheck s={14} />
+        Accept
+      </button>
+      <button className="btn quiet rj" {...btn("reject")}>
+        Reject
+      </button>
     </span>
   );
 }

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 /**
  * Where something may float beside a line of plan text (#119). Shared by the ✓ Accepted mark (#102)
  * and the hover pill (#103), so both read the same line end and avoid the same controls.
@@ -61,3 +63,21 @@ export function lineRoom(el: Element): LineRoom | null {
 
 /** The first taken box that `b` touches, if any. */
 export const hit = (b: Box, taken: Box[]) => taken.find((t) => b.left < t.right && b.right > t.left && b.top < t.bottom && b.bottom > t.top);
+
+/**
+ * Something placed once beside the text goes, rather than moves, when the plan's width changes: a
+ * window resize or the rail opening or closing (#116). A height change (a scrollbar showing up) moves no text.
+ */
+export function useDropOnResize(wrap: HTMLElement, onDrop: () => void) {
+  const drop = useRef(onDrop);
+  drop.current = onDrop;
+  useEffect(() => {
+    let width = wrap.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (wrap.clientWidth !== width) drop.current();
+      width = wrap.clientWidth;
+    });
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [wrap]);
+}
