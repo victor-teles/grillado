@@ -4,12 +4,14 @@
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
 // leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
-// FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
+// FAKE_CTL (JSON env overrides, read per run), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const [name, ...args] = process.argv.slice(2);
+// FAKE_CTL: a JSON file of env overrides read at every run, so one e2e server can switch modes.
+if (process.env.FAKE_CTL && existsSync(process.env.FAKE_CTL)) Object.assign(process.env, JSON.parse(readFileSync(process.env.FAKE_CTL, "utf8") || "{}"));
 const mode = process.env.FAKE_MODE ?? "ok";
 const stateDir = process.env.FAKE_STATE_DIR ?? "/tmp";
 
