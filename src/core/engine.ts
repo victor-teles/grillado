@@ -4,7 +4,7 @@ import { extractCandidate } from "./extract.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
-import { type CommentThread, checkEdits, plainQuote, sectionAt } from "./comments.ts";
+import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
 import {
@@ -215,7 +215,7 @@ export function commentUserText(s: Session, t: CommentThread): string {
 /** The thread and the plan, for a reply or for "Apply feedback". The plan is data, not instructions. */
 export function buildCommentPrompt(s: Session, t: CommentThread, ask: "reply" | "edits", md = s.plan?.markdown ?? ""): string {
   const thread = {
-    section: sectionAt(md, t.at) || undefined,
+    section: threadSection(md, t) || undefined,
     quote: t.quote,
     messages: t.messages.map((m) => ({ by: m.by === "you" ? "user" : m.by === "coder" ? "user's coding agent" : "you", text: m.text })),
   };

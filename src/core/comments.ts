@@ -35,6 +35,12 @@ export interface CommentThread {
   quote: string;
   /** Where the quote was, as a hint when it appears more than once. */
   at: number;
+  /**
+   * The heading the quote was under when the comment was made ("" before the first heading). Re-finding
+   * stays inside that section: it never jumps to another one or to the title (#114). Older threads
+   * don't have it and use the section at `at`.
+   */
+  section?: string;
   createdAt: string;
   resolved?: boolean;
   messages: CommentMessage[];
@@ -60,14 +66,15 @@ export interface Suggestion {
   replace?: boolean;
   /** The activity-log run that wrote it (item 6), so its chip and its review link back. */
   run?: string;
+  /** A text suggestion: the heading its text was under when it was written. It's only ever looked for there (#114). */
+  under?: string;
 }
-
-/** Diagram suggestions are whole fences, so they are found with fences counted (prose = false). */
-const proseOf = (x: Pick<Suggestion, "kind">) => x.kind !== "diagram";
 
 export interface ReviewUndo {
   action: "accept" | "reject";
   items: Suggestion[];
+  /** Threads that followed an accepted suggestion onto its text (#114), as they were before. */
+  anchors?: { id: string; quote: string; at: number }[];
 }
 
 export interface CommentState {
@@ -121,6 +128,119 @@ export function locate(md: string, text: string, hint: number, prose = false): n
   return best;
 }
 
+/** The plan's sections: each heading (outside fences) to the next one, and the text before the first ("" title). */
+export function sectionSpans(md: string): { title: string; start: number; end: number }[] {
+  const fences = fenceRanges(md);
+  const heads: { title: string; start: number }[] = [];
+  for (const m of md.matchAll(/^#{1,6}\s+(.+)$/gm)) if (!fences.some(([a, b]) => m.index! >= a && m.index! < b)) heads.push({ title: m[1].trim(), start: m.index! });
+  const out = [{ title: "", start: 0, end: heads[0]?.start ?? md.length }];
+  heads.forEach((h, i) => out.push({ ...h, end: heads[i + 1]?.start ?? md.length }));
+  return out;
+}
+
+/** The heading a position is under, as `section` stores it. */
+export const headingAt = (md: string, at: number) => sectionSpans(md).findLast((x) => x.start <= at)?.title ?? "";
+
+/**
+ * The section a thread's quote is looked for in: the one with its heading nearest `at` (or around it).
+ * If that heading is gone (renamed), the section at `at` stands in for it.
+ */
+function spanOf(md: string, at: number, section: string | undefined) {
+  const spans = sectionSpans(md);
+  const here = spans.findLast((x) => x.start <= at) ?? spans[0];
+  if (section === undefined || here.title === section) return here;
+  const dist = (x: { start: number; end: number }) => (at < x.start ? x.start - at : at >= x.end ? at - x.end + 1 : 0);
+  return spans.filter((x) => x.title === section).sort((x, y) => dist(x) - dist(y))[0] ?? here;
+}
+
+/**
+ * Where a thread's quote is now (#114): the occurrence nearest its stored position inside its own
+ * section, or -1 (the "text changed" state). Never a match in another section or the title.
+ */
+export function refind(md: string, t: Pick<CommentThread, "quote" | "at" | "section">, prose = false): number {
+  if (!t.quote) return -1;
+  const sp = spanOf(md, t.at, t.section);
+  const fences = prose ? fenceRanges(md) : [];
+  let best = -1;
+  // A match starts in the section (a quote may run on past its end, across a heading).
+  for (let i = md.indexOf(t.quote, sp.start); i !== -1 && i < sp.end; i = md.indexOf(t.quote, i + 1)) {
+    if (fences.some(([a, b]) => i < b && i + t.quote.length > a)) continue;
+    if (best === -1 || Math.abs(i - t.at) < Math.abs(best - t.at)) best = i;
+  }
+  return best;
+}
+
+/**
+ * Where a suggestion's text (`before`, or `after` once accepted) is now. A text suggestion keeps to
+ * its section like a comment does: its passage gone, it no longer fits, rather than landing on the
+ * same words in the title (#114). A diagram is a whole fence and is found anywhere.
+ */
+export function findSuggestion(md: string, x: Suggestion, text: string): number {
+  return x.kind === "diagram" ? locate(md, text, x.at, false) : refind(md, { quote: text, at: x.at, section: x.under }, true);
+}
+
+/** The section a thread is "On": where its anchor is now, or the one it was made in once its text is gone. */
+export function threadSection(md: string, t: Pick<CommentThread, "quote" | "at" | "section">): string {
+  const at = refind(md, t);
+  return at >= 0 || t.section === undefined ? sectionAt(md, at >= 0 ? at : t.at) : plainQuote(t.section);
+}
+
+/** After the plan changed: each thread's position follows its quote, so the hint stays near it. */
+export function settleThreads(s: CommentState & { plan?: { markdown: string } }): void {
+  const md = s.plan?.markdown;
+  if (md === undefined) return;
+  for (const t of s.comments ?? []) {
+    const at = refind(md, t);
+    if (at >= 0) t.at = at;
+  }
+}
+
+/** Trim what a suggestion keeps on both sides, so a pure addition shows as an insertion only. */
+export function minimal(before: string, after: string): { p: number; del: string; ins: string } {
+  const w = (c: string | undefined) => !!c && /\w/.test(c);
+  let p = 0;
+  while (p < before.length && p < after.length && before[p] === after[p]) p++;
+  // A change that starts inside a word shows the whole word: "flow" → "flows", not "s".
+  while (p > 0 && w(before[p - 1]) && (w(before[p]) || w(after[p]))) p--;
+  let q = 0;
+  while (q < before.length - p && q < after.length - p && before[before.length - 1 - q] === after[after.length - 1 - q]) q++;
+  while (q > 0 && w(before[before.length - q]) && (w(before[before.length - q - 1]) || w(after[after.length - q - 1]))) q--;
+  return { p, del: before.slice(p, before.length - q), ins: after.slice(p, after.length - q) };
+}
+
+/**
+ * A thread's own suggestion (Apply feedback) that rewrites its quoted text and is accepted takes the
+ * comment with it (#114): the anchor becomes the quote's untouched words plus the inserted text, in
+ * the same section. `done` holds positions in `old`; `md` is the text after them all. Returns the
+ * threads as they were, for Undo. A suggestion that only deletes the quote leaves it "text changed".
+ */
+function followAccepted(s: CommentState, old: string, md: string, done: Suggestion[]): ReviewUndo["anchors"] {
+  const moved: NonNullable<ReviewUndo["anchors"]> = [];
+  const shift = (pos: number) => done.filter((y) => y.at + y.before.length <= pos).reduce((n, y) => n + y.after.length - y.before.length, 0);
+  for (const t of s.comments ?? []) {
+    const qs = refind(old, t);
+    if (qs < 0) continue;
+    const qe = qs + t.quote.length;
+    for (const x of done) {
+      if (x.threadId !== t.id || x.kind === "diagram") continue;
+      const m = minimal(x.before, x.after);
+      const cs = x.at + m.p;
+      const ce = cs + m.del.length;
+      const hits = cs === ce ? cs > qs && cs < qe : cs < qe && ce > qs;
+      if (!hits) continue;
+      const start = Math.min(qs, cs);
+      const from = start + shift(start);
+      const quote = md.slice(from, from + Math.max(qe, ce) - start + m.ins.length - m.del.length);
+      if (!quote.trim()) break;
+      moved.push({ id: t.id, quote: t.quote, at: t.at });
+      t.quote = quote;
+      t.at = from;
+      break;
+    }
+  }
+  return moved.length ? moved : undefined;
+}
+
 function thread(s: CommentState, id: string): CommentThread {
   const t = s.comments?.find((c) => c.id === id);
   if (!t) throw new Error("That comment is gone.");
@@ -135,7 +255,7 @@ export function addComment(s: CommentState & { plan?: { markdown: string } }, in
   if (!text) throw new Error("Write a comment first.");
   const at = locate(s.plan.markdown, quote, Number(input.at) || 0);
   if (at < 0) throw new Error("The text you selected isn't in the plan anymore.");
-  const t: CommentThread = { id: newId(), quote, at, createdAt: now(), messages: [{ id: newId(), by: "you", text: text.slice(0, MAX_COMMENT), at: now() }] };
+  const t: CommentThread = { id: newId(), quote, at, section: headingAt(s.plan.markdown, Math.max(0, at)), createdAt: now(), messages: [{ id: newId(), by: "you", text: text.slice(0, MAX_COMMENT), at: now() }] };
   s.comments = [...(s.comments ?? []), t];
   return t;
 }
@@ -246,7 +366,7 @@ export function addSuggestions(
   const placed = edits.map(normalizeEdit).map((e) => ({ e, at: locate(md, e.before, hint, true) }));
   const added: Suggestion[] = placed
     .filter((p) => p.at >= 0)
-    .map(({ e, at }) => ({ id: newId(), threadId, before: e.before, after: e.after, at, status: "pending" as const, ...(baseHash ? { baseHash } : {}) }));
+    .map(({ e, at }) => ({ id: newId(), threadId, before: e.before, after: e.after, at, under: headingAt(md, at), status: "pending" as const, ...(baseHash ? { baseHash } : {}) }));
   s.suggestions = [...(s.suggestions ?? []), ...added];
   return { added, dropped: placed.length - added.length };
 }
@@ -260,7 +380,7 @@ export function pruneSuggestions(s: CommentState & { plan?: { markdown: string }
   let n = 0;
   s.suggestions = (s.suggestions ?? []).filter((x) => {
     if (x.status !== "pending") return true;
-    const at = locate(md, x.before, x.at, proseOf(x));
+    const at = findSuggestion(md, x, x.before);
     if (at >= 0) {
       x.at = at;
       return true;
@@ -278,7 +398,7 @@ export function pruneSuggestions(s: CommentState & { plan?: { markdown: string }
 function applyAll(md: string, list: Suggestion[], dir: "forward" | "back"): { md: string; done: Suggestion[]; stale: Suggestion[] } {
   const found = list.map((x) => {
     const from = dir === "forward" ? x.before : x.after;
-    return { x, from, to: dir === "forward" ? x.after : x.before, i: locate(md, from, x.at, proseOf(x)) };
+    return { x, from, to: dir === "forward" ? x.after : x.before, i: findSuggestion(md, x, from) };
   });
   const stale = found.filter((f) => f.i < 0).map((f) => f.x);
   let out = md;
@@ -300,13 +420,15 @@ export function review(s: CommentState & { plan?: { markdown: string } }, action
     s.reviewUndo = { action, items: pick.map((x) => ({ ...x })) };
     return { done: pick.length, stale: 0 };
   }
-  const r = applyAll(s.plan.markdown, pick, "forward");
+  const old = s.plan.markdown;
+  const r = applyAll(old, pick, "forward");
   s.plan.markdown = r.md;
+  const anchors = followAccepted(s, old, r.md, r.done);
   const done = new Map(r.done.map((x) => [x.id, x]));
   const stale = new Set(r.stale.map((x) => x.id));
   // A suggestion whose text changed under it can't land any more: it's dropped, not forced in.
   s.suggestions = (s.suggestions ?? []).filter((x) => !stale.has(x.id)).map((x) => (done.has(x.id) ? { ...done.get(x.id)!, status: "accepted" as const } : x));
-  s.reviewUndo = r.done.length ? { action, items: r.done.map((x) => ({ ...x, status: "accepted" as const })) } : undefined;
+  s.reviewUndo = r.done.length ? { action, items: r.done.map((x) => ({ ...x, status: "accepted" as const })), ...(anchors ? { anchors } : {}) } : undefined;
   return { done: r.done.length, stale: r.stale.length };
 }
 
@@ -320,6 +442,11 @@ export function undoReview(s: CommentState & { plan?: { markdown: string } }): {
     const r = applyAll(s.plan.markdown, u.items, "back");
     s.plan.markdown = r.md;
     items = r.done;
+    // A comment that followed the accepted text goes back onto the text it was on.
+    for (const a of u.anchors ?? []) {
+      const t = s.comments?.find((c) => c.id === a.id);
+      if (t) Object.assign(t, { quote: a.quote, at: a.at });
+    }
   }
   const back = new Map(items.map((x) => [x.id, x]));
   s.suggestions = (s.suggestions ?? []).map((x) => (back.has(x.id) ? { ...back.get(x.id)!, status: "pending" as const } : x));

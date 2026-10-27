@@ -6,7 +6,7 @@ import path from "node:path";
 import { nextRound, replyToComment, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
-import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, sectionAt, startRun, undoReview } from "../core/comments.ts";
+import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, finishRun, pending, pruneSuggestions, refind, resolveThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
@@ -341,6 +341,8 @@ export class GrilladoServer {
       if (md === null || md === live.plan.markdown) return; // our own write, or nothing new
       // A changed `answer:` with dependents waits for the user (DECISIONS #26); nothing reruns here.
       adoptExternalPlan(live, md);
+      // A hand edit in an editor is still a hand edit (§4.7): what no longer fits is counted, not left unplaced.
+      pruneSuggestions(live);
       this.opts.store.writePlan(live.id, live.plan.markdown);
       this.log(live, { v: 1, type: "file", what: "reloaded", at: new Date().toISOString() });
       this.changed(live);
@@ -441,6 +443,8 @@ export class GrilladoServer {
   }
 
   private changed(s: Session) {
+    // Whatever changed the plan, each comment's position follows its quote inside its section (#114).
+    settleThreads(s);
     this.opts.store.save(s);
     this.broadcast({ type: "session", session: this.view(s) });
   }
@@ -840,7 +844,7 @@ export class GrilladoServer {
 
   private startComment(s: Session, threadId: string, kind: "reply" | "apply", retry = false) {
     const t = startRun(s, threadId, kind);
-    const section = sectionAt(s.plan?.markdown ?? "", locate(s.plan?.markdown ?? "", t.quote, t.at)) || "the plan";
+    const section = threadSection(s.plan?.markdown ?? "", t) || "the plan";
     const rec = this.record(s, kind, { section, comment: t.id }, retry ? `thread:${t.id}` : undefined);
     this.lastRun.set(`thread:${t.id}`, rec.id);
     const controller = new AbortController();
@@ -873,7 +877,7 @@ export class GrilladoServer {
       const { added, dropped } = addSuggestions(s, t.id, r.value.edits, t.at, textHash(base));
       for (const x of added) x.run = rec.id;
       // A thread on a decision block: answers change through the decision (#22), never a suggestion.
-      const at = locate(base, t.quote, t.at);
+      const at = refind(base, t);
       const decision = added.length ? null : decisionAt(base, at);
       rec.step(dropped ? `Checked against plan.md: ${plural(dropped, "suggestion")} no longer fit` : "Checked against plan.md");
       rec.step(decision ? "Made no suggestion: this is a decision, change it there" : `Made ${plural(added.length, "suggestion")}`);
