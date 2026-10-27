@@ -1,7 +1,7 @@
 // Item 3 UI logic without a DOM: the selection toolbar's ⌘B/⌘I (#27), how suggestions are drawn,
 // thread status rows (#28: all accepted offers Resolve, never resolves), and the wording (#29).
 import { describe, expect, test } from "bun:test";
-import { CCOPY, canApply, fill, minimal, place, rowText, statusRow } from "../web/src/app/comments/model.ts";
+import { CCOPY, author, canApply, fill, minimal, place, rowText, statusRow } from "../web/src/app/comments/model.ts";
 import { formatEdit, formatKey } from "../web/src/app/editor/selection.ts";
 import type { CommentThread, Suggestion } from "../src/core/comments.ts";
 
@@ -86,5 +86,23 @@ describe("wording", () => {
     expect(all).toMatch(/suggestions/);
     expect(fill(CCOPY.from(2), "Codex")).toBe("2 suggestions from Codex");
     expect(Object.values(CCOPY).filter((v) => typeof v === "string").join(" ")).not.toMatch(/Claude|Codex/);
+  });
+});
+
+describe("comment authors (v1.2 item 1)", () => {
+  const m = (by: "you" | "agent" | "coder", client?: string) => ({ id: "m", by, text: "x", at: "", ...(client !== undefined ? { client } : {}) });
+  test("the rail names you, the editor over MCP by its name, or the selected agent (#107)", () => {
+    expect(author(m("you"), "Codex")).toBe("You");
+    expect(author(m("agent"), "Codex")).toBe("Codex");
+    expect(author(m("coder", "cursor-vscode"), "Codex")).toBe("Cursor");
+    expect(author(m("coder", "claude-code"), "Codex")).toBe("Claude Code");
+    expect(author(m("coder", "codex-mcp-client"), "Claude Code")).toBe("Codex");
+    expect(author(m("coder", "mcp-client"), "Codex")).toBe("Your editor");
+    expect(author(m("coder"), "Codex")).toBe("Your editor");
+  });
+  test("an editor comment is told apart from the agent with the same name by “from your editor”", () => {
+    // The selected agent and the editor are both Claude Code: same bold name, the meta tells them apart.
+    expect(author(m("coder", "claude-code"), "Claude Code")).toBe(author(m("agent"), "Claude Code"));
+    expect(CCOPY.fromEditor).toBe("from your editor");
   });
 });

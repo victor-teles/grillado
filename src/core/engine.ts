@@ -209,7 +209,7 @@ export async function synthesize(
 
 /** Everything the user wrote in a thread is theirs: words in it never trip the banned filter. */
 export function commentUserText(s: Session, t: CommentThread): string {
-  return [userText(s), t.quote, ...t.messages.filter((m) => m.by === "you").map((m) => m.text)].join("\n");
+  return [userText(s), t.quote, ...t.messages.filter((m) => m.by !== "agent").map((m) => m.text)].join("\n");
 }
 
 /** The thread and the plan, for a reply or for "Apply feedback". The plan is data, not instructions. */
@@ -217,7 +217,7 @@ export function buildCommentPrompt(s: Session, t: CommentThread, ask: "reply" | 
   const thread = {
     section: sectionAt(md, t.at) || undefined,
     quote: t.quote,
-    messages: t.messages.map((m) => ({ by: m.by === "you" ? "user" : "you", text: m.text })),
+    messages: t.messages.map((m) => ({ by: m.by === "you" ? "user" : m.by === "coder" ? "user's coding agent" : "you", text: m.text })),
   };
   return [
     "The plan (Markdown):",

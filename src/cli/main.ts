@@ -2,6 +2,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAdapters } from "../core/providers/adapters.ts";
 import { HELP, UsageError, parseArgs } from "./args.ts";
+import { appLine, mcpLaunch } from "./launch.ts";
+import { runMcp } from "./mcp.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
 import { GrilladoServer } from "./server.ts";
 import { Store, defaultDataDir } from "./store.ts";
@@ -34,6 +36,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   if (args.help) return void process.stdout.write(HELP);
   if (args.version) return void console.log(VERSION);
+  // stdout is the MCP protocol from here on: nothing else may write to it.
+  if (args.command === "mcp") {
+    const store = new Store(args.dataDir ?? defaultDataDir());
+    return runMcp(store, VERSION, appLine(fileURLToPath(import.meta.url), store.dir));
+  }
 
   const here = path.dirname(fileURLToPath(import.meta.url));
   const webDir = process.env.GRILLADO_WEB_DIR || path.join(here, "web");
@@ -48,6 +55,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     model: args.model,
     timeoutMs: process.env.GRILLADO_TIMEOUT_MS ? Number(process.env.GRILLADO_TIMEOUT_MS) : undefined,
     onQuit: () => void shutdown("quit"),
+    mcpLaunch: mcpLaunch(fileURLToPath(import.meta.url), store.dir),
   });
 
   process.stdout.write(`${orange("●")} ${bold("Grillado")} ${dim(VERSION)}  ${dim("warming up…")}\n`);

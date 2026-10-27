@@ -187,6 +187,7 @@ export function Mark({ size = 15 }: { size?: number }) {
     </svg>
   );
 }
+export const IPlug = mk(<path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5" />);
 export const IMsg = mk(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />);
 export const IUser = mk(
   <>

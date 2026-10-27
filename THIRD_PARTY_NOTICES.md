@@ -149,6 +149,13 @@ The published `dist/` bundles React, Radix UI, lucide-react, Tailwind CSS, Zod a
 MIT/ISC-licensed packages listed in `package.json` (devDependencies). Their license comments
 are preserved in the bundles.
 
+## MCP server (`grillado mcp`)
+
+`dist/cli.js` bundles the official MCP TypeScript SDK, @modelcontextprotocol/sdk
+(https://github.com/modelcontextprotocol/typescript-sdk, MIT, Copyright (c) 2024 Anthropic, PBC),
+with the dependencies it pulls in: ajv, ajv-formats, fast-deep-equal and json-schema-traverse
+(MIT), zod-to-json-schema (ISC) and fast-uri (BSD-3-Clause).
+
 ## Markdown editor (CodeMirror)
 
 The plan editor's Markdown view uses CodeMirror 6 (https://codemirror.net, MIT, Copyright (C)

@@ -1,6 +1,8 @@
 import { PROVIDER_IDS, type ProviderId } from "../core/providers/types.ts";
 
 export interface CliArgs {
+  /** `grillado mcp`: the stdio MCP server instead of the web app. */
+  command?: "mcp";
   port?: number;
   provider?: ProviderId;
   open: boolean;
@@ -16,6 +18,10 @@ export function parseArgs(argv: string[]): CliArgs {
   const out: CliArgs = { open: true, help: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i];
+    if (raw === "mcp" && i === 0) {
+      out.command = "mcp";
+      continue;
+    }
     const [flag, inline] = raw.startsWith("--") && raw.includes("=") ? [raw.slice(0, raw.indexOf("=")), raw.slice(raw.indexOf("=") + 1)] : [raw, undefined];
     const value = () => {
       const v = inline ?? argv[++i];
@@ -56,10 +62,12 @@ export function parseArgs(argv: string[]): CliArgs {
         throw new UsageError(`Unknown option "${raw}"`);
     }
   }
+  if (out.command === "mcp" && (out.port !== undefined || out.provider || out.model || !out.open)) throw new UsageError("mcp only takes --data-dir");
   return out;
 }
 
 export const HELP = `Usage: grillado [options]
+       grillado mcp [--data-dir <path>]
 
 Turn a raw idea into a plan, one round of questions at a time, on the coding agent you already use.
 
@@ -72,6 +80,10 @@ Options:
   --data-dir <path>   Where sessions and plans live (default ~/.grillado, or $GRILLADO_HOME)
   -v, --version       Print the version
   -h, --help          Show this help
+
+Commands:
+  mcp                 Run an MCP server over stdio for your coding agent: list and read plans
+                      and their decisions, start a plan, comment on one. Same data as the web app.
 
 Security:
   The server listens on 127.0.0.1 only, checks Host/Origin, and requires the per-run token in
