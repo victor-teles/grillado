@@ -135,7 +135,7 @@ function fill(s: Session, x: Extract, title: string, at: string): string | null 
   return md;
 }
 
-function sourceOf(inp: ImportInput, at: string, planHash?: string): ImportedSource {
+function sourceOf(inp: ImportInput, at: string, title: string, planHash?: string): ImportedSource {
   const x = inp.extract;
   const unanswered = x.qa.filter((q) => q.answer === undefined).length;
   const viaAgent = !!inp.agentDecisions;
@@ -147,6 +147,7 @@ function sourceOf(inp: ImportInput, at: string, planHash?: string): ImportedSour
     fingerprint: inp.fingerprint,
     contentHash: contentHash(x),
     importedAt: at,
+    title,
     ...(planHash ? { planHash } : {}),
     questions: viaAgent ? (x.pairs?.length ?? 0) : x.qa.length - unanswered,
     ...(viaAgent ? { viaAgent: true } : {}),
@@ -165,7 +166,7 @@ export function sessionFromSource(inp: ImportInput, now = new Date()): { session
   const s = createSession({ idea: title, provider: inp.provider });
   const md = fill(s, x, title, at);
   s.project = inp.project;
-  s.source = sourceOf(inp, at, md ? textHash(md) : undefined);
+  s.source = sourceOf(inp, at, title, md ? textHash(md) : undefined);
   if (md) s.plan = { title, markdown: md, path: "", openDecisions: [], createdAt: at };
   return { session: s, markdown: md };
 }
@@ -185,14 +186,14 @@ export function updateFromSource(s: Session, inp: ImportInput, diskPlan: string 
     // Built on a copy: the user's plan, rounds and decisions stay exactly as they are.
     const md = fill(structuredClone(s), x, title, at);
     if (md) {
-      s.source = { ...sourceOf(inp, at, s.source!.planHash), conflict: at };
+      s.source = { ...sourceOf(inp, at, title, s.source!.planHash), conflict: at };
       s.updatedAt = at;
       return { markdown: null, conflict: md };
     }
   }
   const keep = s.plan;
   const md = fill(s, x, title, at);
-  s.source = sourceOf(inp, at, md ? textHash(md) : undefined);
+  s.source = sourceOf(inp, at, title, md ? textHash(md) : undefined);
   if (md) s.plan = { ...(keep ?? { openDecisions: [], createdAt: at, path: "" }), title, markdown: md, editedAt: undefined, external: undefined, waiting: undefined };
   else s.plan = undefined;
   s.updatedAt = at;

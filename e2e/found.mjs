@@ -101,6 +101,44 @@ async function server(w, extra = {}) {
   return { url, stop: () => new Promise((r) => (child.exitCode !== null ? r() : (child.on("exit", r), child.kill("SIGINT")))) };
 }
 
+/**
+ * Recent's top on every frame from the first paint (review-pr21 #1): with `/api/found` answering
+ * late, Recent may only move while the Found group's height eases, never in a snap.
+ */
+const recentSampler = () => {
+  const w = (window.__rt = []);
+  const tick = () => {
+    const r = document.querySelector(".recent, .note.empty");
+    if (r) {
+      const m = document.querySelector("[data-testid=found]");
+      const easing = !!m && m.getAnimations().some((a) => a.playState === "running");
+      w.push({ t: Math.round(performance.now()), top: Math.round(r.getBoundingClientRect().top + scrollY), gap: m ? Math.round(r.getBoundingClientRect().top - m.getBoundingClientRect().bottom) : null, found: !!m, easing });
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+};
+function readRecent(fr) {
+  let snaps = 0;
+  const moves = [];
+  for (let i = 1; i < fr.length; i++) {
+    const d = fr[i].top - fr[i - 1].top;
+    if (!d) continue;
+    moves.push(d);
+    // a snap: a move with no ease running, or a step against the way Recent ends up going (a drop first)
+    if (Math.abs(d) > 2 && ((!fr[i].easing && !fr[i - 1].easing) || Math.sign(d) !== Math.sign(fr.at(-1).top - fr[0].top))) snaps++;
+  }
+  return { first: fr[0]?.top, last: fr.at(-1)?.top, foundAtFirstPaint: !!fr[0]?.found, gaps: [...new Set(fr.map((f) => f.gap))], snaps, moves: moves.length, steps: moves.slice(0, 6), frames: fr.length };
+}
+/** A phone control's tap target: its box, and whether a tap at its top and bottom edges lands on it. */
+const hit = (loc) =>
+  loc.evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    const at = (y) => document.elementFromPoint(r.left + r.width / 2, y)?.closest("button") === e;
+    const line = e.parentElement.getBoundingClientRect().height;
+    return { w: Math.round(r.width), h: Math.round(r.height), edges: at(r.top + 1) && at(r.bottom - 1), line: Math.round(line) };
+  });
+
 async function axe(pg, name) {
   await pg.waitForTimeout(300);
   const r = await new AxeBuilder({ page: pg }).analyze();
@@ -120,7 +158,7 @@ const txt = async (loc) => ((await loc.textContent()) ?? "").replace(/\s+/g, " "
 const seen = (loc) =>
   loc.evaluate((e) => {
     const sg = e.querySelectorAll(e.classList.contains("fp") ? ":scope > span" : ":scope > .sg");
-    if (sg.length) return [...sg].map((x) => x.textContent.replace(/\s+/g, " ").trim()).join(" · ");
+    if (sg.length) return [...sg].filter((x) => !x.hidden).map((x) => x.textContent.replace(/\s+/g, " ").trim()).join(" · ");
     return e.innerText.replace(/\s+/g, " ").trim();
   });
 const found = (pg) => pg.getByTestId("found");
@@ -360,6 +398,7 @@ try {
     const held = rm.leftAt - rm.doneAt;
     check(`${theme} §3 after the 1.5 s ✓ Imported hold the row leaves Found, no reload`, held >= 1450 && held <= 2300, `held ${Math.round(held)}ms`);
     check(`${theme} §3 the plan is in Recent once, and not before the row left`, rm.once && !rm.early && (await rcp.count()) === 1, JSON.stringify({ once: rm.once, early: rm.early }));
+    check(`${theme} §3 Recent names the plan as Found did ("${RECIPE}", #6)`, (await txt(rcp.first().locator(".nm"))) === RECIPE, await txt(rcp.first().locator(".nm")));
     check(`${theme} §3 focus moves to the plan's new row in Recent`, rm.focus === (await rcp.first().getAttribute("href")), await active(pg));
     await shot(pg, "3-import", t("d-left-to-recent"));
     await axe(pg, `${theme} desktop: after the row left for Recent`);
@@ -390,6 +429,24 @@ try {
     const rec0 = pg.locator(".recent .rrow").filter({ hasText: recipeRe });
     check(`${theme} §6 no reload: Recent "From Claude Code session · Plated · …"`, /^From Claude Code session · Plated · /.test(await seen(rec0.locator(".meta"))) && (await rec0.locator(".src1").count()) === 1, await seen(rec0.locator(".meta")));
     await shot(pg, "6-recent", t("d-no-reload"));
+    // Skeleton → empty with Recent below: Recent eases with the group and keeps its gap under it, with
+    // no 12px drop first (review-pr21 #4).
+    await fakeView(pg, (v) => ({ ...v, state: "scanning", cached: false, rows: [] }));
+    await pg.reload();
+    await found(pg).locator(".sk").first().waitFor({ timeout: 10000 });
+    await pg.unroute("**/api/found");
+    await fakeView(pg, (v) => ({ ...v, state: "done", cached: false, partial: false, rows: [] }));
+    await pg.waitForTimeout(400);
+    await pg.evaluate(recentSampler);
+    await pg.evaluate(() => fetch("/api/found/rescan", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
+    await pg.locator(".fempty").waitFor({ timeout: 10000 });
+    await pg.waitForTimeout(600);
+    const se4 = readRecent(await pg.evaluate(() => window.__rt));
+    check(`${theme} §1 skeleton → empty: Recent only moves with the eased height and keeps its gap under the group, no drop first (#4)`, (await pg.locator(".recent .rrow").count()) > 0 && se4.snaps === 0 && se4.gaps.length === 1 && se4.moves > 0 && se4.last < se4.first, JSON.stringify(se4));
+    await shot(pg, "1-group", t("d-empty-recent"));
+    await pg.unroute("**/api/found");
+    await pg.reload();
+    await pg.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
 
     // ---------------------------------------------------------------- §6 Recent after import (next load)
     await pg.reload();
@@ -582,6 +639,47 @@ try {
     await se.stop();
     await ctx.close();
 
+    // ---------------------------------------------------------------- load with /api/found 300ms late (review-pr21 #1)
+    if (one) {
+      const wl = world();
+      const sl = await server(wl);
+      const lctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+      await lctx.addInitScript(recentSampler);
+      const lp = await lctx.newPage();
+      await lp.goto(sl.url);
+      await select(lp, "claude");
+      await lp.route("**/api/found", async (route) => {
+        await new Promise((r) => setTimeout(r, 300));
+        await route.continue();
+      });
+      for (const [label, url] of [["first launch (scan)", sl.url], ["reload (rows from the scan)", sl.url]]) {
+        await lp.goto(url);
+        await lp.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
+        await lp.waitForTimeout(900);
+        const r = readRecent(await lp.evaluate(() => window.__rt));
+        check(`load, /api/found +300ms, ${label}: the group holds its space from the first paint and Recent never snaps`, r.foundAtFirstPaint && r.snaps === 0 && r.gaps.length === 1, JSON.stringify(r));
+      }
+      await lp.close();
+      await sl.stop();
+      const wle = world("empty-app", { sources: false });
+      const sle = await server(wle);
+      const lpe = await lctx.newPage();
+      await lpe.goto(sle.url);
+      await select(lpe, "claude");
+      await lpe.route("**/api/found", async (route) => {
+        await new Promise((r) => setTimeout(r, 300));
+        await route.continue();
+      });
+      await lpe.reload();
+      await lpe.locator(".fempty").waitFor({ timeout: 10000 });
+      await lpe.waitForTimeout(900);
+      const re = readRecent(await lpe.evaluate(() => window.__rt));
+      check(`load, /api/found +300ms, empty project: Recent never snaps (no 12px drop before the ease, #4)`, re.foundAtFirstPaint && re.snaps === 0 && re.gaps.length === 1, JSON.stringify(re));
+      await lpe.close();
+      await sle.stop();
+      await lctx.close();
+    }
+
     // ---------------------------------------------------------------- phones
     const wm = world();
     const sm = await server(wm);
@@ -599,6 +697,33 @@ try {
     check(`${theme} phone: 60px rows, 44px Import and Look again, no sideways scroll`, m.row === 60 && m.btn === 44 && m.look === 44 && !m.sideways, JSON.stringify(m));
     await shot(mp, "1-group", t("m-found"));
     await axe(mp, `${theme} phone: Home with Found`);
+    const hm = await hit(found(mp).getByRole("button", { name: /^Show \d+ more$/ }));
+    check(`${theme} phone: "Show n more" has a 44px tap target in its 32px line (#3)`, hm.h >= 44 && hm.edges && hm.line === 32, JSON.stringify(hm));
+    await expand(mp);
+    const fit = await mp.evaluate(() =>
+      [...document.querySelectorAll("[data-testid=found-row] .meta")].map((m) => {
+        const segs = [...m.querySelectorAll(":scope > .sg")].filter((x) => !x.hidden);
+        const lines = new Set(segs.map((x) => Math.round(x.getBoundingClientRect().top))).size;
+        const last = segs.at(-1);
+        const mb = m.getBoundingClientRect();
+        const lb = last.getBoundingClientRect();
+        return { row: m.closest("li").querySelector(".nm").textContent.slice(0, 30), lines, fits: m.scrollHeight <= 33, count: last.textContent.trim(), shown: lb.bottom <= mb.bottom + 0.5 && lb.right <= mb.right + 0.5, dropped: m.querySelectorAll(":scope > .sg[hidden]").length };
+      }),
+    );
+    const bad = fit.filter((f) => f.lines > 2 || !f.fits || !f.shown || !/(\d+ decisions?|\d+ questions? answered|\d+ answers? to turn into decisions)$/.test(f.count));
+    check(`${theme} phone 390: every row's meta fits in 2 lines and its count is fully shown (#2, #151)`, fit.length >= 9 && bad.length === 0, JSON.stringify(bad.length ? bad : fit.map((f) => `${f.row}:${f.lines}/${f.dropped}`)));
+    check(`${theme} phone 390: rows that were too long dropped the branch or subfolder, not the count`, fit.some((f) => f.dropped > 0));
+    await shot(mp, "2-rows", t("m-rows-expanded"));
+    // The partial line's Look again.
+    await fakeView(mp, (v) => ({ ...v, partial: true }));
+    await mp.reload();
+    await found(mp).locator(".slot .lnk").waitFor({ timeout: 10000 });
+    const hp = await hit(found(mp).locator(".slot .lnk"));
+    check(`${theme} phone: the partial line's "Look again" has a 44px tap target in its 32px line (#3)`, hp.h >= 44 && hp.edges && hp.line === 32, JSON.stringify(hp));
+    await shot(mp, "1-group", t("m-partial"));
+    await mp.unroute("**/api/found");
+    await mp.reload();
+    await mp.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
     await expand(mp);
     await rowOf(mp, RECIPE).getByRole("button", { name: "Import" }).click();
     await rowOf(mp, RECIPE).locator(".imp[data-l=c]").waitFor({ timeout: 5000 });
@@ -628,6 +753,8 @@ try {
     await mep.locator(".fempty").waitFor({ timeout: 10000 });
     const x = await mep.getByRole("button", { name: "Hide for this project" }).evaluate((e) => e.getBoundingClientRect().height);
     check(`${theme} phone: empty × is 44px`, x === 44, String(x));
+    const he = await hit(mep.locator(".fempty .lnk"));
+    check(`${theme} phone: the empty line's "Look again" has a 44px tap target, the line stays 44px (#3)`, he.h >= 44 && he.edges && he.line === 44, JSON.stringify(he));
     await shot(mep, "1-group", t("m-empty"));
     await axe(mep, `${theme} phone: Home empty`);
     await sme.stop();

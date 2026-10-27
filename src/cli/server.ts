@@ -487,13 +487,16 @@ export class GrilladoServer {
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
         // Imported (v1.3 item 1): where it came from, for Recent's "From Claude Code session" line.
-        ...(s.source ? { source: { app: s.source.app, kind: s.source.kind } } : {}),
+        ...(s.source ? { source: { app: s.source.app, kind: s.source.kind }, ...(s.source.title ? { title: s.source.title } : {}) } : {}),
         from: s.from,
         queued: !!s.queued,
       })),
       dataDir: tildify(this.opts.store.dir),
       // Always present (review N4): without one passed in, the build next to the web dir.
       mcp: this.opts.mcpLaunch ?? mcpLaunch(path.resolve(this.opts.webDir, "..", "cli.js"), this.opts.store.dir),
+      // v1.3 item 1 (review-pr21 #1): the Found view comes with the first state, so Home knows the
+      // group's space from its first paint and Recent never jumps when /api/found answers later.
+      found: this.foundView(),
     };
   }
 
@@ -539,11 +542,16 @@ export class GrilladoServer {
     }
   }
 
+  private foundView() {
+    const f = this.opts.found;
+    return f ? f.view() : { enabled: false as const, reason: "off" as const };
+  }
+
   private static FOUND_STATUS: Record<ImportError["code"], number> = { unknown: 404, in_progress: 409, needs_agent: 409, busy: 409, not_qualified: 422, unreadable: 422, filtered: 422, stopped: 409, agent: 502 };
 
   private async foundRoutes(req: http.IncomingMessage, res: http.ServerResponse, parts: string[], body: any) {
     const f = this.opts.found;
-    const view = () => (f ? f.view() : { enabled: false, reason: "off" });
+    const view = () => this.foundView();
     if (req.method === "GET" && parts.length === 0) return this.json(res, 200, view());
     if (req.method !== "POST" || parts.length !== 1) return this.json(res, 404, { error: "Not found" });
     if (!f || f.skip) return this.json(res, 409, { error: "The project scan is off.", code: "off" });

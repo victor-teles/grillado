@@ -1,6 +1,6 @@
 // v1.3 item 1 · Found in this project (handoff §1–§4, §7). The one component and the one mount
 // point for the group: Home renders <Found> once, so moving the group (Q1) is a one-line change.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { reasonCode, reasonText, sourceLabel } from "../../../../src/core/activity.ts";
 import { ApiError, api, foundListeners } from "../api";
 import { IBranch, ICheck, IRetry, IX } from "../icons";
@@ -57,16 +57,24 @@ function importReason(err: unknown, agent: string): { reason: string; retry: "im
 }
 
 /** The meta segments of a row at rest (#140, #151): source · subfolder · branch · date · count. */
+/**
+ * A meta segment that may go when the line runs past 2 (review-pr21 #2, #151): the branch first, then
+ * "in <subfolder>", then a plan file's path. The source, date and count always stay.
+ */
+function Drop({ p, children }: { p: 1 | 2 | 3; children: React.ReactNode }) {
+  return <>{children}</>;
+}
+
 function restMeta(r: FoundRow, branch: string | undefined) {
   const segs: React.ReactNode[] = [sourceLabel(r.app, r.kind)];
-  if (r.app === "file" && r.relPath) segs.push(r.relPath);
-  if (r.subfolder) segs.push(`in ${r.subfolder}`);
+  if (r.app === "file" && r.relPath) segs.push(<Drop p={3}>{r.relPath}</Drop>);
+  if (r.subfolder) segs.push(<Drop p={2}>in {r.subfolder}</Drop>);
   if (r.branch && r.branch !== branch)
     segs.push(
-      <>
+      <Drop p={1}>
         <IBranch s={12} />
         {r.branch}
-      </>,
+      </Drop>,
     );
   segs.push(r.status === "in_progress" ? ago(r.date) : day(r.date));
   if (r.kind === "plan") segs.push(plural(r.decisions, "decision"));
@@ -79,12 +87,25 @@ function Meta({ segs }: { segs: React.ReactNode[] }) {
   return (
     <span className="meta">
       {segs.map((x, i) => (
-        <span className="sg" key={i}>
+        <span className="sg" key={i} data-drop={isValidElement<{ p: number }>(x) && x.type === Drop ? x.props.p : undefined}>
           {x}
         </span>
       ))}
     </span>
   );
+}
+
+/** Every row's meta fits in 2 lines: drop the lowest-priority segments until it does (never the count). */
+function fitMeta(root: HTMLElement | null) {
+  if (!root) return;
+  for (const m of root.querySelectorAll<HTMLElement>(".frow .meta")) {
+    const drops = [...m.querySelectorAll<HTMLElement>(":scope > [data-drop]")].sort((a, b) => Number(a.dataset.drop) - Number(b.dataset.drop));
+    for (const d of drops) d.hidden = false;
+    for (const d of drops) {
+      if (m.scrollHeight <= 33) break;
+      d.hidden = true;
+    }
+  }
 }
 
 function ImportButton({ label, phase, onClick }: { label: "Import" | "Update"; phase: "a" | "b" | "c"; onClick: () => void }) {
@@ -120,8 +141,10 @@ export interface FoundHandoff {
   onSettled?: (planId: string, o: { focus: boolean; update: boolean }) => void;
 }
 
-export function Found({ agent, onOpen, onImported, onSettled }: { agent: string; onOpen: (id: string) => void } & FoundHandoff) {
-  const [view, setView] = useState<FoundView | null>(null);
+export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent: string; initial?: FoundView; onOpen: (id: string) => void } & FoundHandoff) {
+  // The first app state carries the view (review-pr21 #1), so the group's space is right from the
+  // first paint; /api/found and "found" events only refresh it.
+  const [view, setView] = useState<FoundView | null>(initial ?? null);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
   const [expanded, setExpanded] = useState(false);
   const [live, setLive] = useState("");
@@ -197,8 +220,21 @@ export function Found({ agent, onOpen, onImported, onSettled }: { agent: string;
     };
   });
   useLayoutEffect(() => {
+    fitMeta(mount.current);
     if (mount.current) lastHeight.current = mount.current.offsetHeight;
   });
+  useEffect(() => {
+    const el = mount.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let w = el.offsetWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.offsetWidth === w) return;
+      w = el.offsetWidth;
+      fitMeta(el);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view !== null]);
   // A row left (PO, #21): the rows below slide up into its place (220ms ease-out), a row brought in
   // from "Show n more" fades in, and the group eases to its new height, so Recent moves once, calmly.
   // Reduced motion: no movement, the newcomer only fades. data-kbd: everything is instant.

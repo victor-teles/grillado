@@ -194,6 +194,8 @@ describe("found in this project: import", () => {
     const q3 = s.rounds[1].questions[0];
     expect(s.decisions[q3.key]).toMatchObject({ kind: "other", answer: "Both, links and typed", accepted_recommendation: false });
     expect(s.source).toMatchObject({ app: "claude", kind: "session", path: row.path, sessionId: "claude-struct", questions: 3 });
+    // Recent names it as the Found row did (review-pr21 #6).
+    expect(s.source!.title).toBe(row.title);
     expect(w.store.readPlan(s.id)).toContain("# Family recipe app");
     expect(s.plan!.path).toBe(w.store.planPath(s.id));
     // The injected skill body never makes it in.

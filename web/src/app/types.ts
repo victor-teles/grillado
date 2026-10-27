@@ -19,6 +19,8 @@ export interface ProviderView {
 export interface SessionSummary {
   id: string;
   idea: string;
+  /** Imported plans: the title the row had in Found (Recent shows it instead of the idea). */
+  title?: string;
   status: SessionStatus;
   rounds: number;
   decisions: number;
@@ -101,6 +103,8 @@ export interface AppState {
   remembered: ProviderId | null;
   sessions: SessionSummary[];
   dataDir: string;
+  /** Found in this project, sent with the first state so Home paints its space at once (v1.3 item 1). */
+  found?: FoundView;
   /** How an editor starts `grillado mcp`; always sent. */
   mcp: McpLaunch;
 }

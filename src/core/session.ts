@@ -128,6 +128,8 @@ export interface ImportedSource {
   importedAt: string;
   /** Hash of the plan.md the import wrote, to tell a user's edit from our own on Update. */
   planHash?: string;
+  /** The title the row had in Found, so Recent names the plan the same way (review-pr21 #6). */
+  title?: string;
   /** Answered questions copied (free-text sessions: the answers {agent} turned into decisions). */
   questions: number;
   /** Free-text session: {agent} turned the answers into decisions at import (§4). */

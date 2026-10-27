@@ -299,7 +299,7 @@ export function Landing({
           </div>
         </form>
         {/* Found in this project (v1.3 item 1): its one mount point. Q1 (placement) moves only this line. */}
-        <Found agent={provider?.displayName ?? "Your agent"} onOpen={onOpen} {...handoff.found} />
+        <Found agent={provider?.displayName ?? "Your agent"} initial={state.found} onOpen={onOpen} {...handoff.found} />
         <Recent sessions={handoff.sessions} dataDir={state.dataDir} onOpen={onOpen} enter={handoff.enter} onEntered={handoff.entered} />
       </div>
     </main>
@@ -383,7 +383,7 @@ function Recent({
                 onOpen(s.id);
               }}
             >
-              <span className="nm">{s.idea.split("\n")[0]}</span>
+              <span className="nm">{s.title || s.idea.split("\n")[0]}</span>
               <span className="meta">
                 {s.source ? (
                   // Imported from a source found in the project (v1.3 item 1 §6, #143).
