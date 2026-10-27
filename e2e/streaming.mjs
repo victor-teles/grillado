@@ -184,6 +184,34 @@ const streamGeom = (pg) =>
     };
   });
 
+/** How the disabled Reply box reads (review #18 must-fix 3): fill, border, cursor, placeholder AA. */
+const replyLook = (pg, scope) =>
+  pg.evaluate((scope) => {
+    const el = document.querySelector(`${scope} .th textarea.reply`);
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = 1;
+    const cx = cv.getContext("2d", { willReadFrequently: true });
+    const rgb = (c) => {
+      cx.clearRect(0, 0, 1, 1);
+      cx.fillStyle = c;
+      cx.fillRect(0, 0, 1, 1);
+      return [...cx.getImageData(0, 0, 1, 1).data];
+    };
+    const L = (p) => {
+      const [r, g, b] = p.slice(0, 3).map((v) => ((v /= 255), v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const x = document.createElement("span");
+    x.style.background = "var(--muted)";
+    document.body.append(x);
+    const muted = getComputedStyle(x).backgroundColor;
+    x.remove();
+    const cs = getComputedStyle(el);
+    const a = L(rgb(getComputedStyle(el, "::placeholder").color));
+    const b = L(rgb(cs.backgroundColor));
+    return { disabled: el.disabled, bg: cs.backgroundColor === muted, border: rgb(cs.borderTopColor)[3] === 0, cursor: cs.cursor, ratio: +((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2) };
+  }, scope);
+
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome", headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 try {
   for (const theme of ["dark", "light"]) {
@@ -197,7 +225,7 @@ try {
       await pg.mouse.move(600, 880);
       await pg.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
       await pg.waitForTimeout(150);
-      await pg.screenshot({ path: path.join(SHOTS, `${name}-${theme}.png`) });
+      await pg.screenshot({ path: path.join(SHOTS, `${name}-r2-${theme}.png`) });
     };
     await toPlan(pg, s.url);
     const rail = pg.getByRole("complementary", { name: "Comments" });
@@ -238,7 +266,9 @@ try {
     check(`${theme}: a static 2px caret in --muted-foreground right after the last character, no blink`, g1.caretW === 2 && g1.caretBg === muteBg && g1.caretAnim === "none" && g1.caretHidden === "true" && g1.afterText, JSON.stringify(g1));
     check(`${theme}: chunks appear with no fade`, g1.pAnim === "none/0s", g1.pAnim);
     check(`${theme}: the Reply box is disabled while it streams; no Apply feedback yet`, g1.reply === true && !g1.apply, JSON.stringify(g1));
-    if (theme === "dark") await axe(pg, `${theme} desktop: streaming`);
+    const rl = await replyLook(pg, ".crail");
+    check(`${theme}: the disabled Reply reads as disabled: --muted fill, no border, not-allowed, placeholder ≥ 4.5:1`, rl.disabled && rl.bg && rl.border && rl.cursor === "not-allowed" && rl.ratio >= 4.5, JSON.stringify(rl));
+    await axe(pg, `${theme} desktop: streaming`);
     await pg.waitForFunction(() => !document.querySelector(".th .msg[data-streaming]") && /^Good catch\..*"\.$/.test([...document.querySelectorAll(".crail .th .msg p")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
     const w1 = await watched(pg);
     check(`${theme}: deltas are appended as text nodes, nothing else in the thread changes while it streams`, w1.appended >= 3 && w1.outside <= 2, `appended ${w1.appended}, outside ${w1.outside}`);
@@ -303,55 +333,60 @@ try {
     await ctx.close();
     await s.stop();
 
-    // 5 · Scroll anchoring: the rail follows the streamed text only if it was already at the bottom;
-    // scrolled up, it stays where the reader left it (§1 #97 rendering).
+    // 5 · Scroll anchoring at 1100×520 (Designer review of #18): the rail follows the streamed text
+    // only if it was at the bottom before the reply was sent (the reply and the replying row grow it
+    // first); scrolled up, it stays where the reader left it (§1 #97 rendering).
     {
-      const sa = await server({ FAKE_STREAM_MS: "160" });
-      const sctx = await browser.newContext({ viewport: { width: 1440, height: 520 } });
+      const sa = await server({ FAKE_COMMENT_DELAY_MS: "300", FAKE_STREAM_MS: "150" });
+      const sctx = await browser.newContext({ viewport: { width: 1100, height: 520 } });
       await sctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
       const sp = await sctx.newPage();
       await toPlan(sp, sa.url);
-      await selectText(sp, "Shared shopping list");
-      await sp.getByRole("toolbar", { name: "Selection" }).waitFor();
-      await sp.keyboard.press("Control+Alt+KeyM");
-      await sp.getByRole("dialog", { name: "New comment" }).getByRole("textbox").fill("Say who shares it. ".repeat(14).trim());
-      await sp.keyboard.press("Control+Enter");
-      const srail = sp.getByRole("complementary", { name: "Comments" });
-      const reply = srail.getByRole("textbox", { name: "Reply" });
-      await sp.waitForFunction(() => !document.querySelector(".th .msg[data-streaming]") && /^Good catch/.test([...document.querySelectorAll(".crail .th .msg p")].at(-1)?.textContent ?? ""), null, { timeout: 20000 });
-      // The rail's scroll box, and a sampler that records it while the reply streams.
-      const sample = (scrollUp) =>
-        sp.evaluate(async (up) => {
-          const m = document.querySelector(".th .msg[data-streaming]");
-          let box = m.parentElement;
-          while (box && !/auto|scroll/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
-          box.scrollTop = box.scrollHeight;
-          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-          if (up) box.scrollTop -= up;
-          await new Promise((r) => requestAnimationFrame(r));
-          const start = { top: box.scrollTop, sh: box.scrollHeight, overflow: box.scrollHeight > box.clientHeight };
+      for (const [sel, q] of [["Shared shopping list", "Say who shares it"], ["Yes, one core flow", "Is one flow enough?"]]) {
+        await sp.keyboard.press("Escape").catch(() => {});
+        await selectText(sp, sel);
+        await sp.getByRole("toolbar", { name: "Selection" }).waitFor();
+        await sp.keyboard.press("Control+Alt+KeyM");
+        await sp.getByRole("dialog", { name: "New comment" }).getByRole("textbox").fill(q);
+        await sp.keyboard.press("Control+Enter");
+        await sp.locator(".crail .th").filter({ hasText: q }).locator(".apply").waitFor({ timeout: 20000 });
+      }
+      const boxOf = () =>
+        sp.evaluate(() => {
+          let p = document.querySelector(".crail .th").parentElement;
+          while (p && !/auto|scroll/.test(getComputedStyle(p).overflowY)) p = p.parentElement;
+          window.__box = p;
+          return { sh: p.scrollHeight, ch: p.clientHeight };
+        });
+      // Samples the rail until the reply is done; nothing here scrolls it after Enter.
+      const sample = () =>
+        sp.evaluate(async () => {
+          const box = window.__box;
           const out = [];
           while (document.querySelector(".th .msg[data-streaming]")) {
-            out.push({ top: box.scrollTop, gap: box.scrollHeight - box.scrollTop - box.clientHeight, sh: box.scrollHeight });
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            out.push({ top: Math.round(box.scrollTop), gap: Math.round(box.scrollHeight - box.scrollTop - box.clientHeight), sh: box.scrollHeight });
             await new Promise((r) => setTimeout(r, 60));
           }
-          return { start, out };
-        }, scrollUp);
-      // At the bottom: it follows.
-      await reply.fill("And who changes it?");
-      await reply.press("Enter");
-      await sp.locator(".th .msg[data-streaming]").waitFor({ timeout: 10000 });
-      const a = await sample(0);
-      const aGrew = Math.max(...a.out.map((x) => x.sh)) > a.start.sh;
-      check(`${theme}: at the bottom, the rail stays at the bottom as the reply grows`, a.start.overflow && aGrew && a.out.length >= 5 && a.out.every((x) => x.gap < 4), JSON.stringify({ start: a.start, n: a.out.length, maxGap: Math.max(...a.out.map((x) => x.gap)), sh: [a.out[0]?.sh, a.out.at(-1)?.sh] }));
-      await sp.waitForFunction(() => !document.querySelector(".crail .th .stop"), null, { timeout: 15000 });
-      // Scrolled up: it stays where the reader left it.
-      await reply.fill("Who else can add items?");
-      await reply.press("Enter");
-      await sp.locator(".th .msg[data-streaming]").waitFor({ timeout: 10000 });
-      const b = await sample(150);
-      const bGrew = Math.max(...b.out.map((x) => x.sh)) > b.start.sh;
-      check(`${theme}: scrolled up, the rail does not move while the reply grows`, bGrew && b.out.length >= 5 && b.out.every((x) => Math.abs(x.top - b.start.top) <= 1) && b.out.at(-1).gap > b.out[0].gap, JSON.stringify({ start: b.start, n: b.out.length, tops: [...new Set(b.out.map((x) => x.top))], gaps: [b.out[0]?.gap, b.out.at(-1)?.gap] }));
+          return out;
+        });
+      const summary = (o) => JSON.stringify({ n: o.length, gaps: [...new Set(o.map((x) => x.gap))].slice(0, 8), tops: [...new Set(o.map((x) => x.top))].slice(0, 8), sh: [o[0]?.sh, o.at(-1)?.sh] });
+      for (const where of ["bottom", "up"]) {
+        const last = sp.locator(".crail .th").last();
+        const box = await boxOf();
+        await last.locator("textarea.reply").fill(where === "bottom" ? "And the cost?" : "And Android?");
+        // The reader's own scroll, before sending.
+        await sp.evaluate((w) => (window.__box.scrollTop = w === "bottom" ? window.__box.scrollHeight : 0), where);
+        await sp.waitForTimeout(100);
+        await last.locator("textarea.reply").press("Enter");
+        await streamingMsg(sp).waitFor({ timeout: 10000 });
+        const o = await sample();
+        const grew = o.length >= 5 && o.at(-1).sh > o[0].sh;
+        if (where === "bottom") check(`${theme} 1100×520: replying from the bottom, the rail stays pinned to the bottom while the reply streams`, box.sh > box.ch && grew && o.every((x) => x.gap < 4), summary(o));
+        else check(`${theme} 1100×520: scrolled up, the rail stays where the reader left it`, grew && o.every((x) => x.top === 0) && o.at(-1).gap > o[0].gap, summary(o));
+        if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, `d-stream-scroll-${where}-r2-${theme}.png`) });
+        await sp.waitForFunction(() => !document.querySelector(".crail .th .stop"), null, { timeout: 20000 });
+      }
       await sctx.close();
       await sa.stop();
     }
@@ -365,7 +400,7 @@ try {
       if (!SHOTS) return;
       await mp.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
       await mp.waitForTimeout(260);
-      await mp.screenshot({ path: path.join(SHOTS, `${name}-${theme}.png`) });
+      await mp.screenshot({ path: path.join(SHOTS, `${name}-r2-${theme}.png`) });
     };
     await toPlan(mp, s2.url);
     s2.mode({ FAKE_STREAM: "hold" });
@@ -385,6 +420,9 @@ try {
     await mp.waitForTimeout(2500);
     const mg = await streamGeom(mp);
     check(`${theme} phone: the reply streams in the sheet with the caret and aria-busy; Stop is 44px`, mg.busy === "true" && mg.caretW === 2 && mg.stopH >= 44 && mg.reply === true, JSON.stringify(mg));
+    const mrl = await replyLook(mp, ".csheet");
+    const stopW = await sheet.locator(".msg[data-streaming] .stop").evaluate((b) => Math.round(b.getBoundingClientRect().width));
+    check(`${theme} phone: the disabled Reply reads as disabled (placeholder ≥ 4.5:1); Stop is at least 44px wide`, mrl.disabled && mrl.bg && mrl.border && mrl.ratio >= 4.5 && stopW >= 44, JSON.stringify({ ...mrl, stopW }));
     await msnap("m-stream-mid");
     await axe(mp, `${theme} phone: streaming`);
     await sheet.locator(".msg[data-streaming]").getByRole("button", { name: "Stop" }).click();

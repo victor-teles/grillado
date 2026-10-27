@@ -784,6 +784,7 @@ html[data-kbd] .ipill.hp{transition:none}
 .crow .btn{height:28px;padding:0 10px}
 .th .lost{display:flex;gap:6px;align-items:flex-start;font-size:var(--t-meta);color:var(--muted-foreground);margin:0}
 .th .reply{width:100%;resize:none;border:1px solid var(--hair);border-radius:10px;background:var(--background);color:var(--foreground);font:400 var(--t-body)/20px var(--sans);padding:7px 10px;min-height:36px}
+.th .reply:disabled{background:var(--muted);border-color:transparent;cursor:not-allowed}
 .th.col{gap:4px;padding-top:12px;padding-bottom:12px}
 .th.col .one{display:flex;gap:8px;align-items:center;justify-content:space-between}
 .th.col .one b{font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -847,7 +848,7 @@ html[data-kbd] .ipill.hp{transition:none}
 .csheet .btn{height:44px;border-radius:12px}
 /* Fix-up of #4, MF4: 44px targets in the mobile thread; a 16px reply field so iOS doesn't zoom; full-width Apply feedback (§9). */
 .csheet .th .reply{min-height:44px;font-size:16px;line-height:22px;padding:10px 12px}
-.csheet .th .msg .who .stop{height:44px}
+.csheet .th .msg .who .stop{height:44px;min-width:44px}
 .csheet .th .acts .apply{width:100%}
 .csheet .composer2{padding:4px 16px 16px;display:grid;gap:10px}
 .csheet .composer2 blockquote{margin:0;color:var(--muted-foreground)}

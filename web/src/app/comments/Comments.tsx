@@ -25,7 +25,7 @@ import { ActionSheet } from "../ActionSheet";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
 import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, heldAnchor, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
 import { hit, lineRoom, useDropOnResize } from "./spot";
-import { onReplyText, replyText, setReplyText, takeStreamed } from "./stream";
+import { notePinned, onReplyText, replyText, scrollBox, setReplyText, takeStreamed, wasPinned } from "./stream";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = mac ? "⌘" : "Ctrl+";
@@ -1538,6 +1538,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
   const sendReply = async () => {
     const text = reply.trim();
     if (!text) return;
+    notePinned(document.getElementById(`th-${t.id}`));
     if (await act(`comments/${t.id}/reply`, { text })) setReply("");
   };
   return (
@@ -1680,16 +1681,18 @@ function StreamingReply({ t, agentName, onStop }: { t: CommentThread; agentName:
     if (!el) return;
     let shown = "";
     let frame = 0;
+    // Pinned to the bottom on mount and on every paint, while the reader was at the bottom.
     const paint = () => {
       frame = 0;
-      const text = replyText(t.id);
-      if (text === shown) return;
       const box = scrollBox(el);
-      const pinned = box ? box.scrollHeight - box.scrollTop - box.clientHeight < 4 : false;
-      if (text.startsWith(shown)) el.append(document.createTextNode(text.slice(shown.length)));
-      else el.textContent = text;
-      shown = text;
-      if (box && pinned) box.scrollTop = box.scrollHeight;
+      const pin = box ? wasPinned(box) : false;
+      const text = replyText(t.id);
+      if (text !== shown) {
+        if (text.startsWith(shown)) el.append(document.createTextNode(text.slice(shown.length)));
+        else el.textContent = text;
+        shown = text;
+      }
+      if (box && pin && box.scrollTop !== box.scrollHeight - box.clientHeight) box.scrollTop = box.scrollHeight;
     };
     paint();
     const off = onReplyText(t.id, () => {
@@ -1715,15 +1718,6 @@ function StreamingReply({ t, agentName, onStop }: { t: CommentThread; agentName:
       </p>
     </div>
   );
-}
-
-function scrollBox(el: HTMLElement): HTMLElement | null {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const o = getComputedStyle(p).overflowY;
-    // The rail itself, even while it still fits: a rail that fits is at the bottom, so it stays there.
-    if (o === "auto" || o === "scroll") return p;
-  }
-  return null;
 }
 
 function StatusRow({ row, t, agentName, act, onReview, onShowDecision, onResolve }: { row: Row; t: CommentThread; agentName: string; act: Act2; onReview: (t: CommentThread) => void; onShowDecision: (k: string) => void; onResolve: () => void }) {
