@@ -124,7 +124,7 @@ function Pre({ className, children }: { className?: string; children: ReactNode 
     return () => ro.disconnect();
   }, [children]);
   return (
-    <pre ref={ref} className={className} {...(wide ? { tabIndex: 0, role: "region", "aria-label": "Code, scrolls sideways" } : {})}>
+    <pre ref={ref} className={className} {...(wide ? { tabIndex: 0, role: "region", "aria-label": "Code block, scrolls sideways" } : {})}>
       {children}
     </pre>
   );

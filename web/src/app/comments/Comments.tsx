@@ -9,13 +9,14 @@
 //   ins.sg del.sg(.f) .ipill .review .toast .sheet .scrim .mtb .mbar
 import { type MutableRefObject, type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { copy } from "../CopyButton";
 import { api } from "../api";
 import type { DocMarks } from "../Markdown";
 import { type EditorMode, type PlanDraft } from "../editor/PlanEditor";
 import { cleanSelection, sourceRange } from "../editor/selection";
 import { editorName } from "../../../../src/core/editor.ts";
-import { IActivity, ICheck, IChev, IDown, IEdit, IMore, IMsg, IPlug, IUndo, IUp, IX } from "../icons";
+import { IActivity, ICheck, IChev, IDown, IEdit, ILink, ILinkOff, IMore, IMsg, IPlug, ITrash, IUndo, IUp, IX } from "../icons";
 import { type ActivityFocus, ActivityPanel, openActivity } from "../activity/Activity";
 import { jumpTo } from "../editor/link";
 import type { CommentThread, SessionView, Suggestion } from "../types";
@@ -127,7 +128,17 @@ export function useComments(o: Opts) {
   const [hoverId, setHover] = useState<string | null>(null);
   const [focusId, setFocus] = useState<string | null>(null);
   const [live, setLive] = useState("");
-  const [toast, setToast] = useState<{ text: string; undo: boolean } | null>(null);
+  const [toast, setToastRaw] = useState<Toast | null>(null);
+  const toastN = useRef(0);
+  // Every toast is a new one (its own timer), even with the same text.
+  const setToast = (t: Omit<Toast, "n"> | null) => setToastRaw(t ? { ...t, n: ++toastN.current } : null);
+  const [toastHeld, setToastHeld] = useState(false);
+  // The "Resolved n" accordion lives here so a link or an Undo can open it (#100, #101).
+  const [showResolved, setShowResolved] = useState(false);
+  // "That comment was deleted": a link to a thread that's gone (#100).
+  const [gone, setGone] = useState(false);
+  // A thread to focus once it's in the rail (after Undo, or a link).
+  const focusNext = useRef<{ id: string; scroll: boolean } | null>(null);
   const [bar, setBar] = useState("");
   const drafts = useRef(new Map<string, string>());
 
@@ -384,7 +395,7 @@ export function useComments(o: Opts) {
       setToast(null);
       setLive("Undone");
     } else if (ids === "all") {
-      setToast({ text: CCOPY.bulk(n, op === "accept" ? "accepted" : "rejected"), undo: true });
+      setToast({ text: CCOPY.bulk(n, op === "accept" ? "accepted" : "rejected"), undo: "review" });
       setFocus(null);
       setLive(CCOPY.bulk(n, op === "accept" ? "accepted" : "rejected"));
     } else {
@@ -393,13 +404,23 @@ export function useComments(o: Opts) {
       setFocus(next?.s.id ?? null);
     }
   };
+  // 5s by default; a thread's toast waits while the pointer is on it (#99).
+  const toastLeft = useRef({ n: 0, ms: 0 });
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 5000);
-    const drop = () => setToast(null);
+    if (toastLeft.current.n !== toast.n) toastLeft.current = { n: toast.n, ms: toast.ms ?? 5000 };
+    const drop = () => setToastRaw(null);
     addEventListener("grillado:editor-open", drop);
-    return () => (clearTimeout(t), removeEventListener("grillado:editor-open", drop));
-  }, [toast]);
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const from = Date.now();
+    if (!toastHeld) t = setTimeout(drop, toastLeft.current.ms);
+    return () => {
+      clearTimeout(t);
+      if (!toastHeld) toastLeft.current.ms = Math.max(0, toastLeft.current.ms - (Date.now() - from));
+      removeEventListener("grillado:editor-open", drop);
+    };
+  }, [toast, toastHeld]);
+  useEffect(() => setToastHeld(false), [toast?.n]);
   useEffect(() => {
     if (!bar) return;
     const t = setTimeout(() => setBar(""), 4000);
@@ -498,6 +519,11 @@ export function useComments(o: Opts) {
       document.querySelector<HTMLElement>(".seltb button")?.focus();
       return;
     }
+    // The open toast's Undo (a deleted or resolved comment) comes before a review's (#99).
+    if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z" && typeof toast?.undo === "function" && !inField(e.target) && !o.docRef.current?.querySelector(".blk-edit")) {
+      e.preventDefault();
+      return void toast.undo();
+    }
     if (!docMode || inField(e.target)) return;
     if (e.altKey && !mod && (e.key === "ArrowDown" || e.key === "ArrowUp") && placed.length) {
       e.preventDefault();
@@ -536,6 +562,99 @@ export function useComments(o: Opts) {
       el?.focus({ preventScroll: true });
     });
   };
+  // ---------- the thread ⋯ menu (v1.2 polish §2, DECISIONS #98–101) ----------
+  // Open threads in plan order, as the rail lists them.
+  const ordered = useMemo(() => [...open].sort((a, b) => (anchorOf(draft.text, a)?.start ?? a.at) - (anchorOf(draft.text, b)?.start ?? b.at)), [open, draft.text]);
+  const restoreThread = async (t: CommentThread) => {
+    setToast(null);
+    if (!(await act(`comments/${t.id}/restore`))) return;
+    setLive(CCOPY.restored);
+    if (t.resolved) setShowResolved(true);
+    setActive(t.id);
+    setRailTab("comments");
+    setRail(true);
+    focusNext.current = { id: t.id, scroll: false };
+  };
+  const deleteThread = async (t: CommentThread) => {
+    // Focus moves on to the next thread head, or the empty state (#99).
+    const row = t.resolved ? resolved : ordered;
+    const i = row.findIndex((x) => x.id === t.id);
+    const next = row[i + 1] ?? row[i - 1] ?? null;
+    if (!(await act(`comments/${t.id}/delete`))) return;
+    if (activeId === t.id) setActive(null);
+    if (hoverId === t.id) setHover(null);
+    setToast({ text: CCOPY.deleted, icon: "trash", kb: true, undo: () => void restoreThread(t) });
+    setLive(CCOPY.deleted);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const to =
+          (next && document.getElementById(`th-${next.id}`)) ||
+          (t.resolved && document.querySelector<HTMLElement>(".crail .racc")) ||
+          document.querySelector<HTMLElement>(".crail .th[id^='th-']") ||
+          document.querySelector<HTMLElement>(".crail .rempty");
+        to?.focus({ preventScroll: false });
+      }),
+    );
+  };
+  const resolveThread = async (t: CommentThread) => {
+    if (!(await act(`comments/${t.id}/resolve`, { resolved: true }))) return;
+    const reopen = async () => {
+      setToast(null);
+      if (!(await act(`comments/${t.id}/resolve`, { resolved: false }))) return;
+      setActive(t.id);
+      focusNext.current = { id: t.id, scroll: false };
+    };
+    setToast({ text: CCOPY.resolvedToast, undo: () => void reopen() });
+    setLive(CCOPY.resolvedToast);
+  };
+  const copyLink = async (t: CommentThread) => {
+    const url = `${location.origin}/s/${session.id}#comment-${t.id}`;
+    if (await copy(url)) {
+      setToast({ text: CCOPY.copied, ms: 2000 });
+      setLive(CCOPY.copied);
+    } else o.setNote(CCOPY.noClipboard(url));
+  };
+  // Opening /s/<id>#comment-<thread> (#100): the rail on Comments, the thread active, its anchor in view.
+  const linked = useRef("");
+  useEffect(() => {
+    const follow = () => {
+      const m = /^#comment-([\w-]+)$/.exec(location.hash);
+      if (!m || linked.current === location.hash) return;
+      linked.current = location.hash;
+      const t = threads.find((x) => x.id === m[1]);
+      setRailTab("comments");
+      setRail(true);
+      setGone(!t);
+      if (!t) return;
+      if (t.resolved) setShowResolved(true);
+      setActive(t.id);
+      focusNext.current = { id: t.id, scroll: true };
+      settle((n) => n + 1);
+    };
+    follow();
+    addEventListener("hashchange", follow);
+    return () => removeEventListener("hashchange", follow);
+  });
+  useEffect(() => {
+    if (!railOpen) setGone(false);
+  }, [railOpen]);
+  useEffect(() => {
+    const f = focusNext.current;
+    if (!f) return;
+    let tries = 0;
+    let id = 0;
+    const run = () => {
+      const el = document.getElementById(`th-${f.id}`);
+      if (!el) return void (++tries < 30 && (id = requestAnimationFrame(run)));
+      focusNext.current = null;
+      el.scrollIntoView({ block: "nearest" });
+      el.focus({ preventScroll: true });
+      const mark = f.scroll ? o.docRef.current?.querySelector<HTMLElement>(`mark.cmk[data-thread="${CSS.escape(f.id)}"]`) : null;
+      mark?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    };
+    id = requestAnimationFrame(run);
+    return () => cancelAnimationFrame(id);
+  });
   const sgBlock = (p: Placed) => (
     <SuggestionBlock
       placed={p}
@@ -633,7 +752,7 @@ export function useComments(o: Opts) {
         focus={actFocus ? { run: actFocus.run, kind: actFocus.kind, comment: actFocus.comment, n: actFocus.n } : null}
         act={act}
         mobile={mobile}
-        onToast={(text) => setToast({ text, undo: false })}
+        onToast={(text) => setToast({ text })}
         onSuggestion={(id) => {
           leaveSheet();
           setFocus(id);
@@ -675,8 +794,15 @@ export function useComments(o: Opts) {
       activityRunning={!!session.activity?.entries.some((e) => e.status === "running")}
       tab={railTab}
       setTab={setRailTab}
-      open={open}
+      open={ordered}
       resolved={resolved}
+      mobile={mobile}
+      showResolved={showResolved}
+      setShowResolved={setShowResolved}
+      gone={gone}
+      onResolve={resolveThread}
+      onDelete={deleteThread}
+      onCopyLink={copyLink}
       md={draft.text}
       list={list}
       agentName={agentName}
@@ -692,20 +818,6 @@ export function useComments(o: Opts) {
     />
   );
   const rail = !mobile && railOpen && o.tab === "doc" ? railBody : null;
-  const sheet =
-    mobile && railOpen ? (
-      <>
-        <div className="cscrim" onClick={() => setRail(false)} />
-        <div className="csheet" role="dialog" aria-label={railTab === "activity" ? "Activity" : "Comments"} aria-modal="true">
-          <div className="grab" />
-          {/* The tabs are the header (#83): Close sits on their row, no row of its own. */}
-          <button type="button" className="icon-btn shx" aria-label={railTab === "activity" ? "Close activity" : "Close comments"} onClick={() => setRail(false)}>
-            <IX s={18} />
-          </button>
-          {railBody}
-        </div>
-      </>
-    ) : null;
 
   // After an Add diagrams run: "2 sections skipped · 4.2 s" (§4, §18 B).
   const dr = session.diagramRun;
@@ -759,19 +871,50 @@ export function useComments(o: Opts) {
       )
     ) : null;
   // A plain toast (Copy log) sits above the review bar instead of waiting behind it.
-  const lifted = !!toast && !toast.undo && !!(docMode && (placed.length || bar) && !composing && !o.hideReviewBar);
+  // A comment's toast (deleted, resolved, link copied) does too.
+  const lifted = !!toast && toast.undo !== "review" && !!(docMode && (placed.length || bar) && !composing && !o.hideReviewBar);
+  const thToast = !!toast && (toast.icon === "trash" || typeof toast.undo === "function" || toast.ms === 2000);
   const toastEl = toast ? (
-    <div className={lifted ? "toast up6" : "toast"} role="status">
-      <ICheck s={16} />
+    <div
+      key={toast.n}
+      className={`toast${lifted ? " up6" : ""}${thToast ? " nt" : ""}`}
+      role="status"
+      data-toast={toast.n}
+      onPointerEnter={() => setToastHeld(true)}
+      onPointerLeave={() => setToastHeld(false)}
+    >
+      {toast.icon === "trash" ? <ITrash s={16} /> : <ICheck s={16} />}
       <span>{toast.text}</span>
-      {toast.undo && session.reviewUndo ? (
+      {toast.undo === "review" && session.reviewUndo ? (
         <button type="button" className="btn quiet" onClick={() => void review("undo")}>
           <IUndo s={14} />
           Undo
         </button>
+      ) : typeof toast.undo === "function" ? (
+        <button type="button" className="btn quiet" aria-keyshortcuts={MOD === "⌘" ? "Meta+Z" : "Control+Z"} onClick={toast.undo}>
+          Undo
+          {toast.kb && !mobile ? <span className="kb">{`${MOD}Z`}</span> : null}
+        </button>
       ) : null}
     </div>
   ) : null;
+  const inSheet = mobile && railOpen && !lifted && thToast;
+  const sheet =
+    mobile && railOpen ? (
+      <>
+        <div className="cscrim" onClick={() => setRail(false)} />
+        <div className="csheet" role="dialog" aria-label={railTab === "activity" ? "Activity" : "Comments"} aria-modal="true">
+          <div className="grab" />
+          {/* The tabs are the header (#83): Close sits on their row, no row of its own. */}
+          <button type="button" className="icon-btn shx" aria-label={railTab === "activity" ? "Close activity" : "Close comments"} onClick={() => setRail(false)}>
+            <IX s={18} />
+          </button>
+          {railBody}
+          {/* A toast while the sheet is up sits in it, above the scrim, reachable inside the modal. */}
+          {inSheet ? toastEl : null}
+        </div>
+      </>
+    ) : null;
   const rawNote =
     o.tab === "doc" && o.mode === "raw" && placed.length ? (
       <div className="pbanner" data-tone="info" data-testid="raw-suggestions">
@@ -878,7 +1021,7 @@ export function useComments(o: Opts) {
             {toastEl}
           </>
         ) : (
-          reviewBar ?? toastEl
+          reviewBar ?? (inSheet ? null : toastEl)
         )}
         <span className="sr-only" role="status" aria-live="polite">
           {live}
@@ -1141,6 +1284,170 @@ function Composer({
 // ---------- rail (§3) ----------
 type Act2 = (path: string, body?: unknown) => Promise<boolean>;
 
+/** A toast: a review's Undo ("review", ⌘Z through the review), or a comment's own Undo (#99, #101). */
+type Toast = { text: string; n: number; undo?: "review" | (() => void); icon?: "trash"; kb?: boolean; ms?: number };
+
+/**
+ * The thread ⋯ (#98): a popover menu on desktop (the same Uai DropdownMenu as the plan's ⋯, no
+ * motion), an action sheet on phones with a scrim, swipe down and Back to close.
+ */
+function ThreadMenu({ anchor, mobile, onCopyLink, onDelete }: { anchor: string; mobile: boolean; onCopyLink: () => void; onDelete: () => void }) {
+  const [sheet, setSheet] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const deleting = useRef(false);
+  // The menu portals into the rail, so it sits inside the Comments landmark.
+  const [box, setBox] = useState<HTMLElement | null>(null);
+  useEffect(() => setBox(btn.current?.closest<HTMLElement>("aside") ?? null), []);
+  const label = CCOPY.more(anchor);
+  if (!mobile)
+    return (
+      // Not modal: the rail and plan stay in the a11y tree (Esc, a click out and Tab still close it).
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button ref={btn} type="button" className="icon-btn more" aria-label={label}>
+            <IMore s={16} />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="pmenu tmenu"
+          container={box}
+          aria-label="Comment actions"
+          aria-labelledby={undefined}
+          onCloseAutoFocus={(e) => {
+            // Delete moves focus on itself (#99); the ⋯ it would go back to is gone.
+            if (deleting.current) e.preventDefault();
+            deleting.current = false;
+          }}
+        >
+          <DropdownMenuItem className="mi" onSelect={onCopyLink}>
+            <ILink s={16} />
+            {CCOPY.copyLink}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator className="msep" />
+          <DropdownMenuItem
+            className="mi del"
+            onSelect={() => {
+              deleting.current = true;
+              onDelete();
+            }}
+          >
+            <ITrash s={16} />
+            {CCOPY.del}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  return (
+    <>
+      <button ref={btn} type="button" className="icon-btn more" aria-label={label} aria-haspopup="dialog" aria-expanded={sheet} onClick={() => setSheet(true)}>
+        <IMore s={16} />
+      </button>
+      {sheet
+        ? createPortal(
+            <ActionSheet
+              title={CCOPY.sheetTitle(anchor)}
+              onClose={(back) => {
+                setSheet(false);
+                if (back) btn.current?.focus();
+              }}
+              rows={[
+                { label: CCOPY.copyLink, icon: <ILink s={20} />, run: onCopyLink },
+                { label: CCOPY.del, icon: <ITrash s={20} />, run: onDelete, del: true },
+              ]}
+            />,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+function ActionSheet({ title, rows, onClose }: { title: string; rows: { label: string; icon: ReactNode; run: () => void; del?: boolean }[]; onClose: (refocus: boolean) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const closed = useRef(false);
+  const close = useRef(onClose);
+  close.current = onClose;
+  // Back closes it: the sheet holds one history entry, which any other way of closing gives back.
+  useEffect(() => {
+    history.pushState({ grilladoSheet: true }, "", location.href);
+    const pop = () => {
+      closed.current = true;
+      close.current(true);
+    };
+    addEventListener("popstate", pop);
+    ref.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => {
+      removeEventListener("popstate", pop);
+      if (!closed.current && history.state?.grilladoSheet) history.back();
+    };
+  }, []);
+  const end = (refocus: boolean) => {
+    if (closed.current) return;
+    close.current(refocus);
+  };
+  const drag = useRef<{ y: number; id: number } | null>(null);
+  const [dy, setDy] = useState(0);
+  return (
+    <>
+      <div className="pscrim" onClick={() => end(true)} />
+      <div
+        ref={ref}
+        className="psheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="psheet-t"
+        style={dy ? { translate: `0 ${dy}px` } : undefined}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            return end(true);
+          }
+          if (e.key !== "Tab") return;
+          // Focus stays in the sheet.
+          const all = [...(ref.current?.querySelectorAll<HTMLElement>("button") ?? [])];
+          const i = all.indexOf(document.activeElement as HTMLElement);
+          e.preventDefault();
+          all[(i + (e.shiftKey ? -1 : 1) + all.length) % all.length]?.focus();
+        }}
+        onPointerDown={(e) => {
+          drag.current = { y: e.clientY, id: e.pointerId };
+        }}
+        onPointerMove={(e) => {
+          if (drag.current?.id === e.pointerId) setDy(Math.max(0, e.clientY - drag.current.y));
+        }}
+        onPointerUp={(e) => {
+          const d = drag.current && drag.current.id === e.pointerId ? e.clientY - drag.current.y : 0;
+          drag.current = null;
+          setDy(0);
+          if (d > 60) end(true);
+        }}
+        onPointerCancel={() => ((drag.current = null), setDy(0))}
+      >
+        <div className="grab" />
+        <div className="mt" id="psheet-t">
+          {title}
+        </div>
+        {rows.map((r) => (
+          <button
+            key={r.label}
+            type="button"
+            className={`mi${r.del ? " del" : ""}`}
+            onClick={() => {
+              end(false);
+              r.run();
+            }}
+          >
+            {r.icon}
+            {r.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function Rail(p: {
   isNew: (id: string) => boolean;
   markShown: (id: string) => void;
@@ -1150,6 +1457,14 @@ function Rail(p: {
   setTab: (t: "comments" | "activity") => void;
   open: CommentThread[];
   resolved: CommentThread[];
+  mobile: boolean;
+  showResolved: boolean;
+  setShowResolved: (v: boolean) => void;
+  /** A link to a thread that was deleted (#100). */
+  gone: boolean;
+  onResolve: (t: CommentThread) => void;
+  onDelete: (t: CommentThread) => void;
+  onCopyLink: (t: CommentThread) => void;
   md: string;
   list: Suggestion[];
   agentName: string;
@@ -1164,14 +1479,20 @@ function Rail(p: {
   /** An "Apply feedback" run is going on some thread: Apply waits for it (no queue yet). */
   applying: boolean;
 }) {
-  const [showResolved, setShowResolved] = useState(false);
+  const { showResolved, setShowResolved } = p;
   const running = p.activityRunning || p.open.some((t) => t.run?.state === "running");
   const tabs = [
     { id: "comments" as const, label: "Comments", n: p.open.length },
     { id: "activity" as const, label: "Activity", n: 0 },
   ];
-  // Open threads in plan order.
-  const ordered = [...p.open].sort((a, b) => (anchorOf(p.md, a)?.start ?? a.at) - (anchorOf(p.md, b)?.start ?? b.at));
+  // Open threads come in plan order.
+  const ordered = p.open;
+  const goneNote = p.gone ? (
+    <p className="rgone" role="status" data-testid="comment-gone">
+      <ITrash s={14} />
+      {CCOPY.gone}
+    </p>
+  ) : null;
   return (
     <aside className="crail" aria-label="Comments">
       <div className="rtabs" role="tablist" aria-label="Comments and activity">
@@ -1202,13 +1523,15 @@ function Rail(p: {
         {p.tab === "activity" ? (
           p.activity
         ) : !p.open.length && !p.resolved.length ? (
-          <div className="rempty" data-testid="comments-empty">
+          <div className="rempty" data-testid="comments-empty" tabIndex={-1}>
+            {goneNote}
             <IMsg s={20} />
             <b>{CCOPY.emptyTitle}</b>
             <p>{fill(CCOPY.emptyBody, p.agentName)}</p>
           </div>
         ) : (
           <>
+            {goneNote}
             {ordered.map((t) => (
               <Thread key={t.id} t={t} {...p} />
             ))}
@@ -1220,12 +1543,15 @@ function Rail(p: {
                 </button>
                 {showResolved
                   ? p.resolved.map((t) => (
-                      <div key={t.id} className="th col res" data-thread={t.id}>
+                      <div key={t.id} id={`th-${t.id}`} className="th col res" data-thread={t.id} tabIndex={-1}>
                         <div className="one">
                           <b>{t.messages[0]?.text}</b>
-                          <button type="button" className="btn quiet" onClick={() => void p.act(`comments/${t.id}/resolve`, { resolved: false })}>
-                            Reopen
-                          </button>
+                          <span className="ia">
+                            <button type="button" className="btn quiet" onClick={() => void p.act(`comments/${t.id}/resolve`, { resolved: false })}>
+                              Reopen
+                            </button>
+                            <ThreadMenu anchor={sectionOf(p.md, t)} mobile={p.mobile} onCopyLink={() => p.onCopyLink(t)} onDelete={() => p.onDelete(t)} />
+                          </span>
                         </div>
                         <p>“{plainQuote(t.quote)}”</p>
                       </div>
@@ -1277,16 +1603,17 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
       <div className="on-l">
         <span>On “{sectionOf(md, t)}”</span>
         <span className="ia">
-          <button type="button" className="btn quiet sm" onClick={() => void act(`comments/${t.id}/resolve`, { resolved: true })}>
+          <button type="button" className="btn quiet sm" onClick={() => p.onResolve(t)}>
             <ICheck s={14} />
             Resolve
           </button>
+          <ThreadMenu anchor={sectionOf(md, t)} mobile={p.mobile} onCopyLink={() => p.onCopyLink(t)} onDelete={() => p.onDelete(t)} />
         </span>
       </div>
       <blockquote>“{plainQuote(t.quote)}”</blockquote>
       {lost ? (
         <p className="lost">
-          <IMsg s={14} />
+          <ILinkOff s={14} className="i-linkoff" />
           {A(CCOPY.lost)}
         </p>
       ) : null}
@@ -1325,7 +1652,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
           </button>
         </div>
       ) : null}
-      {row ? <StatusRow row={row} t={t} agentName={agentName} act={act} onReview={onReview} onShowDecision={onShowDecision} /> : null}
+      {row ? <StatusRow row={row} t={t} agentName={agentName} act={act} onReview={onReview} onShowDecision={onShowDecision} onResolve={() => p.onResolve(t)} /> : null}
       {dropped ? (
         <div className="crow">
           <span className="t m">{CCOPY.noFit(dropped)}</span>
@@ -1360,7 +1687,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
   );
 }
 
-function StatusRow({ row, t, agentName, act, onReview, onShowDecision }: { row: Row; t: CommentThread; agentName: string; act: Act2; onReview: (t: CommentThread) => void; onShowDecision: (k: string) => void }) {
+function StatusRow({ row, t, agentName, act, onReview, onShowDecision, onResolve }: { row: Row; t: CommentThread; agentName: string; act: Act2; onReview: (t: CommentThread) => void; onShowDecision: (k: string) => void; onResolve: () => void }) {
   const ok = row.kind === "accepted" || row.kind === "done" || row.kind === "ready";
   let button: ReactNode = null;
   if (row.kind === "writing")
@@ -1378,7 +1705,7 @@ function StatusRow({ row, t, agentName, act, onReview, onShowDecision }: { row: 
   else if (row.kind === "accepted")
     // All accepted: Resolve is offered, never done for you (#28).
     button = (
-      <button type="button" className="btn quiet" onClick={() => void act(`comments/${t.id}/resolve`, { resolved: true })}>
+      <button type="button" className="btn quiet" onClick={onResolve}>
         Resolve
       </button>
     );

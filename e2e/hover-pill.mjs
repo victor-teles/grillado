@@ -266,6 +266,30 @@ try {
     await pg.mouse.move(acc.x + acc.width / 2, acc.y + acc.height / 2, { steps: 4 });
     await pg.clock.runFor(600);
     check(`${theme}: moving onto the pill keeps it`, (await hp(pg, B)).n === 1);
+    // Designer's nice-to-have on #14: the compact pill's muted Reject turns --foreground on hover.
+    const rjBox = await hpBtn("Reject").boundingBox();
+    const rjColour = () =>
+      pg.evaluate(() => {
+        const b = document.querySelector(".ipill.hp .btn.rj");
+        for (const a of b.getAnimations()) a.finish();
+        const probe = (v) => {
+          const x = document.createElement("span");
+          x.style.color = `var(${v})`;
+          document.body.append(x);
+          const c = getComputedStyle(x).color;
+          x.remove();
+          return c;
+        };
+        return { c: getComputedStyle(b).color, fg: probe("--foreground"), muted: probe("--muted-foreground") };
+      });
+    const rjRest = await rjColour();
+    await pg.mouse.move(rjBox.x + rjBox.width / 2, rjBox.y + rjBox.height / 2, { steps: 2 });
+    await pg.clock.runFor(50);
+    const rjHot = await rjColour();
+    check(`${theme}: the pill's Reject is muted, and --foreground while hovered`, rjRest.c === rjRest.muted && rjHot.c === rjHot.fg && rjHot.fg !== rjHot.muted, JSON.stringify({ rjRest, rjHot }));
+    await snap("d-hover-reject");
+    await pg.mouse.move(acc.x + acc.width / 2, acc.y + acc.height / 2, { steps: 2 });
+    await pg.clock.runFor(50);
     await moveTo(await plainSpot(pg));
     await pg.clock.runFor(159);
     check(`${theme}: still there 159ms after leaving`, (await hp(pg, B)).n === 1);

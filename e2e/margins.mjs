@@ -307,8 +307,51 @@ try {
     await plate(pg);
     await addFence(pg);
     {
-      const f = await pg.$eval(".doc pre", (e) => ({ tab: e.tabIndex, role: e.getAttribute("role"), wide: e.scrollWidth > e.clientWidth }));
-      check(`${theme}: a fence that scrolls sideways is a named Tab stop`, f.wide && f.tab === 0 && f.role === "region", JSON.stringify(f));
+      const f = await pg.$eval(".doc pre", (e) => ({ tab: e.tabIndex, role: e.getAttribute("role"), name: e.getAttribute("aria-label"), wide: e.scrollWidth > e.clientWidth }));
+      check(`${theme}: a fence that scrolls sideways is a Tab stop named "Code block, scrolls sideways" (#122)`, f.wide && f.tab === 0 && f.role === "region" && f.name === "Code block, scrolls sideways", JSON.stringify(f));
+      check(`${theme}: …and it's found by that name`, (await pg.getByRole("region", { name: "Code block, scrolls sideways" }).count()) === 1);
+      // #117 follow-up: the code block's Edit, and its focus ring, stay inside the fence's top edge.
+      const blk = pg.locator(".doc .blk[data-block=fence]").filter({ has: pg.locator("pre") }).first();
+      await blk.hover();
+      const edge = async () =>
+        blk.evaluate((b) => {
+          const pre = b.querySelector(":scope > pre").getBoundingClientRect();
+          const btn = b.querySelector(":scope > .blk-act");
+          const r = btn.getBoundingClientRect();
+          const ring = parseFloat((getComputedStyle(btn).boxShadow.match(/\d+(?:\.\d+)?px/g) ?? ["0px"]).pop());
+          const bs = getComputedStyle(b).boxShadow;
+          return { gapTop: Math.round(r.top - pre.top), gapRight: Math.round(pre.right - r.right), ring, blkRing: bs !== "none", focused: document.activeElement === btn, op: getComputedStyle(btn).opacity };
+        });
+      // Edit fades in on hover; measure it at rest.
+      await blk.locator(":scope > .blk-act").evaluate((b) => new Promise((r) => { const t0 = Date.now(); const f = () => (getComputedStyle(b).opacity === "1" || Date.now() - t0 > 1500 ? r() : requestAnimationFrame(f)); f(); }));
+      let e = await edge();
+      check(`${theme}: the code block's Edit sits inside the fence (not over its top edge)`, e.op === "1" && e.gapTop >= 4 && e.gapRight >= 4, JSON.stringify(e));
+      await pg.evaluate(() => document.documentElement.setAttribute("data-kbd", ""));
+      await blk.locator(":scope > .blk-act").focus();
+      e = await edge();
+      check(`${theme}: focused, Edit's ring stays inside the fence too, and the block draws no ring above it`, e.focused && e.ring > 0 && e.gapTop - e.ring >= 2 && !e.blkRing, JSON.stringify(e));
+      if (SHOTS) {
+        await pg.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
+        await pg.waitForTimeout(200);
+        await blk.screenshot({ path: path.join(SHOTS, `d-margins-fence-edit-focus-${theme}.png`) });
+      }
+      await pg.evaluate(() => (document.activeElement.blur(), document.documentElement.removeAttribute("data-kbd")));
+      // #121: keyboard focus in a block shows all of its cites, as hover does.
+      await pg.mouse.move(5, 5);
+      const cb = pg.locator(".doc .blk").filter({ has: pg.locator(".gut-cite") }).first();
+      const cites = async () =>
+        cb.evaluate((b) =>
+          [...b.querySelectorAll(".gut-cite")].map((c) => {
+            for (const a of c.getAnimations()) a.finish();
+            return getComputedStyle(c).opacity;
+          }),
+        );
+      const rest = await cites();
+      await pg.evaluate(() => document.documentElement.setAttribute("data-kbd", ""));
+      await cb.locator(":scope > .blk-act").focus();
+      const lit = await cites();
+      check(`${theme}: keyboard focus in a block shows all its cites (#121)`, rest.length > 0 && rest.every((o) => o === "0") && lit.every((o) => o === "1"), JSON.stringify({ rest, lit }));
+      await pg.evaluate(() => (document.activeElement.blur(), document.documentElement.removeAttribute("data-kbd")));
     }
 
     // ------------------------------------------------ 1440, rail closed: unchanged, the cite plus its label
