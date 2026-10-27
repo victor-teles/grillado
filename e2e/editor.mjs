@@ -218,6 +218,26 @@ try {
     await settle(pg);
     check(`${theme}: the plan's ⋯ opens the popover anchored under ⋯, right-aligned`, await pg.evaluate(() => { const a = document.querySelector('[aria-label="Plan actions"]').getBoundingClientRect(); const p = document.querySelector("[data-testid=use-in-editor]").getBoundingClientRect(); return Math.abs(p.top - a.bottom - 6) < 2 && Math.abs(p.right - a.right) < 2 && Math.round(p.width) === 480; }));
     check(`${theme}: Copy Markdown stays the one blue button`, (await pg.locator(".btn.primary:visible").count()) === 1);
+    const cm = await pg.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.background = "var(--primary)";
+      document.body.append(probe);
+      const blue = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { bg: getComputedStyle(document.querySelector(".copy-md")).backgroundColor, blue, open: !!document.querySelector(".ue.pop5") };
+    });
+    check(`${theme} MF1 (#111): .copy-md keeps its primary blue while .ue is open`, cm.open && cm.bg === cm.blue, JSON.stringify(cm));
+    const tabs = await ue(pg).getByRole("tab").first().evaluate((b) => `${getComputedStyle(b).fontSize}/${getComputedStyle(b).fontWeight}`);
+    check(`${theme}: tab labels are 14/500`, tabs === "14px/500", tabs);
+    const selBg = await ue(pg).locator(".well pre").evaluate((e) => {
+      const probe = document.createElement("span");
+      probe.style.background = "color-mix(in oklab, var(--primary) 30%, transparent)";
+      document.body.append(probe);
+      const want = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { got: getComputedStyle(e, "::selection").backgroundColor, want };
+    });
+    check(`${theme}: .ue ::selection is primary at 30%`, selBg.got === selBg.want, JSON.stringify(selBg));
     const request = `Build the Grillado plan “${plannedTitle}”.`;
     check(`${theme}: “Then ask Claude Code” with the request for this plan`, (await ue(pg).locator(".ask .sl").textContent()) === "Then ask Claude Code" && (await ue(pg).locator(".rq span").textContent()) === request);
     await shot(pg, "d-pop", theme);
@@ -253,6 +273,17 @@ try {
     check(`${theme}: End → Codex`, (await selectedTab(pg)) === "Codex");
     check(`${theme}: Codex config verbatim, plus the codex mcp add line`, (await code(pg)) === LOCAL.codex && (await ue(pg).locator(".alt code").textContent()) === `codex mcp add grillado -- ${NODE} ${CLI} mcp`);
     await shot(pg, "d-pop-codex", theme);
+    const alt = await ue(pg).locator(".sn.alt").evaluate((p) => {
+      const code = p.querySelector("code").getClientRects();
+      const last = code[code.length - 1];
+      const b = p.querySelector(".copy-inl").getBoundingClientRect();
+      const cs = getComputedStyle(p.querySelector(".copy-inl"));
+      const ring = parseFloat(cs.outlineOffset || "2") + 2; // :focus-visible ring, 2px at 2px offset
+      const note = p.nextElementSibling.getBoundingClientRect();
+      const prev = p.previousElementSibling.getBoundingClientRect();
+      return { onLast: Math.abs((b.top + b.bottom) / 2 - (last.top + last.bottom) / 2) <= 3 && b.left >= last.right - 1, below: note.top - (b.bottom + ring), above: b.top - ring - prev.bottom };
+    });
+    check(`${theme}: Codex “Or run” copy sits on the code's last line, ring ≥4px clear of the note`, alt.onLast && alt.below >= 4 && alt.above >= 4, JSON.stringify(alt));
     // Tab order (§8): tab → Copy → Or run → request → Close → tab
     const order = [];
     for (let i = 0; i < 5; i++) {
@@ -280,6 +311,7 @@ try {
     await shot(pg, "d-fail", theme);
     await ue(pg).getByRole("tab", { name: "Cursor" }).click();
     check(`${theme}: the hint clears on a tab switch`, (await err.count()) === 0);
+    check(`${theme}: …and so does the failed copy's selection`, (await pg.evaluate(() => getSelection().toString())) === "");
     await fixClipboard(pg);
     await pg.keyboard.press("Escape");
     check(`${theme}: Esc returns focus to ⋯`, (await ue(pg).count()) === 0 && (await active(pg)) === "BUTTON:Plan actions");
@@ -349,6 +381,9 @@ try {
     const rows = await mp.getByRole("menuitem").allTextContents();
     const ri = rows.findIndex((r) => r === "Use in your editor…");
     check(`${theme} phone: More sheet row between the theme and Quit`, ri > 0 && /theme/.test(rows[ri - 1]) && /Quit/.test(rows[rows.length - 1]), rows.join(" | "));
+    const rowH = async () => (await mp.getByRole("menuitem").evaluateAll((els) => els.map((e) => e.offsetHeight)));
+    const moreH = await rowH();
+    check(`${theme} phone: More menu rows are at least 44px`, moreH.every((h) => h >= 44), moreH.join(","));
     await shot(mp, "m-home", theme);
     await mp.getByRole("menuitem", { name: "Use in your editor…" }).tap();
     await ue(mp).waitFor();
@@ -364,6 +399,8 @@ try {
     const mitems = await mp.getByRole("menuitem").allTextContents();
     const mi = mitems.indexOf("Use in your editor…");
     check(`${theme} phone: ⋯ sheet has the row after Comments' group`, mi > 0 && mitems[mi + 1] === "Download .md" && /Activity|Comments/.test(mitems[mi - 1]), mitems.join(" | "));
+    const dotsH = await rowH();
+    check(`${theme} phone: ⋯ menu rows are at least 44px`, dotsH.every((h) => h >= 44), dotsH.join(","));
     await shot(mp, "m-menu", theme);
     await mp.getByRole("menuitem", { name: "Use in your editor…" }).tap();
     await ue(mp).waitFor();
@@ -387,6 +424,16 @@ try {
     await fixClipboard(mp);
     await ue(mp).getByRole("tab", { name: "Cursor" }).tap();
     await shot(mp, "m-sheet-cursor", theme);
+    await ue(mp).getByRole("tab", { name: "Codex" }).tap();
+    const malt = await ue(mp).locator(".sn.alt").evaluate((p) => {
+      const code = p.querySelector("code").getClientRects();
+      const last = code[code.length - 1];
+      const b = p.querySelector(".copy-inl").getBoundingClientRect();
+      const note = p.nextElementSibling.getBoundingClientRect();
+      const prev = p.previousElementSibling.getBoundingClientRect();
+      return { onLast: Math.abs((b.top + b.bottom) / 2 - (last.top + last.bottom) / 2) <= 3 && b.left >= last.right - 1, below: note.top - (b.bottom + 4), above: b.top - 4 - prev.bottom, h: b.height };
+    });
+    check(`${theme} phone: Codex “Or run” copy (44px) sits on the code's last line, ring ≥4px clear`, malt.onLast && malt.h >= 44 && malt.below >= 4 && malt.above >= 4, JSON.stringify(malt));
     await mp.locator(".cscrim").tap({ position: { x: 20, y: 20 } });
     check(`${theme} phone: a scrim tap closes, focus back on ⋯`, (await ue(mp).count()) === 0 && (await active(mp)) === "BUTTON:Plan actions", `${await ue(mp).count()} ${await active(mp)}`);
     await mctx.close();

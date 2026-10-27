@@ -91,6 +91,9 @@ export function UseInEditor(p: {
   }, [p.mobile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = (k: EditorKey, focus = false) => {
+    // A failed copy left its text selected for ⌘C; it belongs to the old tab only.
+    const sel = getSelection();
+    if (sel && !sel.isCollapsed && ref.current?.contains(sel.anchorNode)) sel.removeAllRanges();
     setTab(k);
     setFail(null);
     try {
