@@ -147,17 +147,22 @@ export async function runValidated<T>(
     let gotResult = false;
     guard.reset();
     show("");
-    for await (const ev of adapter.run(req, opts.signal)) {
-      if (ev.type === "text-delta") show(guard.push(ev.text));
-      else if (ev.type === "text-reset") {
-        guard.reset();
-        show("");
-      } else if (ev.type === "progress") opts.onProgress?.(attempt === 1 ? ev.label : "Taking another pass");
-      else if (ev.type === "error") return { ok: false, code: ev.code, message: ev.message };
-      else {
-        raw = ev.raw;
-        gotResult = true;
+    // However the stream ends (finished, failed, or stopped), what it held for a next word is let go.
+    try {
+      for await (const ev of adapter.run(req, opts.signal)) {
+        if (ev.type === "text-delta") show(guard.push(ev.text));
+        else if (ev.type === "text-reset") {
+          guard.reset();
+          show("");
+        } else if (ev.type === "progress") opts.onProgress?.(attempt === 1 ? ev.label : "Taking another pass");
+        else if (ev.type === "error") return { ok: false, code: ev.code, message: ev.message };
+        else {
+          raw = ev.raw;
+          gotResult = true;
+        }
       }
+    } finally {
+      if (opts.onText) show(guard.settle());
     }
     if (!gotResult) return { ok: false, code: "unknown", message: "The agent finished without a reply." };
     const candidate = extractCandidate(raw);

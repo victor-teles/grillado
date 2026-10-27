@@ -30,6 +30,15 @@ export class StreamGuard {
     return this.safe();
   }
 
+  /**
+   * The stream is over (finished, stopped or failed): release what the multi-word hold kept, since no
+   * next word is coming to make it banned ("Talk to Matt" keeps "Matt"). Partial words, instruction
+   * fragments and banned names stay cut; once tripped, only what was already shown.
+   */
+  settle(): string {
+    return this.safe(false);
+  }
+
   reset(): void {
     this.text = "";
     this.shown = "";
@@ -41,7 +50,7 @@ export class StreamGuard {
     return this.tripped;
   }
 
-  private safe(): string {
+  private safe(hold = true): string {
     if (this.tripped) return "";
     if (findBanned(this.text, this.exempt)) {
       this.tripped = true;
@@ -63,7 +72,7 @@ export class StreamGuard {
     }
     // Trailing words that could still become a multi-word banned name wait for the next word:
     // "As Matt" is held until we know whether "Pocock" follows.
-    cut = Math.min(cut, this.multiWordHold());
+    if (hold) cut = Math.min(cut, this.multiWordHold());
     // What was shown stays shown: the release only grows.
     const out = this.text.slice(0, Math.max(0, cut)).replace(/\s+$/, "");
     if (out.length > this.shown.length) this.shown = out;

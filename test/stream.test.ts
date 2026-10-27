@@ -261,3 +261,65 @@ describe("StreamGuard across chunk boundaries", () => {
     expect(g.push("As Matt ")).toBe("As Matt");
   });
 });
+
+// Designer review of #18, round 2: what the multi-word hold kept is let go when the stream ends
+// without a next word (Stop, error), so a kept partial says "Talk to Matt", not "Talk to".
+describe("StreamGuard.settle and the end of a stream", () => {
+  const cut = "Good catch. Talk to Matt ";
+  /** Streams `text` word by word, then waits for Stop: ends quietly, or throws, as an adapter may. */
+  const stoppable = (text: string, onAbort: "end" | "throw"): ProviderAdapter => ({
+    ...scripted([]),
+    async *run(_req, signal) {
+      yield* words(text);
+      await new Promise<void>((r) => (signal?.aborted ? r() : signal?.addEventListener("abort", () => r(), { once: true })));
+      if (onAbort === "throw") throw new Error("aborted");
+    },
+  });
+  test("settle releases a held first word, but not a partial word, a banned name or a tripped attempt", () => {
+    const g = new StreamGuard("");
+    expect(g.push(cut)).toBe("Good catch. Talk to");
+    expect(g.settle()).toBe("Good catch. Talk to Matt");
+    const p = new StreamGuard("");
+    p.push("Good catch. Talk to Matt Poc");
+    expect(p.settle()).toBe("Good catch. Talk to Matt"); // "Poc" is a partial word, so it stays cut
+    const b = new StreamGuard("");
+    b.push("Good catch. As Matt Pocock says ");
+    expect(b.settle()).toBe("");
+    expect(b.blocked).toBe(true);
+    const gr = new StreamGuard("");
+    gr.push("Good catch. Try gril");
+    expect(gr.settle()).toBe("Good catch. Try");
+  });
+  test("an error mid-stream keeps “Matt” in the partial", async () => {
+    const shown: string[] = [];
+    const r = await runValidated(scripted([[...words(cut), { type: "error", code: "unknown", message: "529" }]]), base, CommentReplySchema, () => null, opts(shown), "");
+    expect(r.ok).toBe(false);
+    expect(shown.at(-1)).toBe("Good catch. Talk to Matt");
+  });
+  for (const how of ["end", "throw"] as const)
+    test(`Stop keeps “Matt” in the partial (the adapter ${how === "end" ? "ends quietly" : "throws"})`, async () => {
+      const shown: string[] = [];
+      const c = new AbortController();
+      const run = runValidated(stoppable(cut, how), base, CommentReplySchema, () => null, { ...opts(shown), signal: c.signal }, "").catch(() => null);
+      await new Promise((r) => setTimeout(r, 5));
+      expect(shown.at(-1)).toBe("Good catch. Talk to");
+      c.abort();
+      await run;
+      expect(shown.at(-1)).toBe("Good catch. Talk to Matt");
+    });
+  test("Stop or an error never lets “As Matt Pocock” show", async () => {
+    for (const text of ["Good catch. As Matt Pocock says ", "Good catch. As Matt\nPocock "]) {
+      const shown: string[] = [];
+      await runValidated(scripted([[...words(text), { type: "error", code: "unknown", message: "529" }]]), base, CommentReplySchema, () => null, opts(shown), "");
+      const c = new AbortController();
+      const s2: string[] = [];
+      const run = runValidated(stoppable(text, "end"), base, CommentReplySchema, () => null, { ...opts(s2), signal: c.signal }, "");
+      await new Promise((r) => setTimeout(r, 5));
+      c.abort();
+      await run;
+      for (const s of [...shown, ...s2]) expect(s).not.toMatch(/pocock/i);
+      expect(shown.at(-1)).toBe("");
+      expect(s2.at(-1)).toBe("");
+    }
+  });
+});
