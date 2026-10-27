@@ -196,6 +196,33 @@ try {
   const opened = await row("Garden watering planner").textContent();
   check("Recent: an opened one reads From your editor · status · when", /^From your editor · Round 1 · (just now|\d+ min ago)$/.test(opened), opened);
   check("Recent: rows started in the browser are unchanged", /^(Plated|Wrapped early)/.test(await row("Shared shopping list").textContent()));
+  // MF2 (#110): a long queued row must not widen the phone Home; it stacks title over meta.
+  await call(editors[0].client, "start_plan", { idea: "A booking page for my barber shop" });
+  {
+    const token = new URL(app.url).searchParams.get("t");
+    const origin = new URL(app.url).origin;
+    for (const theme of ["dark", "light"]) {
+      const mc = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+      await mc.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const mp = await mc.newPage();
+      await mp.goto(`${origin}/?t=${token}`);
+      const long = mp.locator(".rrow", { hasText: "A booking page for my barber shop" });
+      await long.waitFor({ timeout: 5000 });
+      const g = await mp.evaluate(() => {
+        const r = [...document.querySelectorAll(".rrow")].find((x) => x.textContent.includes("A booking page for my barber shop"));
+        const nm = r.querySelector(".nm").getBoundingClientRect();
+        const meta = r.querySelector(".meta");
+        const mr = meta.getBoundingClientRect();
+        const solo = document.querySelector(".solo");
+        const cs = getComputedStyle(r);
+        return { sw: document.documentElement.scrollWidth, iw: innerWidth, solo: solo.scrollWidth - solo.clientWidth, h: r.getBoundingClientRect().height, stacked: mr.top >= nm.bottom - 1, metaFont: getComputedStyle(meta).fontSize, pad: cs.padding, gap: cs.rowGap, right: r.getBoundingClientRect().right, metaText: meta.textContent };
+      });
+      check(`MF2 390 ${theme}: a long queued row doesn't scroll the phone Home sideways`, g.sw === g.iw && g.solo === 0 && g.right <= g.iw, JSON.stringify(g));
+      check(`MF2 390 ${theme}: the queued row stacks title over a 12px meta (min-height 56, 8px 10px, gap 2px)`, g.stacked && g.h >= 56 && g.metaFont === "12px" && g.pad === "8px 10px" && g.gap === "2px" && g.metaText === "From Cursor · waiting for your answers", JSON.stringify(g));
+      if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `m-home-390-long-queued-${theme}.png`) });
+      await mc.close();
+    }
+  }
   if (SHOTS) {
     const token = new URL(app.url).searchParams.get("t");
     const origin = new URL(app.url).origin;
@@ -231,7 +258,7 @@ try {
   const m2 = await mcpClient();
   const c = m2.client;
   const plans = (await call(c, "list_plans")).structuredContent.plans;
-  check("works with the web app stopped", plans.length === 3, String(plans.length));
+  check("works with the web app stopped", plans.length === 4, String(plans.length));
   const sp = (await call(c, "start_plan", { idea: "Offline idea" })).structuredContent;
   check("start_plan with the app stopped: no URL, says to run this build (absolute node, #109)", sp.url === null && sp.next.includes(`Run \`${NODE} ${CLI}\` and open this idea from Recent`), sp.next);
   await m2.close();

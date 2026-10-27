@@ -106,6 +106,8 @@ button:disabled{cursor:default}
 /* ---------- solo screens (no agent, picker, landing, stopped) ---------- */
 .solo{overflow:auto;min-height:0;padding:96px 24px 40px}
 .solo>.col{max-width:560px;margin:0 auto;display:grid;gap:0}
+/* One track the column's width, never a row's max-content: a long Recent row can't widen the phone page (MF2). */
+.solo .col{grid-template-columns:minmax(0,1fr)}
 .solo h1{font-size:var(--t-title);line-height:30px;font-weight:600;letter-spacing:-.01em}
 .solo .lede{margin-top:8px;font-size:var(--t-body);line-height:22px}
 .solo.hero h1{font-size:32px;line-height:38px;text-align:center}
@@ -143,11 +145,17 @@ button:disabled{cursor:default}
 .composer .go.on{background:var(--primary);color:var(--primary-foreground)}
 .recent{margin-top:48px}
 .recent h2{font-size:var(--t-meta);font-weight:500;color:var(--muted-foreground);margin:0 0 6px}
-.recent ul{list-style:none;margin:0;padding:0;display:grid}
+.recent ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr)}
 .rrow{display:flex;align-items:center;gap:12px;height:40px;padding:0 10px;margin:0 -10px;border-radius:9px;border:0;background:none;width:calc(100% + 20px);text-align:left;color:inherit}
 @media (hover:hover){.rrow:hover{background:var(--sel)}}
 .rrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rrow .meta{flex:none;white-space:nowrap}
+/* Phone: an editor-started row stacks, title (ellipsis) over its 12px meta (#110). */
+@media (max-width:640px){
+  .rrow:has(.src1){flex-direction:column;align-items:stretch;justify-content:center;height:auto;min-height:56px;padding:8px 10px;gap:2px}
+  .rrow:has(.src1) .nm{flex:none}
+  .rrow:has(.src1) .meta{overflow:hidden;text-overflow:ellipsis}
+}
 .note.empty{text-align:center;margin-top:40px}
 .row .nm>span{margin-left:8px;font-weight:400;font-size:var(--t-meta);color:var(--muted-foreground)}
 
@@ -1213,7 +1221,8 @@ body:has([data-testid=diagram-run],[data-testid=diagram-failed],.review) .back6{
 .csheet.ue .ask .rq .icon-btn{width:44px;height:44px}
 .csheet.ue .copy-inl{width:44px;height:44px;margin:-10px 0}
 /* a comment written by the editor (§9) */
-.th .msg .who .via{display:inline-flex;align-items:center;gap:4px;font-size:var(--t-meta);color:var(--muted-foreground)}
+.th .msg .who .via{display:inline-flex;align-items:baseline;gap:4px;font-size:var(--t-meta);color:var(--muted-foreground)}
+.th .msg .who .via svg{align-self:center}
 /* §10: keyboard opens and copies are instant; reduced motion keeps the fades only. */
 html[data-kbd] .ue,html[data-kbd] .ue *{transition:none!important}
 @starting-style{html[data-kbd] .ue{opacity:1;transform:none;translate:none}}
