@@ -4,19 +4,25 @@
 // could still become one of our own instruction sentences waits, and once anything banned shows up
 // nothing more is released for that attempt (the reply will be rejected and asked again, and the
 // partial text is dropped).
-import { findBanned } from "./filter.ts";
+import { BANNED_TERMS, findBanned } from "./filter.ts";
 import { promptFragments } from "./prompts.ts";
 
 const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
 /** A held-back tail this long that starts an instruction sentence is never shown. */
 const FRAGMENT_PREFIX = 16;
+/** Banned terms of more than one word: their first words are harmless alone, so they wait (#97). */
+const MULTI_WORD = BANNED_TERMS.filter((t) => t.includes(" "));
 
 export class StreamGuard {
   private text = "";
   private tripped = false;
   private shown = "";
   private fragments = promptFragments().map(normalize);
-  constructor(private exempt: string) {}
+  private multi: string[];
+  constructor(private exempt: string) {
+    const ex = normalize(exempt);
+    this.multi = MULTI_WORD.filter((t) => !ex.includes(t));
+  }
 
   /** Add streamed text; returns the text that may be shown now. */
   push(more: string): string {
@@ -55,10 +61,26 @@ export class StreamGuard {
         }
       }
     }
+    // Trailing words that could still become a multi-word banned name wait for the next word:
+    // "As Matt" is held until we know whether "Pocock" follows.
+    cut = Math.min(cut, this.multiWordHold());
     // What was shown stays shown: the release only grows.
     const out = this.text.slice(0, Math.max(0, cut)).replace(/\s+$/, "");
     if (out.length > this.shown.length) this.shown = out;
     return this.shown;
+  }
+
+  /** Where the earliest trailing run of words that starts a multi-word banned term begins, or the end. */
+  private multiWordHold(): number {
+    let hold = this.text.length;
+    const longest = Math.max(0, ...this.multi.map((t) => t.length));
+    for (let i = this.text.length; i >= 0; i--) {
+      if (i > 0 && !/\s/.test(this.text[i - 1])) continue;
+      const tail = normalize(this.text.slice(i)).trim();
+      if (tail.length > longest) break;
+      if (tail && this.multi.some((t) => t.startsWith(tail))) hold = i;
+    }
+    return hold;
   }
 
   /** The position in the raw text of the normalized tail of length k (whitespace runs count once). */

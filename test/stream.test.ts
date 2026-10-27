@@ -229,3 +229,35 @@ describe("runValidated streaming (#97)", () => {
     expect(got?.stream).toBeUndefined();
   });
 });
+
+// Designer review of #18 (repro-guard-split.test.ts): split the reply at every chunk size 1–9 and
+// every offset; no banned name may ever show, not even its first word ("Matt" before "Pocock").
+describe("StreamGuard across chunk boundaries", () => {
+  const split = (c: string, size: number, off: number) => [c.slice(0, off), ...Array.from({ length: Math.ceil((c.length - off) / size) }, (_, i) => c.slice(off + i * size, off + (i + 1) * size))];
+  const each = (c: string, f: (shown: string[]) => void) => {
+    for (let size = 1; size <= 9; size++)
+      for (let off = 0; off < size; off++) {
+        const g = new StreamGuard("");
+        f(split(c, size, off).map((ch) => g.push(ch)));
+      }
+  };
+  const banned = ["Good catch. Use the grill-me method to check it.", "Good catch. After grilling the plan we know more.", "Good catch. As Matt Pocock says, keep it small.", "Good catch. As Matt\nPocock says, keep it small.", "Good catch. See mattpocock on that."];
+  for (const c of banned)
+    test(`never shows any of “${c.replace(/\n/g, "\\n")}”'s banned name`, () => {
+      each(c, (shown) => {
+        for (const s of shown) expect(s).not.toMatch(/grill-|grilli|matt|pocock/i);
+      });
+    });
+  test("a lone first word is released once the next word settles it", () => {
+    each("Good catch. Matt says keep it small.", (shown) => expect(shown.at(-1)).toBe("Good catch. Matt says keep it"));
+    each("Good catch. As Matt, keep it small.", (shown) => expect(shown.at(-1)).toContain("Matt, keep"));
+  });
+  test("skill and prompt are not banned terms: they stream as written (PO, #18)", () => {
+    each("Good catch. I used the skill to check it.", (shown) => expect(shown.at(-1)).toBe("Good catch. I used the skill to check"));
+    each("Good catch. The prompt says to keep it small.", (shown) => expect(shown.at(-1)).toBe("Good catch. The prompt says to keep it"));
+  });
+  test("a name the user typed is exempt, so it is not held", () => {
+    const g = new StreamGuard("what would Matt Pocock say?");
+    expect(g.push("As Matt ")).toBe("As Matt");
+  });
+});
