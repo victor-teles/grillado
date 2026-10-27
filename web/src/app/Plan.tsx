@@ -66,6 +66,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
   // The block you last changed here (re-ask line goes under it) and what it said before.
   const [touched, setTouched] = useState<{ key: string; was: string } | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
+  const room = useGutRoom(docRef, !mobile && tab === "doc" && mode === "rich");
   const editRef = useRef<((start: number, end: number) => void) | null>(null);
   const psg = useMemo(() => findPassages(draft.text), [draft.text]);
   const counts = planCounts(session, draft.text);
@@ -214,7 +215,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         fallback={session.stale?.[k]?.title ?? k}
         agentName={agentName}
         on={on === k || litKey === k}
-        labelMode={litKey === k}
+        labelMode={litKey === k && room === "full"}
         stale={staleKeys.has(k)}
         dzKey={k}
         onJump={() => goToDecision(k)}
@@ -390,6 +391,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
             readOnly={readOnly}
             decision={renderDecision}
             gut={mobile ? undefined : gut}
+            gutInline={room === "inline"}
             staleKeys={staleKeys}
             marks={cm.marks}
             editRef={editRef}
@@ -456,7 +458,7 @@ function GutCite({
   dzKey: string;
   onJump: () => void;
 }) {
-  const [peek, setPeek] = useState<null | { up: boolean }>(null);
+  const [peek, setPeek] = useState<null | { up: boolean; dx: number }>(null);
   const t = useRef<ReturnType<typeof setTimeout>>(undefined);
   const ref = useRef<HTMLSpanElement>(null);
   const pid = useId();
@@ -466,7 +468,10 @@ function GutCite({
     clearTimeout(t.current);
     t.current = setTimeout(() => {
       const r = ref.current?.getBoundingClientRect();
-      setPeek({ up: !!r && r.bottom + 200 > window.innerHeight });
+      // #118: the popover never crosses the plan's right edge; it right-aligns to it (minus 8) over the column.
+      const wrap = ref.current?.closest<HTMLElement>(".docwrap");
+      const edge = wrap ? wrap.getBoundingClientRect().left + wrap.clientWidth - 8 : window.innerWidth - 8;
+      setPeek({ up: !!r && r.bottom + 200 > window.innerHeight, dx: r ? Math.min(0, edge - (r.left + PEEK_W)) : 0 });
     }, delay);
   };
   const hide = () => {
@@ -508,7 +513,7 @@ function GutCite({
         ) : null}
       </button>
       {peek ? (
-        <span className="peekcard" id={pid} role="tooltip" data-up={peek.up ? "" : undefined} onPointerLeave={() => (lastClose = performance.now())}>
+        <span className="peekcard" id={pid} role="tooltip" data-up={peek.up ? "" : undefined} style={peek.dx ? { left: peek.dx } : undefined} onPointerLeave={() => (lastClose = performance.now())}>
           <span className="pq">{question}</span>
           {answer ? (
             <span className="a">
@@ -529,6 +534,44 @@ function GutCite({
       ) : null}
     </span>
   );
+}
+
+/** The preview popover's width (`.peekcard`, §2.3). */
+const PEEK_W = 300;
+
+/**
+ * How much the right margin holds (#118), measured as the visible `.docwrap` right edge minus the
+ * column's right edge, again on every resize or rail toggle:
+ * - "full": ≥240px (12 gap + 220 label + 8), the cite plus its answer label on hover or a lit link;
+ * - "cite": under 240px, the cite only ("R1·1"); the answer stays in the popover;
+ * - "inline": the measure is under 480px, so the cite goes inline at the end of its passage.
+ */
+type GutRoom = "full" | "cite" | "inline";
+const GUT_FULL = 240;
+const GUT_MIN_MEASURE = 480;
+function useGutRoom(wrapRef: { current: HTMLElement | null }, on: boolean): GutRoom {
+  const [room, setRoom] = useState<GutRoom>("full");
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!on || !wrap) return;
+    const measure = () => {
+      const doc = wrap.querySelector<HTMLElement>(".doc");
+      if (!doc || !doc.offsetWidth) return;
+      const d = doc.getBoundingClientRect();
+      const cs = getComputedStyle(doc);
+      const left = d.left + parseFloat(cs.paddingLeft || "0");
+      const right = d.right - parseFloat(cs.paddingRight || "0");
+      const margin = wrap.getBoundingClientRect().left + wrap.clientWidth - right;
+      setRoom(right - left < GUT_MIN_MEASURE ? "inline" : margin < GUT_FULL ? "cite" : "full");
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    const doc = wrap.querySelector(".doc");
+    if (doc) ro.observe(doc);
+    return () => ro.disconnect();
+  }, [on, wrapRef]);
+  return room;
 }
 
 // Within 600ms of one popover closing, the next opens at once (§2.3 warm window).

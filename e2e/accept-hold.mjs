@@ -465,12 +465,11 @@ try {
       await p3.locator(".ipill:not(.hp)").getByRole("button", { name: /^Accept/ }).click();
       let worst = 0;
       for (let i = 0; i < 12; i++) {
-        // The decision gutter (.gut, item 2) already spills past a 732px scroller on its own; that's
-        // noted separately. What this checks is that nothing of the hold does.
+        // Nothing spills past the 732px scroller: not the hold, and not the decision gutter (#118).
         worst = Math.max(worst, await p3.evaluate(() => {
           const w = document.querySelector(".docwrap");
           const edge = w.getBoundingClientRect().left + w.clientWidth;
-          return Math.max(0, ...[...w.querySelectorAll("*")].filter((e) => !e.closest(".gut")).map((e) => e.getBoundingClientRect().right - edge));
+          return Math.max(0, w.scrollWidth - w.clientWidth, ...[...w.querySelectorAll("*")].filter((e) => !e.closest("pre")).map((e) => e.getBoundingClientRect().right - edge));
         }));
         await p3.waitForTimeout(50);
       }

@@ -544,7 +544,7 @@ try {
   // Edit one block in place in the rich view.
   const para = page.locator("[data-testid=plan] .blk[data-block=para]").first();
   await para.scrollIntoViewIfNeeded();
-  const before = (await para.locator(":scope > :not(.blk-act)").first().textContent()) ?? "";
+  const before = (await para.locator(":scope > :not(.blk-act, .blk-slot)").first().textContent()) ?? "";
   await para.click({ position: { x: 4, y: 4 } });
   const blockBox = page.getByRole("textbox", { name: /Edit block as Markdown/ });
   await blockBox.waitFor();

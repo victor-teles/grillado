@@ -54,7 +54,7 @@ function readSelection(root: HTMLElement, text: string): Sel | null {
   // Text without the controls and labels the plan draws over its source.
   const box = document.createElement("div");
   box.append(range.cloneContents());
-  box.querySelectorAll(".blk-act, .gut, .sr-only, button, .ipill, ins.sg, .dz-meta").forEach((x) => x.remove());
+  box.querySelectorAll(".blk-act, .blk-slot, .gut, .sr-only, button, .ipill, ins.sg, .dz-meta").forEach((x) => x.remove());
   let words = cleanSelection(box.textContent ?? "").split(" ").filter(Boolean);
   if (!words.length) return null;
   // Across a decision card, the labels aren't in the source: keep the longest leading run that is.

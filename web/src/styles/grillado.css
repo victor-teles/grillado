@@ -356,6 +356,10 @@ button:disabled{cursor:default}
 
 /* ---------- plan: document ---------- */
 .doc{max-width:660px;margin:0 auto;padding:28px 40px 120px;box-sizing:content-box;font-size:15px;line-height:24px}
+/* #118: on desktop the margin right of the column is always ≥64px (12 gap + cite ≤44 + 8), so the cite fits in .docwrap and the
+   column narrows instead (1100 with the rail open: 652 → 628). 828 = 40 + 660 + 64 + 64: the padding only grows once the auto
+   margin can't make up the 64, so wide layouts don't move. */
+@media (min-width:768px){.doc{padding-right:clamp(40px,calc(828px - 100%),64px)}}
 .doc:focus{outline:none}
 .doc h1{font-size:var(--t-title);line-height:30px;font-weight:600;letter-spacing:-.01em}
 .doc h1+.sub{margin-top:4px;font-size:var(--t-body);line-height:20px}
@@ -369,6 +373,7 @@ button:disabled{cursor:default}
 .doc code{font-size:13px;padding:0 3px;border-radius:4px;background:var(--sel)}
 .doc pre{font:13px/21px var(--mono);background:var(--sel);border-radius:12px;padding:14px 16px;overflow-x:auto;margin:12px 0}
 .doc pre code{background:none;padding:0}
+.doc pre[tabindex]:focus-visible{outline:none;box-shadow:0 0 0 2px var(--ring)}
 .doc .ct{margin-left:4px;font-size:var(--t-meta);font-weight:400;color:var(--muted-foreground)}
 .doc .open h2,.doc h2:has(.ct){margin-top:24px}
 .doc .open{display:grid}
@@ -379,6 +384,10 @@ button:disabled{cursor:default}
 .doc .blk:has(>h1){margin-top:0}
 .blk-act{position:absolute;top:3px;right:6px;z-index:1;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;border:0;border-radius:7px;background:var(--background);color:var(--muted-foreground);font:500 var(--t-meta)/1 var(--sans);opacity:0;transition:opacity var(--d-quick) var(--ease-out)}
 .blk:hover>.blk-act,.blk:focus-within>.blk-act{opacity:1}
+/* #117: a 64×24 slot at the top right of the block's first line, always there (desktop hover devices), so Edit never sits on
+   text and hovering never reflows. Only the first line is shorter. Fences don't wrap: they get no slot (their own check, follow-up). */
+.blk-slot{display:none}
+@media (hover:hover) and (min-width:768px){.doc .blk>.blk-slot{display:block;float:right;width:64px;height:24px;pointer-events:none}}
 .blk-act:focus-visible{outline:none}
 .blk:has(>.blk-act:focus-visible){background:var(--sel);box-shadow:0 0 0 2px var(--ring);border-radius:8px}
 .doc .blk[data-editing]{display:grid;gap:12px}
@@ -400,6 +409,12 @@ button:disabled{cursor:default}
 /* Right-margin cites: absolutely placed at the passage's first line (static top), stacked when they collide. */
 .gut{position:absolute;left:100%;margin-left:12px;display:inline-flex;flex-direction:column;gap:2px;z-index:2;line-height:16px;margin-top:2px}
 .gut-i{position:relative;display:block}
+/* #118 fallback (v1.2 §3 .cite): with the measure under 480px the cite goes inline at the end of its passage, plain subtle text,
+   in the layout at opacity 0, so showing it never reflows. */
+.gut.in{position:static;display:inline;margin:0 0 0 4px;line-height:inherit}
+.gut.in .gut-i{display:inline-block;vertical-align:baseline}
+.gut.in .gut-i+.gut-i{margin-left:4px}
+.gut.in .gut-cite{display:inline-flex;height:auto;padding:0 2px;vertical-align:baseline}
 .gut:has(.peekcard){z-index:6}
 .gut-cite{display:flex;align-items:center;gap:6px;max-width:220px;height:18px;border:0;background:none;padding:0 4px;border-radius:5px;font:400 var(--t-meta)/16px var(--sans);color:var(--subtle-foreground);opacity:0;white-space:nowrap;transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-base) var(--ease-out)}
 .gut-cite .an{color:var(--foreground);font-weight:500;overflow:hidden;text-overflow:ellipsis}
