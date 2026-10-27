@@ -22,7 +22,7 @@ import type { CommentThread, SessionView, Suggestion } from "../types";
 import { SuggestionBlock } from "../diagrams/SuggestionBlock";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
 import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
-import { hit, lineRoom } from "./spot";
+import { hit, lineRoom, useDropOnResize } from "./spot";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = mac ? "⌘" : "Ctrl+";
@@ -862,6 +862,7 @@ export function useComments(o: Opts) {
                   unhover();
                   void review(op, [hovered]);
                 }}
+                onDrop={unhover}
               />,
               o.docRef.current,
             )
@@ -922,12 +923,7 @@ function OkMark({ id, bye, wrap, onDrop }: { id: string; bye: boolean; wrap: HTM
     setPos({ left: x - w.left + wrap.scrollLeft, top: top - w.top + wrap.scrollTop });
   }, [id, wrap]); // eslint-disable-line react-hooks/exhaustive-deps
   // Measured once: if the plan's width changes during the hold, the mark goes rather than moves.
-  useEffect(() => {
-    let first = true;
-    const ro = new ResizeObserver(() => (first ? (first = false) : onDrop()));
-    ro.observe(wrap);
-    return () => ro.disconnect();
-  }, [wrap]); // eslint-disable-line react-hooks/exhaustive-deps
+  useDropOnResize(wrap, onDrop);
   return (
     <span ref={ref} className={`okm${bye ? " bye" : ""}`} aria-hidden="true" data-ok={id} style={pos ? { left: pos.left, top: pos.top } : { visibility: "hidden", left: 0, top: 0 }}>
       <ICheck s={14} />
@@ -939,28 +935,39 @@ function OkMark({ id, bye, wrap, onDrop }: { id: string; bye: boolean; wrap: HTM
 /**
  * The hover pill (#103): "✓ Accept · Reject" floating over the text, so nothing reflows under the
  * pointer. 6px right of the end of the insertion's last line if it fits the column, otherwise 4px
- * below that line, right-aligned to its end. Fades in over 120ms (@starting-style). Not in the a11y tree, no Tab stops.
+ * below that line, right-aligned to its end. Either spot keeps off the block's Edit and its cites
+ * (#119, measured as the ✓ Accepted mark is): an inline spot that touches one goes below, and a
+ * below spot that touches one moves left of it, else under it. Fades in over 120ms (@starting-style).
+ * A resize of the plan or a rail toggle drops it, as it does the mark. Not in the a11y tree, no Tab stops.
  */
-function HoverPill({ id, wrap, onAct }: { id: string; wrap: HTMLElement; onAct: (op: "accept" | "reject") => void }) {
+function HoverPill({ id, wrap, onAct, onDrop }: { id: string; wrap: HTMLElement; onAct: (op: "accept" | "reject") => void; onDrop: () => void }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
     const el = ref.current;
     const q = `[data-sg="${CSS.escape(id)}"]`;
     const end = [...wrap.querySelectorAll<HTMLElement>(`ins.sg${q}`)].pop() ?? [...wrap.querySelectorAll<HTMLElement>(`del.sg${q}`)].pop();
-    const doc = wrap.querySelector<HTMLElement>(".doc");
-    const last = end ? [...end.getClientRects()].filter((r) => r.width > 0).pop() : undefined;
-    if (!el || !doc || !last) return;
+    const L = end && lineRoom(end);
+    if (!el || !L) return;
+    const { last, colLeft, colRight, taken } = L;
     const w = wrap.getBoundingClientRect();
-    const d = doc.getBoundingClientRect();
-    const cs = getComputedStyle(doc);
-    const colLeft = d.left + parseFloat(cs.paddingLeft || "0");
-    const colRight = d.right - parseFloat(cs.paddingRight || "0");
-    const fits = last.right + 6 + el.offsetWidth <= colRight;
-    const x = fits ? last.right + 6 : Math.max(colLeft, last.right - el.offsetWidth);
-    const y = fits ? last.top + (last.height - el.offsetHeight) / 2 : last.bottom + 4;
+    const ow = el.offsetWidth;
+    const oh = el.offsetHeight;
+    const at = (x: number, y: number) => ({ left: x, right: x + ow, top: y, bottom: y + oh });
+    let x = last.right + 6;
+    let y = last.top + (last.height - oh) / 2;
+    if (x + ow > colRight || hit(at(x, y), taken)) {
+      x = Math.max(colLeft, last.right - ow);
+      y = last.bottom + 4;
+      for (let t = hit(at(x, y), taken), n = 0; t && n < 4; t = hit(at(x, y), taken), n++) {
+        if (t.left - 4 - ow >= colLeft) x = t.left - 4 - ow;
+        else y = t.bottom + 4;
+      }
+    }
     setPos({ left: x - w.left + wrap.scrollLeft, top: y - w.top + wrap.scrollTop });
   }, [id, wrap]);
+  // Placed once: if the plan's width changes (a resize, the rail opening or closing), it goes.
+  useDropOnResize(wrap, onDrop);
   const btn = (op: "accept" | "reject") => ({
     type: "button" as const,
     tabIndex: -1,
@@ -976,7 +983,7 @@ function HoverPill({ id, wrap, onAct }: { id: string; wrap: HTMLElement; onAct: 
         <ICheck s={14} />
         Accept
       </button>
-      <button className="btn quiet" {...btn("reject")}>
+      <button className="btn quiet rj" {...btn("reject")}>
         Reject
       </button>
     </span>
