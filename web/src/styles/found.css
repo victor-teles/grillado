@@ -1,0 +1,66 @@
+/* v1.3 item 1 · Found in this project (handoff §1–§4, §7; mock src/found.css). */
+.fmount{margin-top:40px}
+.fmount + .recent{margin-top:16px}
+.fmount.e + .recent{margin-top:28px}
+.fh{display:flex;align-items:center;gap:6px;margin:0 0 4px;min-height:28px;font-size:var(--t-meta);line-height:16px}
+.fh h2{font-size:var(--t-meta);font-weight:500;color:var(--muted-foreground);margin:0;white-space:nowrap}
+.fh .proj{color:var(--subtle-foreground);display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;overflow:hidden}
+.fh .proj b{font-weight:500;color:var(--muted-foreground)}
+.fh .proj svg{width:12px;height:12px;flex:none}
+.fh .sp{flex:1}
+.fh .look{margin-right:-10px}
+.fh .busy{color:var(--muted-foreground);white-space:nowrap}
+.found ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr)}
+.found li:focus{outline:0}
+.frow{display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 10px;margin:0 -10px;border-radius:9px;color:inherit;text-decoration:none;width:calc(100% + 20px);box-sizing:border-box}
+.frow .tt{flex:1;min-width:0;display:grid;gap:2px}
+.frow .tt.skt{gap:8px;padding:2px 0;grid-template-rows:12px 10px;align-content:center}
+.frow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:20px}
+.frow .nm a{color:inherit;text-decoration:none;border-radius:4px}
+@media (hover:hover){.frow .nm a:hover{text-decoration:underline;text-decoration-color:var(--subtle-foreground);text-underline-offset:3px}}
+/* the meta wraps at a separator (never inside one); the "·" sits in the gap, clipped at a line start (#83); 2 lines max */
+.frow .meta{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:flex;flex-wrap:wrap;column-gap:15px;max-height:32px;overflow:hidden}
+.frow .meta .sg{position:relative;white-space:nowrap}
+.frow .meta .sg+.sg::before{content:"·";position:absolute;left:-10px}
+.frow .meta .ch{color:var(--foreground);font-weight:500}
+.frow .meta .er{color:var(--destructive-ink)}
+.frow .meta .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gr-ember);margin:0 6px 1px 0;vertical-align:middle}
+.frow .meta svg{display:inline-block;width:12px;height:12px;vertical-align:-1px;margin-right:2px}
+.frow .act{flex:none;display:flex;align-items:center;gap:4px}
+.frow .act .txt{font-size:var(--t-meta);color:var(--muted-foreground);padding:0 10px}
+.frow .tag{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);background:var(--muted);border-radius:6px;padding:2px 8px}
+@media (hover:hover){a.frow:hover{background:var(--sel)}}
+a.frow:focus-visible,.frow .nm a:focus-visible,.slot button:focus-visible,.fempty button:focus-visible{box-shadow:0 0 0 2px var(--background),0 0 0 4px var(--ring);outline:0}
+/* Import: three labels in one grid cell, so the width never changes (#91 pattern) */
+.imp{display:inline-grid;justify-items:center}
+.imp>span{grid-area:1/1;display:inline-flex;align-items:center;gap:4px;opacity:0;transition:opacity var(--d-press) var(--ease-out)}
+.imp[data-l=a]>.a,.imp[data-l=b]>.b,.imp[data-l=c]>.c{opacity:1}
+.imp[data-l=b]{color:var(--muted-foreground);cursor:default}
+.imp[data-l=c]{background:transparent;color:var(--success-ink);cursor:default}
+.imp svg{width:14px;height:14px}
+html[data-kbd] .imp>span{transition:none}
+.sk{display:block;height:12px;border-radius:6px;background:var(--muted)}
+.slot{height:32px;display:flex;align-items:center;gap:6px;font-size:var(--t-meta);color:var(--muted-foreground)}
+.slot .lnk,.fempty .lnk{border:0;background:none;padding:0;font:inherit;color:var(--muted-foreground);text-decoration:underline;text-decoration-color:var(--subtle-foreground);text-underline-offset:3px;cursor:pointer;border-radius:4px}
+.slot .more{border:0;background:none;padding:0;font:inherit;color:var(--muted-foreground);cursor:pointer;border-radius:4px}
+@media (hover:hover){.slot .more:hover,.slot .lnk:hover,.fempty .lnk:hover{color:var(--foreground)}}
+.fempty{display:flex;align-items:center;gap:6px;min-height:28px;font-size:var(--t-meta);color:var(--muted-foreground);margin:0}
+.fempty .x{width:28px;height:28px;margin-left:auto;margin-right:-6px}
+.fempty .x svg{width:14px;height:14px}
+/* §5 provenance on an imported plan: the meta line as gap-separated parts (#144) */
+.sub.fp{display:flex;flex-wrap:wrap;column-gap:15px}
+.sub.fp>span{position:relative}
+.sub.fp>span+span::before{content:"·";position:absolute;left:-10px}
+.fp-ch{color:var(--foreground);font-weight:500}
+.fp-up{border:0;background:none;padding:0 2px;margin:0 -2px;font:inherit;color:var(--foreground);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair);cursor:pointer;border-radius:4px}
+@media (hover:hover){.fp-up:hover{text-decoration-color:currentColor}}
+.fp-up:focus-visible{box-shadow:0 0 0 2px var(--background),0 0 0 4px var(--ring);outline:0}
+.fp-up[aria-disabled]{cursor:default;color:var(--muted-foreground)}
+@media (max-width:640px){
+  .fmount{margin-top:32px}
+  .frow{min-height:60px;padding:8px 0 8px 10px;margin-right:0;width:calc(100% + 10px)}
+  .frow .act .btn{height:44px;padding:0 12px;font-size:13px;border-radius:10px}
+  .fh .look{height:44px}
+  .fempty .x{width:44px;height:44px;margin-right:-12px}
+}
+.imp6 p{overflow-wrap:anywhere}

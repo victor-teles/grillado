@@ -3,7 +3,7 @@ import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, stat
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import { decisionsFromAnswers, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
@@ -40,7 +40,8 @@ import { textHash } from "../core/text-hash.ts";
 import { buildTree } from "../core/tree.ts";
 import { type McpLaunch, mcpLaunch } from "./launch.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
-import { type FoundService, type Writer, storeWriter } from "./found.ts";
+import { type AgentRun, type FoundService, type ImportResult, type Writer, storeWriter } from "./found.ts";
+import { stripInvocation } from "../core/found/extract.ts";
 import { ImportError } from "../core/found/import.ts";
 import type { Store } from "./store.ts";
 
@@ -432,10 +433,11 @@ export class GrilladoServer {
     const lines = this.lines(s);
     const live = new Map<string, string>();
     for (const r of this.recorders.get(s.id) ?? []) if (r.current) live.set(r.id, r.current);
-    const entries = fold(lines, live);
+    const entries = fold(lines, live).map((e) => (e.type === "import" && e.source ? { ...e, source: { ...e.source, path: tildify(e.source.path), gone: !existsSync(e.source.path) } } : e));
     const first = lines.find((l) => l.type === "run.started");
     // Sessions from before 1.1 had work that wasn't logged (#58).
-    const legacy = s.rounds.length > 0 && (!first || Date.parse((first as { at: string }).at) > Date.parse(s.rounds[0].askedAt) + 1000);
+    // Imported plans (v1.3 item 1) have no runs: their work happened in the source.
+    const legacy = !s.source && s.rounds.length > 0 && (!first || Date.parse((first as { at: string }).at) > Date.parse(s.rounds[0].askedAt) + 1000);
     return { entries: entries.slice(0, Math.max(1, Math.min(limit, 5000))), total: entries.length, legacy };
   }
 
@@ -511,12 +513,21 @@ export class GrilladoServer {
       planPath: s.plan?.path,
       tree: buildTree(s),
       activity: this.activityView(s),
+      // v1.3 item 1 §6: where an imported plan came from, and whether that source changed or is gone.
+      ...(s.source ? { sourceInfo: this.sourceInfo(s) } : {}),
       acceptStreak: acceptStreak(s),
       nudge: shouldNudge(s),
     };
   }
 
   // ---------------------------------------------------------------- found in this project (v1.3 item 1)
+
+  /** §5: the source's state for the plan's meta line, dated like its Activity entry (the source's date). */
+  private sourceInfo(s: Session) {
+    const at = (this.lines(s).find((l) => l.type === "import") as { at: string } | undefined)?.at ?? s.source!.importedAt;
+    const i = this.opts.found && !this.opts.found.skip ? this.opts.found.sourceInfo(s) : null;
+    return { ...(i ?? { state: existsSync(s.source!.path) ? ("current" as const) : ("gone" as const), row: "" }), date: at };
+  }
 
   /** The launch scan. Errors stay local: a scan that fails shows nothing, it never stops the app. */
   async scanProject() {
@@ -528,7 +539,7 @@ export class GrilladoServer {
     }
   }
 
-  private static FOUND_STATUS: Record<ImportError["code"], number> = { unknown: 404, in_progress: 409, needs_agent: 409, busy: 409, not_qualified: 422, unreadable: 422, filtered: 422 };
+  private static FOUND_STATUS: Record<ImportError["code"], number> = { unknown: 404, in_progress: 409, needs_agent: 409, busy: 409, not_qualified: 422, unreadable: 422, filtered: 422, stopped: 409, agent: 502 };
 
   private async foundRoutes(req: http.IncomingMessage, res: http.ServerResponse, parts: string[], body: any) {
     const f = this.opts.found;
@@ -545,18 +556,64 @@ export class GrilladoServer {
       this.broadcast({ type: "found" });
       return this.json(res, 200, view());
     }
+    if (parts[0] === "stop") {
+      if (typeof body?.id !== "string") return this.json(res, 400, { error: "Expected { id }" });
+      f.stop(body.id);
+      return this.json(res, 200, view());
+    }
     if (parts[0] === "import") {
       if (typeof body?.id !== "string") return this.json(res, 400, { error: "Expected { id }" });
       try {
-        const r = await f.import(body.id, this.selected ?? this.opts.store.readConfig().defaultProvider ?? PROVIDER_IDS[0], this.foundWriter());
+        const r = await f.import(body.id, this.selected ?? this.opts.store.readConfig().defaultProvider ?? PROVIDER_IDS[0], this.foundWriter(), this.foundAgent());
+        if ((r.result === "created" || r.result === "updated") && r.source) this.logImport(r.planId, r.result, r.source);
         this.broadcast({ type: "app" });
         return this.json(res, 200, { ...r, url: `/s/${r.planId}`, row: f.last?.rows.find((x) => x.id === body.id) ?? null });
       } catch (err) {
-        if (err instanceof ImportError) return this.json(res, GrilladoServer.FOUND_STATUS[err.code], { error: err.message, code: err.code });
+        if (err instanceof ImportError) return this.json(res, GrilladoServer.FOUND_STATUS[err.code], { error: err.message, code: err.code, ...(err.reason ? { reason: err.reason } : {}) });
         throw err;
       }
     }
     return this.json(res, 404, { error: "Not found" });
+  }
+
+  /** §4: the selected agent turns a free-text session's answers into decisions, in an empty folder. */
+  private foundAgent(): AgentRun {
+    return async (x, signal) => {
+      const id = this.selected ?? this.opts.store.readConfig().defaultProvider;
+      const adapter = this.providers.some((p) => p.id === id && p.detection.status === "ready") ? this.opts.adapters.find((p) => p.id === id) : undefined;
+      if (!adapter) return { ok: false, code: "missing" };
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "grillado-import-"));
+      try {
+        const r = await decisionsFromAnswers(stripInvocation(x.idea), x.pairs ?? [], adapter, { cwd, timeoutMs: this.opts.timeoutMs ?? 180_000, signal });
+        return r.ok ? { ok: true, decisions: r.value.decisions } : { ok: false, code: r.code };
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    };
+  }
+
+  /** §5 (#154): "Imported from a Claude Code session" in the plan's Activity, dated at the source. */
+  private logImport(planId: string, what: "created" | "updated", src: NonNullable<ImportResult["source"]>) {
+    const s = this.sessions.get(planId) ?? this.opts.store.load(planId);
+    if (!s) return;
+    const now = new Date().toISOString();
+    this.log(s, {
+      v: 1,
+      type: "import",
+      what: what === "created" ? "imported" : "updated",
+      at: what === "created" && src.date ? src.date : now,
+      importedAt: now,
+      app: src.app,
+      kind: src.kind,
+      path: src.path,
+      answers: src.answers,
+      hasPlan: src.hasPlan,
+      project: src.project,
+      ...(src.compacted ? { compacted: true } : {}),
+      ...(src.ideaFromSummary ? { ideaFromSummary: true } : {}),
+      ...(src.viaAgent ? { viaAgent: true } : {}),
+    });
+    if (this.sessions.get(planId) === s) this.broadcast({ type: "session", session: this.view(s) });
   }
 
   /** Imports go through the live copy when the plan is open, so the browser sees them at once. */

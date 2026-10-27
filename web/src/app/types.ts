@@ -29,6 +29,59 @@ export interface SessionSummary {
   from?: string;
   /** Started over MCP and not opened yet: its first round starts when it is. */
   queued?: boolean;
+  /** Imported from a source found in the project (v1.3 item 1 §6). */
+  source?: { app: SourceApp; kind: SourceKind };
+}
+
+// ---------------------------------------------------------------- found in this project (v1.3 item 1)
+export type SourceApp = "claude" | "codex" | "cursor" | "file";
+export type SourceKind = "session" | "plan";
+export interface FoundRow {
+  id: string;
+  app: SourceApp;
+  kind: SourceKind;
+  title: string;
+  path: string;
+  relPath?: string;
+  subfolder?: string;
+  branch?: string;
+  date: string;
+  questions: number;
+  decisions: number;
+  answers?: number;
+  hasPlan: boolean;
+  status: "new" | "imported" | "changed" | "in_progress" | "error";
+  importable: "structured" | "agent";
+  planId?: string;
+  compacted?: boolean;
+  unanswered?: number;
+  error?: string;
+}
+export interface FoundProject {
+  root: string;
+  name: string;
+  git: boolean;
+  branch?: string;
+  sha?: string;
+}
+export type FoundView =
+  | { enabled: false; reason: string }
+  | {
+      enabled: true;
+      state: "off" | "idle" | "scanning" | "done";
+      /** The rows are the last launch's, re-checked quietly. */
+      cached: boolean;
+      project: FoundProject | null;
+      hidden: boolean;
+      partial: boolean;
+      scannedAt: string | null;
+      rows: FoundRow[];
+      agent: { running: string | null; waiting: string[]; failed: Record<string, string> };
+    };
+export interface ImportReply {
+  planId: string;
+  result: "created" | "updated" | "unchanged" | "conflict";
+  url: string;
 }
 
 /** How an editor starts `grillado mcp` (server-provided, handoff §2a). */
@@ -176,6 +229,10 @@ export interface SessionView {
   progress?: string;
   /** The activity log (item 6): the latest entries, newest first. */
   activity?: ActivityView;
+  /** Imported from a source found in the project (v1.3 item 1). */
+  source?: { app: SourceApp; kind: SourceKind; importedAt: string; questions: number; compacted?: boolean; viaAgent?: boolean };
+  /** §5: whether that source is still the same, changed, or gone; `row` is what Update re-imports. */
+  sourceInfo?: { state: "current" | "changed" | "gone"; row: string; date?: string } | null;
   tree: TreeState;
   acceptStreak: number;
   nudge: boolean;

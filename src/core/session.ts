@@ -128,8 +128,10 @@ export interface ImportedSource {
   importedAt: string;
   /** Hash of the plan.md the import wrote, to tell a user's edit from our own on Update. */
   planHash?: string;
-  /** Answered questions copied. */
+  /** Answered questions copied (free-text sessions: the answers {agent} turned into decisions). */
   questions: number;
+  /** Free-text session: {agent} turned the answers into decisions at import (§4). */
+  viaAgent?: boolean;
   /** Questions in the source that had no answer (a session cut short); not imported. */
   unanswered?: number;
   /** Part of the session was compacted away; the import holds what was left. */

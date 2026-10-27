@@ -9,7 +9,7 @@ export type Detection =
   | { status: "broken" | "outdated"; version?: string; path?: string; reason: string };
 
 export interface RunRequest {
-  kind: "round" | "synthesis" | "comment" | "edit" | "diagram" | "addplan";
+  kind: "round" | "synthesis" | "comment" | "edit" | "diagram" | "addplan" | "import";
   /** Hidden method, server-only. */
   systemPrompt: string;
   /** Compact tree state + latest answers. */

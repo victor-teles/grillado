@@ -1,4 +1,4 @@
-import type { ActivityView, AppState, SessionView } from "./types";
+import type { ActivityView, AppState, FoundView, ImportReply, SessionView } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -43,6 +43,11 @@ export const api = {
       { markdown, base, ...(reask ? { reask: true } : {}) },
       { keepalive: markdown.length < 60_000 },
     ),
+  found: () => call<FoundView>("GET", "/api/found"),
+  foundRescan: () => call<FoundView>("POST", "/api/found/rescan"),
+  foundDismiss: (hidden: boolean) => call<FoundView>("POST", "/api/found/dismiss", { hidden }),
+  foundImport: (id: string) => call<ImportReply>("POST", "/api/found/import", { id }),
+  foundStop: (id: string) => call<FoundView>("POST", "/api/found/stop", { id }),
   activity: (id: string, limit: number) => call<ActivityView>("GET", `/api/sessions/${encodeURIComponent(id)}/activity?limit=${limit}`),
   action: (id: string, action: string, body?: unknown) =>
     call<SessionView>("POST", `/api/sessions/${encodeURIComponent(id)}/${action}`, body),
@@ -53,14 +58,21 @@ export type ServerEvent =
   | { type: "progress"; sessionId: string; label: string }
   /** A comment reply's text so far, where the agent streams (#97); "" when it starts over. */
   | { type: "reply-text"; sessionId: string; threadId: string; text: string }
-  | { type: "app" };
+  | { type: "app" }
+  /** The project scan or an agent import changed (v1.3 item 1). */
+  | { type: "found" };
+
+/** Found in this project listens here; the one event stream feeds it (no second connection). */
+export const foundListeners = new Set<() => void>();
 
 /** Live updates. Calls `onDown` when the server is gone (Ctrl+C or Quit). */
 export function subscribe(onEvent: (e: ServerEvent) => void, onDown: () => void): () => void {
   const source = new EventSource("/api/events");
   source.onmessage = (m) => {
     try {
-      onEvent(JSON.parse(m.data));
+      const e = JSON.parse(m.data) as ServerEvent;
+      if (e.type === "found") for (const f of foundListeners) f();
+      onEvent(e);
     } catch {
       // ignore malformed frames
     }

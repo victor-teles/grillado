@@ -52,7 +52,44 @@ export type ActivityLine =
     }
   | { v: 1; type: "review"; run: string | null; accepted: string[]; rejected: string[]; undone?: string[]; at: string }
   | { v: 1; type: "user"; what: "answered" | "confirmed"; round?: number; answers?: number; yourCall?: number; decisions?: number; open?: string[]; at: string }
-  | { v: 1; type: "file"; what: "reloaded" | "kept-mine" | "loaded-file"; at: string };
+  | { v: 1; type: "file"; what: "reloaded" | "kept-mine" | "loaded-file"; at: string }
+  | ImportLine;
+
+/**
+ * v1.3 item 1 §5 (#154): the plan came from a source found in the project. `at` is the source's own
+ * date, so the import is the plan's first entry, in its own group; `importedAt` is when it was read.
+ */
+export interface ImportLine {
+  v: 1;
+  type: "import";
+  what: "imported" | "updated";
+  at: string;
+  importedAt: string;
+  app: "claude" | "codex" | "cursor" | "file";
+  kind: "session" | "plan";
+  path: string;
+  /** Answered questions (sessions), or decision blocks (plan files). */
+  answers: number;
+  hasPlan: boolean;
+  project: string;
+  compacted?: boolean;
+  ideaFromSummary?: boolean;
+  /** Free-text session: {agent} turned the answers into decisions (§4). */
+  viaAgent?: boolean;
+}
+
+/** "Claude Code session", "Codex session", "Cursor plan", "Plan file" (#140). */
+export function sourceLabel(app: ImportLine["app"], kind: ImportLine["kind"]): string {
+  if (app === "claude") return "Claude Code session";
+  if (app === "codex") return "Codex session";
+  if (app === "cursor") return kind === "plan" ? "Cursor plan" : "Cursor session";
+  return "Plan file";
+}
+/** "a Claude Code session", "a plan file". */
+export const sourceWithArticle = (app: ImportLine["app"], kind: ImportLine["kind"]) => {
+  const l = sourceLabel(app, kind);
+  return `a ${app === "file" ? l.toLowerCase() : l}`;
+};
 
 export interface Step {
   label: string;
@@ -63,8 +100,10 @@ export interface Step {
 /** One row in the Activity tab. Agent runs have steps and a duration; your actions and file events don't. */
 export interface Entry {
   id: string;
-  type: "run" | "review" | "user" | "file";
+  type: "run" | "review" | "user" | "file" | "import";
   at: string;
+  /** import (§5) */
+  source?: Omit<ImportLine, "v" | "type" | "at" | "what"> & { gone?: boolean };
   kind?: RunKind;
   agent?: string;
   target?: RunTarget;
@@ -146,6 +185,9 @@ export function fold(lines: ActivityLine[], live?: Map<string, string>): Entry[]
       list.push({ id: `u_${list.length}`, type: "user", at: l.at, what: l.what, round: l.round, answers: l.answers, yourCall: l.yourCall, decisions: l.decisions, open: l.open, steps: [] });
     } else if (l.type === "file") {
       list.push({ id: `f_${list.length}`, type: "file", at: l.at, what: l.what, steps: [] });
+    } else if (l.type === "import") {
+      const { v: _v, type: _t, at, what, ...source } = l;
+      list.push({ id: `i_${list.length}`, type: "import", at, what, source, steps: [] });
     }
   }
   for (const [id, label] of live ?? []) {
@@ -238,9 +280,13 @@ export function title(e: Entry): string {
     if (a && r) return `You reviewed ${plural(a + r, "suggestion")}`;
     return a ? `You accepted ${plural(a, "suggestion")}` : `You rejected ${plural(r, "suggestion")}`;
   }
+  if (e.type === "import" && e.source) return `${e.what === "updated" ? "Updated" : "Imported"} from ${sourceWithArticle(e.source.app, e.source.kind)}`;
   if (e.type === "user") return e.what === "confirmed" ? `You confirmed ${plural(e.decisions ?? 0, "decision")}` : `You answered round ${e.round ?? 0}`;
   return "plan.md changed on disk";
 }
+
+/** The CLI's failure codes (classify.ts) as reasonText reads them. */
+export const reasonCode = (code: string | null | undefined) => (code === "rate_limit" ? "rate" : code === "not_found" ? "missing" : code);
 
 /** Plain words for a failure code from the agent CLI (AC17: never the raw text). */
 export function reasonText(code: string | null | undefined, agent: string): string {
@@ -296,6 +342,9 @@ export function metaParts(e: Entry, o: { agent: string; agentId?: string; agentN
       const secs = [...new Set([...(e.accepted ?? []), ...(e.rejected ?? [])].map((id) => o.sectionOf?.(id)).filter((x): x is string => !!x))];
       if (secs.length) out.push(secs.join(" · "));
     }
+  } else if (e.type === "import" && e.source) {
+    const x = e.source;
+    out.push(x.kind === "plan" ? plural(x.answers, "decision") : plural(x.answers, "answer"), x.project);
   } else if (e.type === "user") {
     if (e.what === "confirmed") out.push(e.open?.length ? `${e.open.length} still open: ${e.open.join(", ")}` : "nothing open");
     else out.push([plural(e.answers ?? 0, "answer"), e.yourCall ? `${e.yourCall} your call` : ""].filter(Boolean).join(" · "));
@@ -371,11 +420,16 @@ export function groupLabel(g: Group, now = new Date()): { label: string; today: 
   const day = from.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   const a = time(g.from);
   const b = time(g.to);
+  if (a === b) return { label: `${day} · ${a}`, today: false }; // one moment (an import, #154): no range
   const same = a.slice(-2) === b.slice(-2);
   return { label: `${day} · ${same ? a.slice(0, -3) : a}–${b}`, today: false };
 }
 
-export const groupMeta = (g: Group) => [g.runs ? plural(g.runs, "run") : "", g.runs ? fmt(g.ms) : ""].filter(Boolean).join(" · ");
+export const groupMeta = (g: Group) =>
+  // An import's own session reads "1 entry" (#154); other groups keep their run count.
+  !g.runs && g.entries.every((e) => e.type === "import")
+    ? plural(g.entries.length, "entry", "entries")
+    : [g.runs ? plural(g.runs, "run") : "", g.runs ? fmt(g.ms) : ""].filter(Boolean).join(" · ");
 
 // ---------------------------------------------------------------- copy log (#60) and live region (#61)
 
@@ -393,6 +447,22 @@ export function copyText(e: Entry, o: { agent: string; statusOf?: (id: string) =
     lines.push(`Result: ${plural(n, "suggestion")} (${e.suggestions.map((x) => `${x.section ?? "Plan"}: ${o.statusOf?.(x.id) ?? "to review"}`).join(", ")})`);
   } else if (e.type === "run" && e.status === "done") lines.push(`Result: ${metaParts(e, { agent: A }).slice(1).join(" · ") || "done"}`);
   return lines.join("\n");
+}
+
+/** §5: the import entry's body, as label/value rows (Source, Imported, Left out, Missing, Now). */
+export function importRows(e: Entry, agent: string): [string, string][] {
+  const x = e.source;
+  if (!x) return [];
+  const rows: [string, string][] = [["Source", x.path]];
+  if (x.kind === "plan") rows.push(["Imported", `The plan text${x.answers ? ` and its ${plural(x.answers, "decision")}` : ""}`]);
+  else {
+    const qa = x.viaAgent ? `${plural(x.answers, "answer")} ${agent} turned into decisions` : `${plural(x.answers, "question")} with your answers`;
+    rows.push(["Imported", `The opening idea, ${qa}${x.hasPlan ? ", and the plan text" : ""}`]);
+    rows.push(["Left out", "Tool calls and file contents"]);
+  }
+  if (x.compacted) rows.push(["Missing", x.ideaFromSummary ? "The start of the session was compacted; the opening idea came from its summary" : "The start of the session was compacted"]);
+  if (x.gone) rows.push(["Now", `The ${x.kind === "plan" ? "plan file" : "session file"} is no longer on disk. The plan is unchanged.`]);
+  return rows;
 }
 
 /** What the running entry is doing, for "{agent} started applying feedback on Hosting." */

@@ -4,6 +4,8 @@ import { CopyButton } from "./CopyButton";
 import { IPlus, IRefresh, IUp } from "./icons";
 import type { AppState, ProviderId, ProviderView, SessionSummary } from "./types";
 import { fromEditor } from "../../../src/core/editor.ts";
+import { sourceLabel } from "../../../src/core/activity.ts";
+import { Found } from "./found/Found";
 
 // ---------------------------------------------------------------- 0c no agent
 
@@ -294,6 +296,8 @@ export function Landing({
             </button>
           </div>
         </form>
+        {/* Found in this project (v1.3 item 1): its one mount point. Q1 (placement) moves only this line. */}
+        <Found agent={provider?.displayName ?? "Your agent"} onOpen={onOpen} />
         <Recent sessions={state.sessions} dataDir={state.dataDir} onOpen={onOpen} />
       </div>
     </main>
@@ -345,7 +349,12 @@ function Recent({ sessions, dataDir, onOpen }: { sessions: SessionSummary[]; dat
             >
               <span className="nm">{s.idea.split("\n")[0]}</span>
               <span className="meta">
-                {s.from !== undefined ? (
+                {s.source ? (
+                  // Imported from a source found in the project (v1.3 item 1 §6, #143).
+                  <>
+                    <span className="src1">From {sourceLabel(s.source.app, s.source.kind).replace(/^Plan file$/, "plan file")}</span> · {statusText(s)} · {when(s.updatedAt)}
+                  </>
+                ) : s.from !== undefined ? (
                   // Started from an editor over MCP (item 1 §9, DECISIONS #108).
                   <>
                     <span className="src1">{fromEditor(s.from)}</span> · {s.queued ? "waiting for your answers" : `${statusText(s)} · ${when(s.updatedAt)}`}

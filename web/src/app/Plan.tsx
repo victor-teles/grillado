@@ -22,6 +22,7 @@ import { type Act, dependentsOf } from "./Session";
 import type { Decision, McpLaunch, Question, SessionView } from "./types";
 import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
 import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "../../../src/core/decision-block.ts";
+import { Provenance } from "./found/Provenance";
 import { AddPlanButton, AddPlanLine, AddPlanLive, addPlanFor } from "./addplan/AddPlan";
 
 const nameOf = (d: { label?: string; title: string }) => d.label || d.title;
@@ -409,10 +410,14 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
             editRef={editRef}
             onAgentDiagram={dg.onAgentDiagram}
             afterTitle={
-              <p className="sub" data-testid="plan-meta">
-                {text.titleMeta}
-                {plan.editedAt ? " · edited" : ""}
-              </p>
+              session.source ? (
+                <Provenance session={session} head={text.titleMeta} edited={!!plan.editedAt} />
+              ) : (
+                <p className="sub" data-testid="plan-meta">
+                  {text.titleMeta}
+                  {plan.editedAt ? " · edited" : ""}
+                </p>
+              )
             }
             openBadge={openCount ? <span className="ct"> {openCount}</span> : null}
             // Cites live in the right margin now (§2.3); on mobile there are none (§5).
