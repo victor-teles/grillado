@@ -3,7 +3,8 @@ import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, stat
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { nextRound, replyToComment, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import { nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
 import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, deleteThread, finishRun, pending, pruneSuggestions, refind, resolveThread, restoreThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
@@ -92,6 +93,8 @@ export class GrilladoServer {
   /** Agent runs on comment threads, by thread id. They don't lock the plan, except "Apply feedback". */
   private commentRuns = new Map<string, AbortController>();
   private diagramRuns = new Map<string, AbortController>();
+  /** "Add to plan" (#104), by session: one decision at a time. */
+  private addPlanRuns = new Map<string, AbortController>();
   private progress = new Map<string, string>();
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
@@ -494,6 +497,8 @@ export class GrilladoServer {
       drawing: this.diagramRuns.has(s.id),
       // A run cut short by a restart reads as stopped.
       diagramRun: s.diagramRun?.state === "running" && !this.diagramRuns.has(s.id) ? { ...s.diagramRun, state: "stopped", current: undefined } : s.diagramRun,
+      adding: this.addPlanRuns.has(s.id),
+      addPlanRun: s.addPlanRun?.state === "running" && !this.addPlanRuns.has(s.id) ? { ...s.addPlanRun, state: "stopped" } : s.addPlanRun,
       progress: this.progress.get(s.id),
       planPath: s.plan?.path,
       tree: buildTree(s),
@@ -675,7 +680,7 @@ export class GrilladoServer {
         return;
       case "apply":
         if (live(t.id)) throw new Error("The agent is still on this thread.");
-        if (busy || this.applying(s) || this.diagramRuns.has(s.id)) throw new Error("Waiting for the current run.");
+        if (busy || this.applying(s) || this.diagramRuns.has(s.id) || this.addPlanRuns.has(s.id)) throw new Error("Waiting for the current run.");
         this.startComment(s, t.id, "apply");
         return;
       case "retry":
@@ -747,7 +752,7 @@ export class GrilladoServer {
     const op = String(body?.op ?? "start");
     if (op === "stop") return this.diagramRuns.get(s.id)?.abort();
     if (this.diagramRuns.has(s.id)) throw new Error("The agent is already adding diagrams.");
-    if (busy || this.applying(s)) throw new Error("Waiting for the current run.");
+    if (busy || this.applying(s) || this.addPlanRuns.has(s.id)) throw new Error("Waiting for the current run.");
     const md = s.plan?.markdown ?? "";
     const all = planSections(md);
     let titles: string[];
@@ -853,6 +858,87 @@ export class GrilladoServer {
       });
   }
 
+  /** "Add to plan" (#104): start on one decision no passage cites, stop, or retry the last one. */
+  private addPlanRoute(s: Session, body: any, busy: boolean) {
+    const op = String(body?.op ?? "start");
+    if (op === "stop") {
+      // Stopped at once, in this reply too: the run's own ending lands after it and changes nothing.
+      const c = this.addPlanRuns.get(s.id);
+      if (!c) return;
+      c.abort();
+      this.addPlanRuns.delete(s.id);
+      if (s.addPlanRun?.state === "running") s.addPlanRun.state = "stopped";
+      return this.changed(s);
+    }
+    if (this.addPlanRuns.has(s.id)) throw new Error("The agent is already adding a decision.");
+    if (busy || this.applying(s) || this.diagramRuns.has(s.id)) throw new Error("Waiting for the current run.");
+    const key = op === "retry" ? s.addPlanRun?.decision : String(body?.key ?? "");
+    const d = key ? s.decisions[key] : undefined;
+    if (!d) throw new Error("That decision is gone.");
+    if (inPlan(s.plan?.markdown ?? "", d.key)) throw new Error("That decision is already in the plan.");
+    if ((s.suggestions ?? []).some((x) => x.status === "pending" && x.source?.id === d.key)) throw new Error("Review the suggestion for it first.");
+    this.startAddPlan(s, d.key, op === "retry");
+  }
+
+  private startAddPlan(s: Session, key: string, retry = false) {
+    const d = s.decisions[key];
+    const rec = this.record(s, "addplan", { decision: d.title }, retry ? `addplan:${s.id}` : undefined);
+    this.lastRun.set(`addplan:${s.id}`, rec.id);
+    const controller = new AbortController();
+    this.addPlanRuns.set(s.id, controller);
+    const t0 = Date.now();
+    const run: NonNullable<Session["addPlanRun"]> = { decision: key, state: "running", startedAt: new Date().toISOString() };
+    s.addPlanRun = run;
+    this.changed(s);
+    const opts = { ...this.runOptions(s, controller), onProgress: undefined };
+    let made: { id: string; section: string } | null = null;
+    const work = async () => {
+      // Written against the plan as it is now; the plan stays editable meanwhile (§4.1).
+      const base = s.plan?.markdown ?? "";
+      rec.step("Read plan.md");
+      rec.step("Read the decision", "{agent} is writing it into the plan");
+      const r = await suggestAddPlan(s, base, d, this.adapterFor(s), { ...opts, onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is writing it into the plan") });
+      if (controller.signal.aborted) {
+        run.state = "stopped";
+        return;
+      }
+      if (!r.ok) {
+        run.state = "error";
+        run.code = r.code;
+        run.message = redact(r.message, userText(s));
+        return;
+      }
+      if (!r.value.place) {
+        rec.step("{agent} found no place for it");
+        run.state = "done";
+        return;
+      }
+      const x = addPlanSuggestion(s, key, { before: r.value.before, after: r.value.after }, textHash(base));
+      if (x) {
+        x.run = rec.id;
+        run.suggestion = x.id;
+        made = { id: x.id, section: sectionAt(s.plan?.markdown ?? "", x.at) || "the plan" };
+        rec.step("Made 1 suggestion");
+      } else rec.step("Checked against plan.md: the suggestion no longer fit");
+      run.state = "done";
+    };
+    work()
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        run.state = "error";
+        run.message = redact(String(err?.message ?? err), userText(s));
+      })
+      .finally(() => {
+        run.ms = Date.now() - t0;
+        if (controller.signal.aborted) run.state = "stopped";
+        if (run.state === "stopped") rec.end("stopped", { last: "Stopped while {agent} was writing it into the plan" });
+        else if (run.state === "error") rec.end("failed", { reason: run.code ?? "unknown", last: reasonText(run.code ?? "unknown", "{agent}") });
+        else rec.end("done", { read: [d.title], suggestions: made ? [made] : [], result: { suggestions: made ? 1 : 0 } });
+        if (this.addPlanRuns.get(s.id) === controller) this.addPlanRuns.delete(s.id);
+        this.changed(s);
+      });
+  }
+
   private startComment(s: Session, threadId: string, kind: "reply" | "apply", retry = false) {
     const t = startRun(s, threadId, kind);
     const section = threadSection(s.plan?.markdown ?? "", t) || "the plan";
@@ -949,10 +1035,11 @@ export class GrilladoServer {
     }
     if (req.method !== "POST") return this.json(res, 404, { error: "Not found" });
     const busy = this.inflight.has(s.id);
-    if (action === "comments" || action === "suggestions" || action === "diagrams") {
+    if (action === "comments" || action === "suggestions" || action === "diagrams" || action === "addplan") {
       if (s.status !== "plated" || !s.plan) throw new Error("Comments open once the plan is written.");
       if (action === "comments") this.commentRoute(s, parts[2], parts[3], body, busy);
       else if (action === "diagrams") this.diagramRoute(s, body, busy);
+      else if (action === "addplan") this.addPlanRoute(s, body, busy);
       else this.reviewRoute(s, body);
       return this.json(res, 200, this.view(s));
     }

@@ -50,7 +50,7 @@ function icon(e: Entry): ReactNode {
   if (e.type === "review") return <ICheck2 />;
   if (e.type === "user") return <IUser />;
   if (e.type === "file") return <IFileDiff />;
-  return { round: <IHelp />, plan: <IFile />, reply: <IMsg />, apply: <IEdit />, diagrams: <IFlow /> }[e.kind ?? "diagrams"];
+  return { round: <IHelp />, plan: <IFile />, reply: <IMsg />, apply: <IEdit />, diagrams: <IFlow />, addplan: <IEdit /> }[e.kind ?? "diagrams"];
 }
 
 export function ActivityPanel(p: ActivityProps) {
@@ -309,7 +309,7 @@ function Row({ e, p, o, open, tab, setOpen, onKey, onFocus }: { e: Entry; p: Act
     setAnim(!open && ev.detail > 0 && !document.documentElement.hasAttribute("data-kbd"));
     setOpen(!open);
   };
-  const stop = running ? (e.kind === "diagrams" ? () => p.act("diagrams", { op: "stop" }) : e.kind === "apply" && e.target?.comment ? () => p.act(`comments/${e.target!.comment}/stop`) : null) : null;
+  const stop = running ? (e.kind === "diagrams" || e.kind === "addplan" ? () => p.act(e.kind!, { op: "stop" }) : e.kind === "apply" && e.target?.comment ? () => p.act(`comments/${e.target!.comment}/stop`) : null) : null;
   const done = e.type === "run" && e.ms !== undefined && !running;
   return (
     <li className="ev6" data-entry={e.id} data-status={e.status ?? e.type} data-open={open && hasBody ? "" : undefined}>
@@ -431,7 +431,7 @@ function Body({ id, e, p, A, animate }: { id: string; e: Entry; p: ActivityProps
     return s?.status === "accepted" ? "accepted" : s?.status === "rejected" ? "rejected" : s ? "to review" : "no longer in the plan";
   };
   const done = e.status !== "running";
-  const retry = e.status === "failed" ? (e.kind === "diagrams" ? () => p.act("diagrams", { op: "retry" }) : e.kind === "apply" && e.target?.comment ? () => p.act(`comments/${e.target!.comment}/retry`) : null) : null;
+  const retry = e.status === "failed" ? (e.kind === "diagrams" || e.kind === "addplan" ? () => p.act(e.kind!, { op: "retry" }) : e.kind === "apply" && e.target?.comment ? () => p.act(`comments/${e.target!.comment}/retry`) : null) : null;
   return (
     <div className="evbody" id={id} ref={ref} data-anim={animate ? "" : undefined}>
       <div>

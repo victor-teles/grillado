@@ -22,6 +22,7 @@ import { type Act, dependentsOf } from "./Session";
 import type { Decision, McpLaunch, Question, SessionView } from "./types";
 import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
 import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "../../../src/core/decision-block.ts";
+import { AddPlanButton, AddPlanLine, AddPlanLive, addPlanFor } from "./addplan/AddPlan";
 
 const nameOf = (d: { label?: string; title: string }) => d.label || d.title;
 
@@ -136,6 +137,14 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
     setModeRaw("rich");
     requestAnimationFrame(() => requestAnimationFrame(() => goToDecision(key)));
   };
+  // "Add to plan" → Review (#104): the plan, with that suggestion focused and the normal bar and pill.
+  const reviewSuggestion = (id: string) => {
+    void draft.flush();
+    setTab("doc");
+    setModeRaw("rich");
+    requestAnimationFrame(() => requestAnimationFrame(() => cmRef.current?.review(id)));
+  };
+  const cmRef = useRef<{ review: (id: string) => void } | null>(null);
   const reveal = async () => {
     try {
       const r = await api.action(session.id, "reveal");
@@ -172,6 +181,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
   const ueNext = useRef(false);
   const dg = useDiagrams({ session, draft, agentName, mobile, enabled: !readOnly && tab === "doc", moreRef, setNote });
   const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, decisionInfo, onDecisionRow: showDecisionRow, agentNameOf, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
+  cmRef.current = cm;
 
   const renderDecision: DecisionRenderer = (fields, { invalid, setActive, lit }) => {
     const key = fields.key ?? "";
@@ -201,6 +211,8 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         external={ext ? { from: ext.from, to: ext.to, deps: ext.deps.map((k) => (session.decisions[k] ? nameOf(session.decisions[k]) : k)) } : undefined}
         onExternal={ext ? onExternal : undefined}
         onReask={stale && !waiting.includes(key) && session.status === "plated" ? () => act("reask", { key }).then(() => undefined) : undefined}
+        addPlan={session.decisions[key] && session.status === "plated" && !own ? addPlanFor(session, key, act) : undefined}
+        onReview={reviewSuggestion}
       />
     );
   };
@@ -214,7 +226,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         decision={session.decisions[k]}
         fallback={session.stale?.[k]?.title ?? k}
         agentName={agentName}
-        on={on === k || litKey === k}
+        on={on === k || litKey === k || cm.focusedSource === k}
         labelMode={litKey === k && room === "full"}
         stale={staleKeys.has(k)}
         dzKey={k}
@@ -409,11 +421,12 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         </div>
         <div id="ppanel-decisions" role="tabpanel" aria-labelledby="ptab-decisions" hidden={tab !== "decisions"} className="dtab">
           {tab === "decisions" ? (
-            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} jump={rowJump} />
+            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} jump={rowJump} act={act} onReview={reviewSuggestion} />
           ) : null}
         </div>
       </div>
           {cm.overlay}
+          <AddPlanLive session={session} />
           {dg.bar}
           {dg.popover}
           {ue ? (
@@ -591,6 +604,8 @@ function DecisionsTab({
   renderOpen,
   save,
   jump,
+  act,
+  onReview,
 }: {
   session: SessionView;
   openKeys: string[];
@@ -606,6 +621,8 @@ function DecisionsTab({
   save: (key: string, open: boolean, pick: { optionId: string; text?: string }) => Promise<void>;
   /** Scroll to, flash and focus this decision's row (Activity's Asked chips). */
   jump: { key: string; n: number } | null;
+  act: Act;
+  onReview: (suggestion: string) => void;
 }) {
   // With decisions still open they come first and the resolved log starts collapsed (§4).
   const [expanded, setExpanded] = useState(!openKeys.length);
@@ -635,6 +652,27 @@ function DecisionsTab({
     rows()[n]?.focus();
   };
   const rootRef = useRef<HTMLDivElement>(null);
+  // Add to plan swaps its controls as the run moves on (button → Stop → Review / Try again). When
+  // the focused one goes away, focus moves to what took its place in the same row, else the row.
+  const apFocus = useRef<string | null>(null);
+  const apRun = session.addPlanRun;
+  const apKey = `${apRun?.decision}:${apRun?.startedAt}:${apRun?.state}:${(session.suggestions ?? []).find((x) => x.id === apRun?.suggestion)?.status}`;
+  useEffect(() => {
+    const key = apFocus.current;
+    if (!key) return;
+    let n = 0;
+    const tick = () => {
+      const row = rootRef.current?.querySelector<HTMLElement>(`.drow[data-key="${CSS.escape(key)}"]`);
+      const a = document.activeElement as HTMLElement | null;
+      const lost = !a || a === document.body || !a.isConnected || !a.checkVisibility({ visibilityProperty: true });
+      if (!row || !lost) return;
+      const next = [...row.querySelectorAll<HTMLElement>(".apl .lnk, .apb button")].find((b) => b.checkVisibility({ visibilityProperty: true }));
+      if (next) next.focus();
+      else if (++n < 10) requestAnimationFrame(tick);
+      else row.focus();
+    };
+    requestAnimationFrame(tick);
+  }, [apKey]);
   useEffect(() => {
     if (!jump) return;
     const i = flat.findIndex((d) => d.key === jump.key);
@@ -694,6 +732,8 @@ function DecisionsTab({
                 {ds.map((d) => {
                   const i = flat.indexOf(d);
                   const orphan = !psg.some((p) => p.keys.includes(d.key));
+                  // Add to plan (#104): only on a decision from a round, once the plan is written.
+                  const ap = orphan && session.decisions[d.key] && session.status === "plated" ? addPlanFor(session, d.key, act) : null;
                   const q = questionFor(session, d.key);
                   const by = d.accepted_recommendation ? null : COPY.yourCall;
                   if (changing === d.key && q)
@@ -719,18 +759,27 @@ function DecisionsTab({
                   return (
                     <li
                       key={d.key}
-                      className="drow"
+                      className={ap ? "drow ap" : "drow"}
                       data-row
                       data-key={d.key}
                       tabIndex={i === cur ? 0 : -1}
                       aria-label={`${d.title} ${d.answer}${by ? `, ${by}` : ""}`}
                       onFocus={() => setCur(i)}
                       onClick={mobile ? () => onShow(d.key) : undefined}
+                      onFocusCapture={(e) => {
+                        if (e.target !== e.currentTarget && (e.target as HTMLElement).closest(".apl, .apb")) apFocus.current = d.key;
+                      }}
                       onKeyDown={(e) => {
+                        // ArrowRight/Left walk the row's own controls: the Add to plan line's link, then the action area.
+                        const ctl = [...e.currentTarget.querySelectorAll<HTMLElement>(".apl .lnk, .drow-ra button")].filter((b) => b.checkVisibility({ visibilityProperty: true }));
                         if (e.target !== e.currentTarget) {
+                          const at = ctl.indexOf(e.target as HTMLElement);
                           if (e.key === "ArrowLeft") {
                             e.preventDefault();
-                            e.currentTarget.focus();
+                            (at > 0 ? ctl[at - 1] : e.currentTarget).focus();
+                          } else if (e.key === "ArrowRight" && at >= 0 && at < ctl.length - 1) {
+                            e.preventDefault();
+                            ctl[at + 1].focus();
                           }
                           return;
                         }
@@ -739,7 +788,7 @@ function DecisionsTab({
                         else if (e.key === "Home") move(0);
                         else if (e.key === "End") move(flat.length - 1);
                         else if (e.key === "Enter") onShow(d.key);
-                        else if (e.key === "ArrowRight") e.currentTarget.querySelector<HTMLElement>(".drow-chg-btn")?.focus();
+                        else if (e.key === "ArrowRight") (ap ? ctl[0] : e.currentTarget.querySelector<HTMLElement>(".drow-chg-btn"))?.focus();
                         else return;
                         e.preventDefault();
                       }}
@@ -748,23 +797,35 @@ function DecisionsTab({
                       <span className="drow-a">
                         {d.answer}
                         {by ? <span className="yc">{by}</span> : null}
-                        {orphan ? (
+                        {orphan && (!ap || ap.state === "rest") ? (
                           <span className="orph">
                             <IAlert s={12} />
                             Not in the plan text yet
                           </span>
                         ) : null}
+                        {ap ? <AddPlanLine ap={ap} agentName={agentName} onReview={onReview} tabIndex={-1} /> : null}
                       </span>
                       <span className="drow-m">
                         {label(d.key)} · {d.accepted_recommendation ? COPY.youKept : COPY.you}
                       </span>
                       {mobile ? (
-                        <IChev s={14} />
+                        // Phones: Add to plan takes the chevron's place, and leaves no chevron while it runs (#104).
+                        ap ? (
+                          ap.state === "rest" ? (
+                            <AddPlanButton ap={ap} agentName={agentName} className="mapl" label={`Add to plan: ${nameOf(d)}`} onDone={() => (apFocus.current = d.key)} />
+                          ) : null
+                        ) : (
+                          <IChev s={14} />
+                        )
                       ) : (
                         <span className="drow-ra">
-                          <button type="button" className="btn quiet sm" tabIndex={-1} aria-label={`Show in plan: ${nameOf(d)}`} onClick={() => onShow(d.key)}>
-                            Show in plan
-                          </button>
+                          {ap ? (
+                            <AddPlanButton ap={ap} agentName={agentName} className="btn quiet sm drow-ap-btn" tabIndex={-1} label={`Add to plan: ${nameOf(d)}`} onDone={() => (apFocus.current = d.key)} />
+                          ) : (
+                            <button type="button" className="btn quiet sm" tabIndex={-1} aria-label={`Show in plan: ${nameOf(d)}`} onClick={() => onShow(d.key)}>
+                              Show in plan
+                            </button>
+                          )}
                           {q && session.status === "plated" && !session.busy ? (
                             <button type="button" className="btn quiet sm drow-chg-btn" tabIndex={-1} aria-label={`Change ${nameOf(d)}`} onClick={() => setChanging(d.key)}>
                               Change

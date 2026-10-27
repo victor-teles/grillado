@@ -243,6 +243,31 @@ try {
       check(`${theme}: Esc closes it and focus is back on ⋯ (${key === " " ? "Space" : key})`, await moreA.evaluate((b) => b === document.activeElement));
     }
 
+    // Tab closes the menu and goes on to the next stop after ⋯; Shift+Tab to the one before (APG menu button).
+    for (const shift of [false, true]) {
+      // Where a plain Tab goes from ⋯ with the menu shut: that is where Tab from the open menu must land.
+      await moreA.focus();
+      await pg.keyboard.press(shift ? "Shift+Tab" : "Tab");
+      const want = await pg.evaluate(() => {
+        const n = document.activeElement;
+        n.dataset.tabWant = "1";
+        return n.outerHTML.slice(0, 80);
+      });
+      await moreA.focus();
+      await pg.keyboard.press("Enter");
+      await menu.waitFor();
+      await focusOn("Copy link to comment");
+      // #124: the ⋯ keeps its grey fill while its menu is open (read after its fade settles).
+      await moreA.evaluate((b) => Promise.all(b.getAnimations().map((a) => a.finished)));
+      const fill = await moreA.evaluate((b) => ({ bg: getComputedStyle(b).backgroundColor, c: getComputedStyle(b).color }));
+      if (!shift) check(`${theme}: ⋯ keeps the --muted fill and foreground ink while open (#124)`, fill.bg === (await tokenBg(pg, "--muted")) && fill.c === (await tokenColour(pg, "--foreground")), JSON.stringify(fill));
+      await pg.keyboard.press(shift ? "Shift+Tab" : "Tab");
+      await menu.waitFor({ state: "detached", timeout: 1000 }).catch(() => {});
+      const landed = await pg.waitForFunction(() => document.activeElement?.dataset.tabWant === "1", null, { timeout: 1000 }).then(() => true, () => false);
+      check(`${theme}: ${shift ? "Shift+Tab" : "Tab"} closes the menu and moves on from ⋯`, (await menu.count()) === 0 && landed, `${want} · ${await pg.evaluate(() => document.activeElement?.outerHTML.slice(0, 80))}`);
+      await pg.evaluate(() => document.querySelectorAll("[data-tab-want]").forEach((e) => delete e.dataset.tabWant));
+    }
+
     // pointer: hovering Delete is the plain row tint, not a red fill (frame d-menu)
     await moreA.click();
     await menu.waitFor();

@@ -1,6 +1,7 @@
 import type { CommentThread, Suggestion } from "../../../src/core/comments.ts";
 import type { Entry } from "../../../src/core/activity.ts";
 import type { DiagramRun } from "../../../src/core/diagrams.ts";
+import type { AddPlanRun } from "../../../src/core/addplan.ts";
 // Mirrors of what the local server sends. Kept separate from server code on purpose.
 export type ProviderId = "claude" | "codex" | "grok" | "pi";
 export type FailureCode = "auth" | "rate_limit" | "timeout" | "not_found" | "malformed" | "unknown";
@@ -169,6 +170,9 @@ export interface SessionView {
   /** "Add diagrams" (item 5): the last run, and whether one is going now. */
   diagramRun?: DiagramRun;
   drawing?: boolean;
+  /** "Add to plan" (#104): the last run, and whether one is going now. */
+  addPlanRun?: AddPlanRun;
+  adding?: boolean;
   progress?: string;
   /** The activity log (item 6): the latest entries, newest first. */
   activity?: ActivityView;
@@ -177,7 +181,7 @@ export interface SessionView {
   nudge: boolean;
 }
 
-export type { CommentThread, DiagramRun, Suggestion };
+export type { AddPlanRun, CommentThread, DiagramRun, Suggestion };
 export type { Entry as ActivityEntry };
 export interface ActivityView {
   entries: Entry[];

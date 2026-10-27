@@ -3,7 +3,8 @@
 // a small deterministic interview, so tests and the e2e run exercise the real adapters end to end.
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
 // leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
-// FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
+// FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
+// FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -102,6 +103,7 @@ const isPlan = /"type":"plan"/.test(system);
 const isComment = /"type":"reply"/.test(system);
 const isEdit = /"type":"edits"/.test(system);
 const isDiagram = /"type":"diagram"/.test(system);
+const isAddPlan = /"type":"addplan"/.test(system);
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -194,7 +196,9 @@ function longMarkdown(ds) {
 }
 
 function planReply() {
-  const ds = state.decisions ?? [];
+  // FAKE_PLAN_OMIT: the text leaves these decisions out, so they read "Not in the plan text yet" (#104).
+  const omit = new Set((process.env.FAKE_PLAN_OMIT ?? "").split(",").filter(Boolean));
+  const ds = (state.decisions ?? []).filter((d) => !omit.has(d.key));
   return {
     type: "plan",
     title: `Plan: ${state.idea}`,
@@ -256,10 +260,27 @@ function diagramReply() {
   return { type: "diagram", skip: false, mermaid: [head, acc, ...body].join("\n") };
 }
 
+// "Add to plan" (#104): the decision goes after the last list item outside code and decision blocks.
+function addPlanReply() {
+  const plan = prompt.match(/<plan>([\s\S]*?)<\/plan>/)?.[1] ?? "";
+  const mode = process.env.FAKE_ADDPLAN ?? "";
+  if (mode === "fail" || (mode === "fail-once" && once("addplan-fail"))) fail("rate");
+  if (mode === "none") return { type: "addplan", place: false, before: "", after: "" };
+  const prose = plan.replace(/^```[\s\S]*?^```/gm, (m) => " ".repeat(m.length));
+  const items = [...prose.matchAll(/^- (.+)$/gm)];
+  const last = items.at(-1)?.[1];
+  if (!last) return { type: "addplan", place: false, before: "", after: "" };
+  // One sentence after the item's own cite, ending in the decision's (frame d-ap-plan).
+  const said = `${String(state.answer ?? "").replace(/[.\s]*$/, "")}.`;
+  if (mode === "bad-once" && once("addplan-bad")) return { type: "addplan", place: true, before: last, after: `${last} ${said}` };
+  return { type: "addplan", place: true, before: last, after: `${last} ${said} ${state.cite}` };
+}
+
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
 if (isDiagram && process.env.FAKE_DIAGRAM_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DIAGRAM_DELAY_MS)));
-const reply = isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
+if (isAddPlan && process.env.FAKE_ADDPLAN_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ADDPLAN_DELAY_MS)));
+const reply = isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude") {
