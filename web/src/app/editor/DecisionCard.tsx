@@ -15,6 +15,7 @@ import { OTHER_OPTION, type Question } from "../types";
 import { IAlert, IRefresh } from "../icons";
 import { noteAdds, restTag, whoLine } from "./decision-meta";
 import { jumpTo, offscreen } from "./link";
+import { type AddPlan, AddPlanButton, AddPlanLine } from "../addplan/AddPlan";
 
 export interface Pick {
   optionId: string;
@@ -47,6 +48,8 @@ export function DecisionCard({
   external,
   onExternal,
   onReask,
+  addPlan,
+  onReview,
   startExpanded,
   onClose,
 }: {
@@ -77,6 +80,9 @@ export function DecisionCard({
   onExternal?: (confirm: boolean) => Promise<void>;
   /** A stale decision nobody is asking yet: a quiet "Re-ask". */
   onReask?: () => Promise<void>;
+  /** "Add to plan" (#104) on a decision no passage cites; absent where it can't run. */
+  addPlan?: AddPlan;
+  onReview?: (suggestion: string) => void;
   /** Open on mount (Change from a Decisions tab row). */
   startExpanded?: boolean;
   onClose?: () => void;
@@ -162,6 +168,21 @@ export function DecisionCard({
   const tag = state === "settled" ? restTag(fields, agentName) : null;
   const who = state === "settled" ? whoLine(fields, agentName, { was }) : own && state === "open" ? fmt(COPY.ownOpen, { agent: agentName }) : null;
   const orphan = state === "settled" && !passages.length;
+  // Add to plan swaps its controls as the run goes; keep focus in the card when the focused one goes (#104).
+  const apFocus = useRef(false);
+  useEffect(() => {
+    if (!apFocus.current) return;
+    let n = 0;
+    const tick = () => {
+      const a = document.activeElement as HTMLElement | null;
+      if (a && a !== document.body && a.isConnected && a.checkVisibility({ visibilityProperty: true })) return;
+      const next = [...(ref.current?.querySelectorAll<HTMLElement>(".apl .lnk, .apb button") ?? [])].find((b) => b.checkVisibility({ visibilityProperty: true }));
+      if (next) next.focus();
+      else if (++n < 10) requestAnimationFrame(tick);
+      else ref.current?.focus();
+    };
+    requestAnimationFrame(tick);
+  }, [addPlan?.state]);
   const run = async (f: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -192,7 +213,8 @@ export function DecisionCard({
       tabIndex={0}
       onMouseEnter={() => !justFocusedElsewhere(ref.current) && activate(true)}
       onMouseLeave={() => !ref.current?.contains(document.activeElement) && activate(false)}
-      onFocus={() => {
+      onFocus={(e) => {
+        if ((e.target as HTMLElement).closest(".apl, .apb")) apFocus.current = true;
         lastFocus = { el: ref.current, at: performance.now() };
         activate(true);
       }}
@@ -249,7 +271,9 @@ export function DecisionCard({
       <div className="dz-h">
         <span className="dz-id">{fields.id}</span>
         {who ? <span className="dz-when">{who}</span> : null}
-        {orphan ? (
+        {orphan && addPlan && addPlan.state !== "rest" ? (
+          <AddPlanLine ap={addPlan} agentName={agentName} onReview={(id) => onReview?.(id)} />
+        ) : orphan ? (
           <span className="dz-orph">
             <IAlert s={12} />
             Not in the plan text yet
@@ -260,6 +284,7 @@ export function DecisionCard({
             {aff?.below ? ` · ${aff.below} below ↓` : aff?.above ? ` · ${aff.above} above ↑` : ""}
           </button>
         ) : null}
+        {orphan && addPlan ? <AddPlanButton ap={addPlan} agentName={agentName} className="dz-ap-btn" label={`Add to plan: ${fields.question}`} onDone={() => (apFocus.current = true)} /> : null}
       </div>
       <span className="sr-only" role="status">
         {say}

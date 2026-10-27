@@ -68,6 +68,8 @@ export interface Suggestion {
   run?: string;
   /** A text suggestion: the heading its text was under when it was written. It's only ever looked for there (#114). */
   under?: string;
+  /** "Add to plan" (#104): the decision it writes into the text. Such a suggestion has no thread. */
+  source?: { kind: "decision"; id: string };
 }
 
 export interface ReviewUndo {
@@ -83,6 +85,8 @@ export interface CommentState {
   reviewUndo?: ReviewUndo;
   /** The latest "Add diagrams" run (item 5). */
   diagramRun?: import("./diagrams.ts").DiagramRun;
+  /** The latest "Add to plan" run (#104). */
+  addPlanRun?: import("./addplan.ts").AddPlanRun;
   /** Threads deleted here (#99): another process's copy of the session never brings them back. */
   deletedThreads?: string[];
   /** The last deleted thread, for its Undo (#99): where it was, and the pending suggestions that went with it. */

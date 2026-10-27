@@ -3,7 +3,7 @@
 // DOM-free: the server folds lines into entries; the browser formats titles, meta, durations, the
 // copied log and the live-region messages from the same functions.
 
-export type RunKind = "round" | "plan" | "reply" | "apply" | "diagrams";
+export type RunKind = "round" | "plan" | "reply" | "apply" | "diagrams" | "addplan";
 export type RunStatus = "running" | "done" | "failed" | "stopped" | "interrupted";
 
 export interface RunTarget {
@@ -12,6 +12,8 @@ export interface RunTarget {
   round?: number;
   /** The round was asked again after an edit (item 2). */
   reask?: boolean;
+  /** "Add to plan" (#104): the decision's question. */
+  decision?: string;
 }
 
 export interface RunResult {
@@ -221,6 +223,8 @@ function runTitle(e: Entry): string {
       return { running: `Replying on ${sec}`, done: `Replied on ${sec}`, failed: `Couldn’t reply on ${sec}`, stopped: `Stopped replying on ${sec}`, interrupted: `Reply on ${sec} didn’t finish` }[s];
     case "apply":
       return { running: `Applying feedback on ${sec}`, done: `Applied feedback on ${sec}`, failed: `Couldn’t apply feedback on ${sec}`, stopped: `Stopped applying feedback on ${sec}`, interrupted: `Applying feedback on ${sec} didn’t finish` }[s];
+    case "addplan":
+      return { running: "Adding a decision to the plan", done: "Added a decision to the plan", failed: "Couldn’t add a decision to the plan", stopped: "Stopped adding a decision to the plan", interrupted: "Adding a decision to the plan didn’t finish" }[s];
     default:
       return { running: "Adding diagrams", done: "Added diagrams", failed: "Couldn’t add diagrams", stopped: "Stopped adding diagrams", interrupted: "Adding diagrams didn’t finish" }[s];
   }
@@ -271,9 +275,11 @@ export function metaParts(e: Entry, o: { agent: string; agentId?: string; agentN
     else if (e.kind === "round") out.push(e.target?.reask ? "asked again after your edit" : (e.target?.round ?? 1) <= 1 ? "from your idea" : `after your round ${(e.target?.round ?? 1) - 1} answers`);
     else if (e.kind === "reply" || e.kind === "apply") out.push("from your comment");
     else if (e.kind === "plan") out.push("after you confirmed");
+    else if (e.kind === "addplan" && e.target?.decision) out.push(`for ${q(e.target.decision)}`);
     if (s === "done") {
       if (e.kind === "plan") out.push([r.decisions !== undefined ? plural(r.decisions, "decision") : "", r.sections !== undefined ? plural(r.sections, "section") : ""].filter(Boolean).join(" · "));
       if (e.kind === "apply") out.push(plural(r.suggestions ?? 0, "suggestion"));
+      if (e.kind === "addplan") out.push(r.suggestions ? plural(r.suggestions, "suggestion") : "no place found");
       if (e.kind === "diagrams") out.push([plural(r.diagrams ?? 0, "diagram"), r.skipped ? `${plural(r.skipped, "section")} skipped` : ""].filter(Boolean).join(" · "));
       if (e.kind === "round" && r.questions === 0) out.push("nothing left to ask");
     } else if (s === "failed") out.push(`${reasonText(e.reason, A)} · nothing was changed`);
@@ -401,6 +407,8 @@ function doing(e: Entry): string {
       return `replying on ${sec}`;
     case "apply":
       return `applying feedback on ${sec}`;
+    case "addplan":
+      return "adding a decision to the plan";
     default:
       return "adding diagrams";
   }

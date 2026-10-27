@@ -28,7 +28,7 @@
     "check:banned": "bun scripts/check-banned.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
     "test": "bun test test/",
-    "e2e": "node e2e/run.mjs && node e2e/comments.mjs && node e2e/accept-hold.mjs && node e2e/hover-pill.mjs && node e2e/refind.mjs && node e2e/margins.mjs && node e2e/thread-menu.mjs && node e2e/slash.mjs && node e2e/diagrams.mjs && node e2e/activity.mjs && node e2e/mcp.mjs && node e2e/editor.mjs"
+    "e2e": "node e2e/run.mjs && node e2e/comments.mjs && node e2e/accept-hold.mjs && node e2e/hover-pill.mjs && node e2e/refind.mjs && node e2e/margins.mjs && node e2e/thread-menu.mjs && node e2e/add-to-plan.mjs && node e2e/slash.mjs && node e2e/diagrams.mjs && node e2e/activity.mjs && node e2e/mcp.mjs && node e2e/editor.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",

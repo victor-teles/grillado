@@ -985,6 +985,13 @@ export function useComments(o: Opts) {
   ) : null;
 
   return {
+    /** Focus one suggestion (Add to plan's Review, #104): scrolled to, with its pill and the bar. */
+    review: (id: string) => {
+      setFocus(null);
+      requestAnimationFrame(() => setFocus(id));
+    },
+    /** The focused suggestion's decision, when Add to plan made it: its margin cite stays lit (#104). */
+    focusedSource: focused?.s.source?.id ?? null,
     marks: docMode ? marks : undefined,
     pending: placed.length,
     composing: !!composing,
@@ -1287,6 +1294,15 @@ type Act2 = (path: string, body?: unknown) => Promise<boolean>;
 /** A toast: a review's Undo ("review", ⌘Z through the review), or a comment's own Undo (#99, #101). */
 type Toast = { text: string; n: number; undo?: "review" | (() => void); icon?: "trash"; kb?: boolean; ms?: number };
 
+/** The tab stop after (or before) `from` in document order: what Tab would reach from it. */
+function nextTabStop(from: HTMLElement, dir: 1 | -1): HTMLElement | null {
+  const all = [...document.querySelectorAll<HTMLElement>("a[href],button,input,select,textarea,[tabindex]")].filter(
+    (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && !el.closest("[inert],[hidden]") && el.checkVisibility({ visibilityProperty: true }),
+  );
+  const i = all.indexOf(from);
+  return i < 0 ? from : (all[i + dir] ?? from);
+}
+
 /**
  * The thread ⋯ (#98): a popover menu on desktop (the same Uai DropdownMenu as the plan's ⋯, no
  * motion), an action sheet on phones with a scrim, swipe down and Back to close.
@@ -1299,10 +1315,14 @@ function ThreadMenu({ anchor, mobile, onCopyLink, onDelete }: { anchor: string; 
   const [box, setBox] = useState<HTMLElement | null>(null);
   useEffect(() => setBox(btn.current?.closest<HTMLElement>("aside") ?? null), []);
   const label = CCOPY.more(anchor);
+  const [open, setOpen] = useState(false);
+  // Tab out of the menu (APG menu button): it closes, and focus goes on to the next stop after
+  // the ⋯ (Shift+Tab: the one before), as if the menu had never opened.
+  const tabbing = useRef<0 | 1 | -1>(0);
   if (!mobile)
     return (
       // Not modal: the rail and plan stay in the a11y tree (Esc, a click out and Tab still close it).
-      <DropdownMenu modal={false}>
+      <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <button ref={btn} type="button" className="icon-btn more" aria-label={label}>
             <IMore s={16} />
@@ -1314,10 +1334,21 @@ function ThreadMenu({ anchor, mobile, onCopyLink, onDelete }: { anchor: string; 
           container={box}
           aria-label="Comment actions"
           aria-labelledby={undefined}
+          onKeyDown={(e) => {
+            if (e.key !== "Tab") return;
+            e.preventDefault();
+            tabbing.current = e.shiftKey ? -1 : 1;
+            setOpen(false);
+          }}
           onCloseAutoFocus={(e) => {
             // Delete moves focus on itself (#99); the ⋯ it would go back to is gone.
             if (deleting.current) e.preventDefault();
             deleting.current = false;
+            if (tabbing.current && btn.current) {
+              e.preventDefault();
+              nextTabStop(btn.current, tabbing.current)?.focus();
+            }
+            tabbing.current = 0;
           }}
         >
           <DropdownMenuItem className="mi" onSelect={onCopyLink}>

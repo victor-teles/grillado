@@ -88,6 +88,14 @@ export const DiagramReplySchema = z.object({
   mermaid: z.string().max(4000),
 });
 
+/** "Add to plan" (#104): one edit that works a decision into the text, or no place for it. */
+export const AddPlanReplySchema = z.object({
+  type: z.literal("addplan"),
+  place: z.boolean(),
+  before: z.string().max(2000),
+  after: z.string().max(2000),
+});
+
 export type Option = z.infer<typeof OptionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 export type Upcoming = z.infer<typeof UpcomingSchema>;
@@ -96,6 +104,7 @@ export type PlanReply = z.infer<typeof PlanReplySchema>;
 export type CommentReply = z.infer<typeof CommentReplySchema>;
 export type EditReply = z.infer<typeof EditReplySchema>;
 export type DiagramReply = z.infer<typeof DiagramReplySchema>;
+export type AddPlanReply = z.infer<typeof AddPlanReplySchema>;
 
 /**
  * JSON Schema for the CLI schema flags. OpenAI-style strict structured output (Codex) needs every
@@ -133,3 +142,4 @@ export const planJsonSchema = () => toStrictJsonSchema(PlanReplySchema);
 export const commentJsonSchema = () => toStrictJsonSchema(CommentReplySchema);
 export const editJsonSchema = () => toStrictJsonSchema(EditReplySchema);
 export const diagramJsonSchema = () => toStrictJsonSchema(DiagramReplySchema);
+export const addPlanJsonSchema = () => toStrictJsonSchema(AddPlanReplySchema);

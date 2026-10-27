@@ -545,6 +545,29 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 .drow:focus-within .drow-m{display:block}
 @media (hover:hover){.drow:hover{background:var(--sel)}.drow:hover .drow-ra{opacity:1}.drow:hover .drow-m{display:block}}
 .drow-chg{list-style:none}
+/* v1.2 polish 5 · Add to plan (#104): the quiet button and the line under the answer. Never blue. */
+.apl{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:4px 6px;font-size:var(--t-meta);line-height:16px;font-weight:400;color:var(--muted-foreground)}
+.drow .apl{display:flex;margin:4px 0 0;white-space:nowrap}
+.apl .dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--muted-foreground)}
+.apl .lnk{flex:none}
+.apl .err{display:inline-flex;color:var(--destructive-ink)}
+.apl .err svg{width:12px;height:12px}
+.apl .t{color:var(--foreground)}
+.apl .lnk{border:0;background:none;padding:0 2px;border-radius:4px;font:inherit;font-weight:500;line-height:16px;color:var(--foreground);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair);cursor:pointer}
+.apl .lnk:focus-visible,.dz-ap-btn:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+.apb{position:relative;display:inline-flex}
+.apb[data-busy] button,.apb[data-busy] .btn.quiet{color:var(--subtle-foreground);cursor:default}
+.apb[data-busy] button:hover,.apb[data-busy] .btn.quiet:hover{background:none;color:var(--subtle-foreground)}
+.apb .aptip{top:calc(100% + 4px);bottom:auto}
+@media (hover:hover){.apb[data-busy]:hover .aptip{opacity:1;transition-delay:400ms}}
+.apb[data-busy]:has(:focus-visible) .aptip{opacity:1;transition:none}
+.drow.ap .drow-m{display:block}
+.dz-h>.apb::before{content:none}
+.dz-ap-btn{border:0;background:none;padding:0 2px;border-radius:4px;font:inherit;font-weight:500;color:var(--foreground);cursor:pointer}
+@media (hover:hover){.dz-ap-btn:hover{text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair)}}
+/* The card's meta line stays open while Add to plan has something to say, and never clips a focus ring. */
+.dz:has(.dz-h .apl) .dz-h{max-height:40px;opacity:1;margin-top:4px}
+.dz:has(.dz-h .apb) .dz-h{padding:2px;margin-left:-2px;margin-right:-2px}
 .dgrp-open{margin-top:28px}
 .dgrp-open h2{font-size:var(--t-h);line-height:24px;font-weight:600;margin:0 0 6px}
 .dgrp-open>.sub{margin:-2px 0 6px}
@@ -603,6 +626,13 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .drow-q,.drow-a,.drow-m{grid-column:1}
   .drow>svg{grid-column:2;grid-row:1/span 2;align-self:center;color:var(--subtle-foreground)}
   .drow-m{display:none!important}
+  .drow.ap .drow-m{display:block!important}
+  .drow>.apb{grid-column:2;grid-row:1/span 3;align-self:center}
+  .drow .apl{white-space:normal}
+  .drow .mapl{min-height:44px;padding:0 4px 0 12px;border:0;background:none;color:var(--foreground);font:inherit;font-size:15px;font-weight:400;line-height:1;border-radius:6px}
+  .drow .mapl:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+  .apl .lnk{position:relative}
+  .apl .lnk::before{content:"";position:absolute;inset:-14px -10px}
   .dz>.dz-act,.doc .mmd-f{opacity:1}
   /* §5: no hover linking on mobile, so the meta line (with Affects) is always there; no margin cites. */
   .dz .dz-h{max-height:none;opacity:1;margin-top:4px}
@@ -770,11 +800,12 @@ html[data-kbd] .ipill.hp{transition:none}
 .toast .btn{height:30px}
 /* v1.2 polish §2: a comment's toast (deleted, resolved, link copied) has a muted icon. */
 .toast.nt svg{color:var(--muted-foreground)}
-.csheet>.toast{z-index:2}
+.csheet>.toast{z-index:2;bottom:calc(20px + env(safe-area-inset-bottom))}
 .toast .btn .kb{margin-left:6px}
 /* The thread ⋯ (#98): after Resolve; a menu on desktop, an action sheet on phones. Instant. */
 .th .ia{display:inline-flex;align-items:center;gap:2px}
 .th .ia .more{width:28px;height:28px;border-radius:8px}
+.th .ia .more[aria-expanded=true]{background:var(--muted);color:var(--foreground)}
 .csheet .th .ia .more{width:44px;height:44px;border-radius:12px}
 .pmenu.tmenu{width:200px;min-width:0;padding:4px;border-radius:12px;border:0;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);animation:none!important}
 .tmenu .mi{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;font-size:var(--t-body);line-height:20px;color:var(--foreground)}

@@ -3,11 +3,15 @@ import type { FailureCode } from "./classify.ts";
 import { extractCandidate } from "./extract.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
-import { commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { addPlanSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
+import { checkAddPlan, citeId } from "./addplan.ts";
 import {
+  type AddPlanReply,
+  AddPlanReplySchema,
+  addPlanJsonSchema,
   type CommentReply,
   CommentReplySchema,
   type DiagramReply,
@@ -25,6 +29,7 @@ import {
   roundJsonSchema,
 } from "./schema.ts";
 import {
+  type Decision,
   type Session,
   applyRound,
   openQuestions,
@@ -294,5 +299,32 @@ export async function suggestDiagram(
     (reply) => (reply.skip ? null : checkMermaid(reply.mermaid, kinds)),
     opts,
     [userText(s), md, focus].join("\n"),
+  );
+}
+
+/** The prompt for "Add to plan" (#104): the plan, and the one decision to work into it. */
+export function buildAddPlanPrompt(s: Session, md: string, d: Decision): string {
+  const cite = `[${citeId(d.round, d.key)}]`;
+  return [
+    "The plan (Markdown):",
+    `<plan>${md}</plan>`,
+    "",
+    "The decision to add (JSON):",
+    `<state>${JSON.stringify({ key: d.key, round: d.round, question: d.title, answer: d.answer, cite })}</state>`,
+    "",
+    `Work the answer "${d.answer}" to "${d.title}" into the plan with one edit, cited as ${cite}, or say there is no place for it.`,
+  ].join("\n");
+}
+
+/** "Add to plan": one edit checked against the plan as it was when the run started, or no place. */
+export async function suggestAddPlan(s: Session, md: string, d: Decision, adapter: ProviderAdapter, opts: RunOptions): Promise<Validated<AddPlanReply>> {
+  const cite = citeId(d.round, d.key);
+  return runValidated<AddPlanReply>(
+    adapter,
+    { kind: "addplan", systemPrompt: addPlanSystemPrompt(), userPrompt: buildAddPlanPrompt(s, md, d), jsonSchema: addPlanJsonSchema() },
+    AddPlanReplySchema,
+    (reply) => (reply.place ? checkAddPlan(md, reply, cite) : null),
+    opts,
+    [userText(s), md].join("\n"),
   );
 }
