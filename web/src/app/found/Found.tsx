@@ -8,14 +8,14 @@ import type { FoundRow, FoundView } from "../types";
 
 /** Rows shown before "Show n more" (#149). */
 const FIRST = 3;
-/** "✓ Imported" stays this long before the row becomes a link (#153). */
+/** "✓ Imported" stays this long, then the row leaves Found for Recent (PO, #21). */
 const HOLD_MS = 1500;
 const EASE = "cubic-bezier(0.23,1,0.32,1)";
 
 type Phase =
   | { p: "busy"; update: boolean }
   | { p: "done"; update: boolean; planId: string }
-  | { p: "link"; update: boolean; planId: string }
+  | { p: "leaving"; update: boolean; planId: string }
   | { p: "failed"; reason: string; retry: "import" | "rescan" };
 
 const kbd = () => document.documentElement.hasAttribute("data-kbd");
@@ -113,7 +113,14 @@ function ImportButton({ label, phase, onClick }: { label: "Import" | "Update"; p
   );
 }
 
-export function Found({ agent, onOpen }: { agent: string; onOpen: (id: string) => void }) {
+export interface FoundHandoff {
+  /** A new plan exists but its row still says "✓ Imported": Recent holds it back until the row leaves. */
+  onImported?: (planId: string) => void;
+  /** The row has left Found: Recent shows the plan now (focus moves there when it was on the row). */
+  onSettled?: (planId: string, o: { focus: boolean; update: boolean }) => void;
+}
+
+export function Found({ agent, onOpen, onImported, onSettled }: { agent: string; onOpen: (id: string) => void } & FoundHandoff) {
   const [view, setView] = useState<FoundView | null>(null);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
   const [expanded, setExpanded] = useState(false);
@@ -124,6 +131,8 @@ export function Found({ agent, onOpen }: { agent: string; onOpen: (id: string) =
   const focusAfter = useRef<string | null>(null);
   const stopped = useRef(new Set<string>());
   const announced = useRef<string>("");
+  /** Row tops and the group's height just before a row leaves, so what's left can slide into place (FLIP). */
+  const flip = useRef<{ tops: Map<string, number>; height: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -190,6 +199,29 @@ export function Found({ agent, onOpen }: { agent: string; onOpen: (id: string) =
   useLayoutEffect(() => {
     if (mount.current) lastHeight.current = mount.current.offsetHeight;
   });
+  // A row left (PO, #21): the rows below slide up into its place (220ms ease-out), a row brought in
+  // from "Show n more" fades in, and the group eases to its new height, so Recent moves once, calmly.
+  // Reduced motion: no movement, the newcomer only fades. data-kbd: everything is instant.
+  useLayoutEffect(() => {
+    const f = flip.current;
+    const el = mount.current;
+    if (!f || !el) return;
+    flip.current = null;
+    if (kbd()) return;
+    const still = reduced();
+    for (const li of el.querySelectorAll<HTMLElement>(".found ul > li[data-row]")) {
+      const was = f.tops.get(li.dataset.row!);
+      if (was === undefined) li.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, delay: still ? 0 : 60, easing: EASE, fill: "backwards" });
+      else if (!still && was !== li.offsetTop) li.animate([{ transform: `translateY(${was - li.offsetTop}px)` }, { transform: "none" }], { duration: 220, easing: EASE });
+    }
+    const to = el.offsetHeight;
+    if (still || f.height === to) return;
+    el.style.overflow = "hidden";
+    const a = el.animate([{ height: `${f.height}px` }, { height: `${to}px` }], { duration: 220, easing: EASE });
+    a.onfinish = a.oncancel = () => {
+      el.style.overflow = "";
+    };
+  }, [phases]);
 
   // Focus follows the row through its import (#142), and onto the first new row after Show more.
   useLayoutEffect(() => {
@@ -218,18 +250,25 @@ export function Found({ agent, onOpen }: { agent: string; onOpen: (id: string) =
     try {
       const res = await api.foundImport(r.id);
       set(r.id, { p: "done", update, planId: res.planId });
+      if (!update) onImported?.(res.planId);
       setLive(`${update ? "Updated" : "Imported"} ‘${titleOf(r)}’`);
       timers.current.push(
         window.setTimeout(() => {
-          const li = mount.current?.querySelector(`[data-row="${CSS.escape(r.id)}"]`);
-          const had = !!li && (li.contains(document.activeElement) || document.activeElement === document.body);
-          if (had) focusAfter.current = r.id;
-          set(r.id, { p: "link", update, planId: res.planId });
-          // 160ms crossfade to the link + tag (#153); nothing moves under data-kbd.
-          if (!kbd())
-            requestAnimationFrame(() =>
-              mount.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(r.id)}"] .frow`)?.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 160, easing: EASE }),
-            );
+          // After the hold the row leaves Found: it fades out in place (160ms), then is gone and the
+          // plan shows in Recent only. Under data-kbd it goes at once.
+          const li = mount.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(r.id)}"]`);
+          const focus = !!li && (li.contains(document.activeElement) || document.activeElement === document.body);
+          set(r.id, { p: "leaving", update, planId: res.planId });
+          const gone = () => {
+            const el = mount.current;
+            if (el) flip.current = { tops: new Map([...el.querySelectorAll<HTMLElement>(".found ul > li[data-row]")].map((x) => [x.dataset.row!, x.offsetTop])), height: el.offsetHeight };
+            set(r.id, null);
+            onSettled?.(res.planId, { focus, update });
+          };
+          if (!li || kbd()) return gone();
+          const a = li.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: EASE, fill: "forwards" });
+          a.onfinish = gone;
+          a.oncancel = gone;
         }, HOLD_MS),
       );
     } catch (err) {
@@ -272,18 +311,6 @@ export function Found({ agent, onOpen }: { agent: string; onOpen: (id: string) =
       e.preventDefault();
       onOpen(planId);
     };
-    if (ph?.p === "link")
-      return (
-        <a className="frow" href={`/s/${ph.planId}`} onClick={open(ph.planId)}>
-          <span className="tt">
-            <span className="nm">{titleOf(r)}</span>
-            <Meta segs={restMeta(r, branch)} />
-          </span>
-          <span className="act">
-            <span className="tag">{ph.update ? "Updated" : "Imported"}</span>
-          </span>
-        </a>
-      );
     const agentRun = r.importable === "agent" && r.status !== "changed" ? r.importable : null;
     const running = on.agent.running === r.id;
     const waiting = on.agent.waiting.includes(r.id);
@@ -324,7 +351,7 @@ export function Found({ agent, onOpen }: { agent: string; onOpen: (id: string) =
       );
     } else if (r.status === "in_progress") {
       act = <span className="txt">In progress</span>;
-    } else if (r.status === "changed" && r.planId) {
+    } else if ((r.status === "changed" || (ph && ph.p !== "failed" && ph.update)) && r.planId) {
       const planId = r.planId;
       nm = (
         <a href={`/s/${planId}`} onClick={open(planId)}>
@@ -332,9 +359,9 @@ export function Found({ agent, onOpen }: { agent: string; onOpen: (id: string) =
         </a>
       );
       segs = [<span className="ch">Source changed</span>, ...segs];
-      act = <ImportButton label="Update" phase={ph?.p === "busy" ? "b" : ph?.p === "done" ? "c" : "a"} onClick={() => void doImport(r)} />;
+      act = <ImportButton label="Update" phase={ph?.p === "busy" ? "b" : ph?.p === "done" || ph?.p === "leaving" ? "c" : "a"} onClick={() => void doImport(r)} />;
     } else {
-      act = <ImportButton label="Import" phase={ph?.p === "busy" ? "b" : ph?.p === "done" ? "c" : "a"} onClick={() => void doImport(r)} />;
+      act = <ImportButton label="Import" phase={ph?.p === "busy" ? "b" : ph?.p === "done" || ph?.p === "leaving" ? "c" : "a"} onClick={() => void doImport(r)} />;
     }
     return (
       <div className="frow">

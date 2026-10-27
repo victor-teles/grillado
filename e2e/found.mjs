@@ -129,6 +129,84 @@ async function expand(pg) {
   const b = found(pg).getByRole("button", { name: /^Show \d+ more$/ });
   if (await b.count()) await b.click();
 }
+/**
+ * Watch a row move from Found to Recent (PO, #21). Every frame it records the page top of each Recent row
+ * that was already there, the Found row's presence, how many Recent rows match `re`, and any
+ * transform/height animation (for the reduced-motion check). `done()` stops it and returns the samples.
+ */
+async function watchMove(pg, title, re) {
+  await pg.evaluate(
+    ({ title, src }) => {
+      const re = new RegExp(src, "i");
+      const named = new RegExp(title);
+      const rows = () => [...document.querySelectorAll(".recent .rrow")];
+      const top = (a) => a.getBoundingClientRect().top + scrollY;
+      const before = new Map(rows().map((a) => [a.getAttribute("href"), top(a)]));
+      const list = document.querySelector(".recent ul");
+      const w = (window.__move = { before: [...before], listTop0: list ? list.getBoundingClientRect().top + scrollY : null, frames: [], moving: false, t0: performance.now() });
+      const tick = () => {
+        if (!window.__move || window.__move !== w) return;
+        const inFound = [...document.querySelectorAll("[data-testid=found-row] .nm")].some((n) => named.test(n.textContent));
+        const matches = rows().filter((a) => re.test(a.textContent)).length;
+        const tops = Object.fromEntries(rows().filter((a) => before.has(a.getAttribute("href"))).map((a) => [a.getAttribute("href"), top(a)]));
+        const done = document.querySelector(`[data-testid=found-row] .imp[data-l=c]`) !== null;
+        for (const a of document.getAnimations()) {
+          const k = a.effect?.getKeyframes?.() ?? [];
+          if (k.some((f) => (f.transform && f.transform !== "none") || f.height)) w.moving = true;
+        }
+        w.frames.push({ t: performance.now() - w.t0, inFound, matches, tops, done });
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    },
+    { title: title instanceof RegExp ? title.source : title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), src: re.source },
+  );
+  return {
+    done: () =>
+      pg.evaluate(() => {
+        const w = window.__move;
+        window.__move = null;
+        const rows = [...document.querySelectorAll(".recent .rrow")];
+        const list = document.querySelector(".recent ul");
+        const lt = list.getBoundingClientRect().top + scrollY;
+        w.after = Object.fromEntries(rows.map((a) => [a.getAttribute("href"), a.getBoundingClientRect().top + scrollY - lt]));
+        w.listTop1 = lt;
+        w.focus = document.activeElement?.closest?.(".recent .rrow")?.getAttribute("href") ?? null;
+        return w;
+      }),
+  };
+}
+/**
+ * Read a move: when the row left Found, that the plan showed up in Recent exactly once and only after
+ * the hold, and that the rows already in Recent moved only by the new row's height (inside the list),
+ * smoothly (each frame's step in the same direction, no snap), with nothing else shifting.
+ */
+function readMove(w, newHref) {
+  const leftAt = w.frames.find((f) => !f.inFound)?.t ?? null;
+  const doneAt = w.frames.find((f) => f.done)?.t ?? null;
+  const early = w.frames.some((f) => f.inFound && f.matches > 0);
+  const last = w.frames.at(-1);
+  const keys = Object.keys(w.after);
+  const h = newHref && w.after[newHref] !== undefined ? (keys[keys.indexOf(newHref) + 1] ? w.after[keys[keys.indexOf(newHref) + 1]] - w.after[newHref] : null) : null;
+  const before = new Map(w.before.map(([k, v]) => [k, v - w.listTop0]));
+  const shifts = [...before].map(([k, v]) => Math.round(w.after[k] - v));
+  const okShift = shifts.every((d) => Math.abs(d) <= 1 || (h !== null && Math.abs(d - h) <= 1));
+  // (h is the distance from the new row to the one below it; with nothing below, nothing may move.)
+  let smooth = true;
+  let maxStep = 0;
+  for (const k of before.keys()) {
+    const ys = w.frames.map((f) => f.tops[k]).filter((y) => y !== undefined);
+    let dir = 0;
+    for (let i = 1; i < ys.length; i++) {
+      const d = ys[i] - ys[i - 1];
+      maxStep = Math.max(maxStep, Math.abs(d));
+      if (Math.abs(d) < 0.5) continue;
+      if (dir && Math.sign(d) !== dir) smooth = false;
+      dir = Math.sign(d);
+    }
+  }
+  return { leftAt, doneAt, early, once: last?.matches === 1, h, shifts, okShift, smooth, maxStep: Math.round(maxStep), moving: w.moving, focus: w.focus };
+}
 const inner = async (loc) => (await loc.innerText()).replace(/\s+/g, " ").trim();
 const parts = (loc) => loc.evaluate((e) => [...e.children].map((x) => x.textContent.replace(/\s+/g, " ").trim()).filter(Boolean).join(" · "));
 const live = (pg) => txt(pg.getByTestId("found-live"));
@@ -264,6 +342,9 @@ try {
       }).observe(document.querySelector("[data-testid=found]"), { attributes: true, subtree: true, attributeFilter: ["data-l"] });
     });
     const recipe = rowOf(pg, RECIPE);
+    const recipeRe = /recipe app/i;
+    check(`${theme} §3 before: the plan isn't in Recent yet`, (await pg.locator(".recent .rrow").filter({ hasText: recipeRe }).count()) === 0);
+    const mv = await watchMove(pg, RECIPE, recipeRe);
     const impBtn = recipe.getByRole("button", { name: "Import" });
     const w0 = await impBtn.evaluate((e) => e.getBoundingClientRect().width);
     await impBtn.click();
@@ -272,16 +353,16 @@ try {
     check(`${theme} §3 Importing… then ✓ Imported, the width never changes`, JSON.stringify(await pg.evaluate(() => window.__labels)).startsWith('["b","c"') && w0 === w1, `${JSON.stringify(await pg.evaluate(() => window.__labels))} ${w0}/${w1}`);
     check(`${theme} §3 ✓ Imported: aria-disabled, focus kept on it, live "Imported ‘Family recipe app’"`, (await recipe.locator(".imp").getAttribute("aria-disabled")) === "true" && (await recipe.locator(".imp").evaluate((e) => e === document.activeElement)) && (await live(pg)) === `Imported ‘${RECIPE}’`, `${await active(pg)} ${await live(pg)}`);
     await shot(pg, "3-import", t("d-imported-t0500"));
-    const t0 = Date.now();
-    await recipe.locator("a.frow").waitFor({ timeout: 5000 });
-    const held = Date.now() - t0;
-    check(`${theme} §3 after the 1.5 s hold the row is a link to the plan with the "Imported" tag`, (await txt(recipe.locator(".tag"))) === "Imported" && /^\/s\//.test((await recipe.locator("a.frow").getAttribute("href")) ?? "") && held > 700, `held ${held}`);
-    check(`${theme} §3 focus moves to the row's new link (#142)`, await recipe.locator("a.frow").evaluate((e) => e === document.activeElement), await active(pg));
-    if (one) {
-      await recipe.locator("a.frow").hover();
-      await shot(pg, "3-import", t("d-imported-t2000-hover"));
-    }
-    await axe(pg, `${theme} desktop: imported row`);
+    await recipe.waitFor({ state: "detached", timeout: 5000 });
+    await pg.waitForTimeout(400); // the exit (160ms) and the slide-in (220ms) have settled
+    const rcp = pg.locator(".recent .rrow").filter({ hasText: recipeRe });
+    const rm = readMove(await mv.done(), await rcp.first().getAttribute("href"));
+    const held = rm.leftAt - rm.doneAt;
+    check(`${theme} §3 after the 1.5 s ✓ Imported hold the row leaves Found, no reload`, held >= 1450 && held <= 2300, `held ${Math.round(held)}ms`);
+    check(`${theme} §3 the plan is in Recent once, and not before the row left`, rm.once && !rm.early && (await rcp.count()) === 1, JSON.stringify({ once: rm.once, early: rm.early }));
+    check(`${theme} §3 focus moves to the plan's new row in Recent`, rm.focus === (await rcp.first().getAttribute("href")), await active(pg));
+    await shot(pg, "3-import", t("d-left-to-recent"));
+    await axe(pg, `${theme} desktop: after the row left for Recent`);
     // A failed structured import: words, Try again.
     await fakeView(pg, (v) => v);
     await pg.route("**/api/found/import", (route) => route.fulfill({ status: 422, json: { error: "Couldn't read this source.", code: "unreadable" } }));
@@ -292,9 +373,23 @@ try {
     await shot(pg, "3-import", t("d-import-failed"));
     await pg.unroute("**/api/found/import");
     await pg.unroute("**/api/found");
+    // Recent now has a row, so this move shows whether anything already in Recent jumps.
+    const budgetRe = new RegExp(BUDGET, "i");
+    const n0 = await pg.locator(".recent .rrow").filter({ hasText: budgetRe }).count();
+    const mv2 = await watchMove(pg, BUDGET, budgetRe);
     await budget.getByRole("button", { name: "Try again" }).click();
-    await budget.locator("a.frow").waitFor({ timeout: 6000 });
-    check(`${theme} §3 Try again imports it`, (await txt(budget.locator(".tag"))) === "Imported");
+    await budget.waitFor({ state: "detached", timeout: 8000 });
+    await pg.waitForTimeout(400);
+    const brow = pg.locator(".recent .rrow").filter({ hasText: budgetRe });
+    const rm2 = readMove(await mv2.done(), await brow.first().getAttribute("href"));
+    check(`${theme} §3 Try again imports it; it leaves Found and is in Recent once`, n0 === 0 && rm2.once && !rm2.early, JSON.stringify({ n0, once: rm2.once, early: rm2.early }));
+    check(`${theme} §3 Recent: rows already there move only by the new row's height, smoothly`, rm2.shifts.length > 0 && rm2.okShift && rm2.smooth && (rm2.h === null || rm2.maxStep < rm2.h / 2), JSON.stringify({ h: rm2.h, shifts: rm2.shifts, smooth: rm2.smooth, maxStep: rm2.maxStep }));
+
+    // ---------------------------------------------------------------- §6 Recent right after import (no reload)
+    check(`${theme} §6 no reload: imported sources are gone from Found`, (await rowOf(pg, RECIPE).count()) === 0 && (await rowOf(pg, BUDGET).count()) === 0);
+    const rec0 = pg.locator(".recent .rrow").filter({ hasText: recipeRe });
+    check(`${theme} §6 no reload: Recent "From Claude Code session · Plated · …"`, /^From Claude Code session · Plated · /.test(await seen(rec0.locator(".meta"))) && (await rec0.locator(".src1").count()) === 1, await seen(rec0.locator(".meta")));
+    await shot(pg, "6-recent", t("d-no-reload"));
 
     // ---------------------------------------------------------------- §6 Recent after import (next load)
     await pg.reload();
@@ -313,6 +408,8 @@ try {
     await fa.getByRole("button", { name: "Import" }).click();
     await fa.getByRole("button", { name: "Stop" }).waitFor({ timeout: 5000 });
     check(`${theme} §4 running: "● Claude Code is turning 6 answers into decisions" + quiet Stop`, (await seen(fa.locator(".meta"))) === "Claude Code is turning 6 answers into decisions" && (await fa.locator(".meta .dot[aria-hidden=true]").count()) === 1 && (await fa.getByRole("button", { name: "Stop" }).getAttribute("class"))?.includes("quiet"), await seen(fa.locator(".meta")));
+    await pg.emulateMedia({ reducedMotion: "reduce" });
+    const mv3 = await watchMove(pg, FREE_B, /\0never/);
     await fb.getByRole("button", { name: "Import" }).click();
     await fb.getByText("Waiting").waitFor({ timeout: 5000 });
     check(`${theme} §4 one at a time: the next shows muted "Waiting"`, (await txt(fb.locator(".act"))) === "Waiting");
@@ -326,7 +423,12 @@ try {
     check(`${theme} §4 the waiting one starts in order`, (await seen(fb.locator(".meta"))).startsWith("Claude Code is turning"));
     await fb.locator(".imp[data-l=c]").waitFor({ timeout: 10000 });
     check(`${theme} §4 success follows §3: ✓ Imported`, (await live(pg)).startsWith("Imported ‘"));
-    await fb.locator("a.frow").waitFor({ timeout: 5000 });
+    await fb.waitFor({ state: "detached", timeout: 5000 });
+    await pg.waitForTimeout(300);
+    const fbHref = await pg.locator(".recent .rrow").first().getAttribute("href");
+    const rm3 = readMove(await mv3.done(), fbHref);
+    check(`${theme} §4 reduced motion: the row leaves with fades only (no slide, no height change), Recent moves only by the new row`, !rm3.moving && rm3.okShift && rm3.shifts.length > 0, JSON.stringify({ moving: rm3.moving, h: rm3.h, shifts: rm3.shifts }));
+    await pg.emulateMedia({ reducedMotion: null });
     // A usage-limit failure, then Try again.
     w.setCtl({ FAKE_IMPORT: "fail" });
     await fa.getByRole("button", { name: "Import" }).click();
@@ -340,11 +442,13 @@ try {
     check(`${theme} §4 the failure is still there after a reload (kept per row)`, (await seen(rowOf(pg, FREE_A).locator(".meta"))).startsWith("Couldn’t import"));
     w.setCtl({});
     await rowOf(pg, FREE_A).getByRole("button", { name: "Try again" }).click();
-    await rowOf(pg, FREE_A).locator("a.frow").waitFor({ timeout: 10000 });
-    check(`${theme} §4 Try again imports it`, true);
+    await rowOf(pg, FREE_A).waitFor({ state: "detached", timeout: 10000 });
+    await pg.waitForTimeout(300);
+    const freeLink = pg.locator(".recent .rrow:focus");
+    check(`${theme} §4 Try again imports it; it leaves Found and focus is on its row in Recent`, (await freeLink.count()) === 1, await active(pg));
 
     // A free-text import has decisions and no plan text yet: it opens at Confirm (#20), like any session.
-    await rowOf(pg, FREE_A).locator("a.frow").click();
+    await freeLink.click();
     await pg.getByText("Is it done?").waitFor({ timeout: 10000 });
     check(`${theme} §4 the free-text import opens at Confirm with its 6 decisions`, (await pg.getByText("6 decisions settled, nothing open.", { exact: false }).count()) === 1);
     await shot(pg, "4-free-text", t("d-confirm"));
@@ -499,7 +603,8 @@ try {
     await rowOf(mp, RECIPE).getByRole("button", { name: "Import" }).click();
     await rowOf(mp, RECIPE).locator(".imp[data-l=c]").waitFor({ timeout: 5000 });
     await shot(mp, "3-import", t("m-imported"));
-    await rowOf(mp, RECIPE).locator("a.frow").waitFor({ timeout: 5000 });
+    await rowOf(mp, RECIPE).waitFor({ state: "detached", timeout: 5000 });
+    check(`${theme} phone: the row leaves Found and the plan is in Recent once, no reload`, (await mp.locator(".recent .rrow").filter({ hasText: /recipe app/i }).count()) === 1);
     await mp.reload();
     await found(mp).waitFor();
     const mrec = mp.locator(".recent .rrow").filter({ hasText: /recipe app/i });
