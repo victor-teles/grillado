@@ -1,4 +1,4 @@
-import { Fragment, type KeyboardEvent, type ReactNode, useId, useState } from "react";
+import { Fragment, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
 import { Diagram } from "./editor/Diagram";
 import { IEdit } from "./icons";
@@ -104,6 +104,30 @@ export interface PassageLink {
   onLeave: (id: string) => void;
   /** The passage's right-margin cites. */
   gut?: (keys: string[], id: string) => ReactNode;
+  /** #118: the measure is under 480px, so cites go inline at the passage's end (v1.2 §3 fallback). */
+  inline?: boolean;
+}
+/**
+ * A code fence. Fences don't wrap, so a long line scrolls sideways inside it; only then is it a Tab stop
+ * (a named region), so the keyboard can scroll it too (WCAG 2.1.1).
+ */
+function Pre({ className, children }: { className?: string; children: ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setWide(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [children]);
+  return (
+    <pre ref={ref} className={className} {...(wide ? { tabIndex: 0, role: "region", "aria-label": "Code, scrolls sideways" } : {})}>
+      {children}
+    </pre>
+  );
 }
 export type FenceBlock = Extract<Block, { kind: "fence" }>;
 
@@ -166,7 +190,7 @@ export function Markdown({
     const stale = !!link && keys.some((k) => link.stale.has(k));
     return (
       <Fragment key={i}>
-        {link?.gut ? (
+        {link?.gut && !link.inline ? (
           <span className="gut" contentEditable={false}>
             {link.gut(keys, id)}
           </span>
@@ -180,6 +204,11 @@ export function Markdown({
         >
           {inline(link?.gut ? t.replace(new RegExp(`\\s*${CITE.source}`, "g"), "") : t, ctx)}
         </span>
+        {link?.gut && link.inline ? (
+          <span className="gut in" contentEditable={false}>
+            {link.gut(keys, id)}
+          </span>
+        ) : null}
       </Fragment>
     );
   };
@@ -214,6 +243,8 @@ export function Markdown({
             Edit
           </button>
         )}
+        {/* #117: Edit's reserved room on the first line; fences don't wrap, so they get none. */}
+        {b.kind === "fence" ? null : <span className="blk-slot" aria-hidden="true" />}
         {node}
         {onAdd ? (
           // Pointer only, after the content so text reads first: the keyboard way is "/" on the focused block (#32).
@@ -281,7 +312,7 @@ export function Markdown({
           b.lang === "mermaid" ? (
             <Diagram code={b.body} onEdit={onBlock ? () => onBlock(b) : undefined} />
           ) : b.lang === "diff" ? (
-            <pre className="diff4">
+            <Pre className="diff4">
               <code>
                 {b.body.split("\n").map((l, i) => (
                   <span key={i} className={l.startsWith("-") ? "dl" : l.startsWith("+") ? "dd" : undefined}>
@@ -289,13 +320,13 @@ export function Markdown({
                   </span>
                 ))}
               </code>
-            </pre>
+            </Pre>
           ) : b.lang === "tabs" ? (
             <Tabs body={b.body} />
           ) : (
-            <pre>
+            <Pre>
               <code>{b.body}</code>
-            </pre>
+            </Pre>
           ),
         ),
       );

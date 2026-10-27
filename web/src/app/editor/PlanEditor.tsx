@@ -594,6 +594,7 @@ export function PlanEditor({
   readOnly,
   highlight,
   gut,
+  gutInline,
   staleKeys,
   marks,
   editRef,
@@ -612,6 +613,8 @@ export function PlanEditor({
   /** "Show in plan": highlight this decision's passages for a moment. */
   highlight?: string | null;
   gut?: GutRenderer;
+  /** #118: the measure is under 480px, so cites go inline at the end of their passage. */
+  gutInline?: boolean;
   /** Decisions being asked again: their passages go muted (§3 Reasked). */
   staleKeys?: Set<string>;
   /** Comment anchors and pending suggestions (item 3). */
@@ -649,6 +652,7 @@ export function PlanEditor({
       hoverT.current.off = setTimeout(() => setHover(null), 200);
     },
     gut: gut ? (keys, id) => gut(keys, { passage: id, on: active, label: hover?.id === id ? hover.keys[0] : null }) : undefined,
+    inline: gutInline,
   };
   useEffect(() => () => {
     clearTimeout(hoverT.current.on);

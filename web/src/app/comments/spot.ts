@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
  * - The line end comes from text only. The decision cites (`.gut`), the block's Edit button
  *   (`.blk-act`) and the floating pill are absolutely placed, so a Range over the whole block
  *   would count them as text.
- * - The block's Edit slot and its cites are taken: a candidate box that touches one doesn't fit,
+ * - The block's Edit button, its reserved slot (#117) and its cites are taken: a candidate box that touches one doesn't fit,
  *   even while they are faded out (they show on the same hover).
  */
 export type Box = { left: number; right: number; top: number; bottom: number };
@@ -25,7 +25,8 @@ export interface LineRoom {
   cited: boolean;
 }
 
-const NOT_TEXT = ".gut, .blk-act, .ipill.hp, .okm, .sr-only";
+// An inline cite (#118 fallback, `.gut.in`) is in the flow, so it counts as text.
+const NOT_TEXT = ".gut:not(.in), .blk-act, .blk-slot, .ipill.hp, .okm, .sr-only";
 const BLOCK = "p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote";
 
 export function lineRoom(el: Element): LineRoom | null {
@@ -49,7 +50,8 @@ export function lineRoom(el: Element): LineRoom | null {
     const r = e.getBoundingClientRect();
     return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
   };
-  const edit = blk ? [...blk.querySelectorAll(":scope > .blk-act")].map(box) : [];
+  // Edit and its reserved first-line slot (#117); the slot has no box where it isn't shown (touch, phones).
+  const edit = blk ? [...blk.querySelectorAll(":scope > .blk-act, :scope > .blk-slot")].map(box).filter((b) => b.right > b.left) : [];
   const cites = blk ? [...blk.querySelectorAll(".gut-cite")].map(box).filter((b) => b.right > b.left) : [];
   return {
     last,
