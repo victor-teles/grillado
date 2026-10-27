@@ -22,6 +22,10 @@
 /* the meta wraps at a separator (never inside one); the "·" sits in the gap, clipped at a line start (#83); 2 lines max */
 .frow .meta{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:flex;flex-wrap:wrap;column-gap:15px;max-height:32px;overflow:hidden}
 .frow .meta .sg{position:relative;white-space:nowrap}
+/* nothing left to drop or shorten (the narrowest phones): a third line, never a clipped count */
+/* last resort (review-pr21 r2 #1): a third line, and a count wider than the line wraps, never clipped */
+.frow .meta[data-tall]{max-height:none}
+.frow .meta[data-tall]>.sg:last-child{white-space:normal}
 .frow .meta .sg+.sg::before{content:"·";position:absolute;left:-10px}
 .frow .meta .ch{color:var(--foreground);font-weight:500}
 .frow .meta .er{color:var(--destructive-ink)}
@@ -64,6 +68,10 @@ html[data-kbd] .imp>span{transition:none}
   .fh .look{height:44px}
   .fempty .x{width:44px;height:44px;margin-right:-12px}
   /* 44px hit areas on the text links, inside the 32px line (review-pr21 #3) */
-  .slot .more,.slot .lnk,.fempty .lnk{line-height:16px;padding:14px 8px;margin:-14px -8px}
+  /* one line each (nowrap), so the hit area stays 44px tall; only the status text wraps (review-pr21 r2 #2) */
+  .slot .more,.slot .lnk,.fempty .lnk{line-height:16px;padding:14px 6px;margin:-14px -6px;white-space:nowrap;flex:none}
+  /* the bottom line's links reach down into the space below the group, never up into the last row */
+  .slot .more,.slot .lnk{padding:8px 6px 20px;margin:-8px -6px -20px}
+  .slot>span:not([aria-hidden]),.fempty>span:not([aria-hidden]){min-width:0;line-height:16px}
 }
 .imp6 p{overflow-wrap:anywhere}

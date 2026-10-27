@@ -65,8 +65,24 @@ function Drop({ p, children }: { p: 1 | 2 | 3; children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * The source label, whose kind word (" session", " plan") can go when nothing else is left to drop:
+ * "Claude Code", "Codex", "Cursor" (review-pr21 r2 #1). "Plan file" stays whole.
+ */
+function Src({ app, kind }: { app: FoundRow["app"]; kind: FoundRow["kind"] }) {
+  const l = sourceLabel(app, kind);
+  const m = app === "file" ? null : /^(.*?)( session| plan)$/.exec(l);
+  if (!m) return <>{l}</>;
+  return (
+    <>
+      {m[1]}
+      <span className="sx">{m[2]}</span>
+    </>
+  );
+}
+
 function restMeta(r: FoundRow, branch: string | undefined) {
-  const segs: React.ReactNode[] = [sourceLabel(r.app, r.kind)];
+  const segs: React.ReactNode[] = [<Src app={r.app} kind={r.kind} />];
   if (r.app === "file" && r.relPath) segs.push(<Drop p={3}>{r.relPath}</Drop>);
   if (r.subfolder) segs.push(<Drop p={2}>in {r.subfolder}</Drop>);
   if (r.branch && r.branch !== branch)
@@ -95,16 +111,28 @@ function Meta({ segs }: { segs: React.ReactNode[] }) {
   );
 }
 
-/** Every row's meta fits in 2 lines: drop the lowest-priority segments until it does (never the count). */
+/**
+ * Every row's meta fits in 2 lines, and the count always shows (#151, review-pr21 r2 #1): drop the
+ * lowest-priority segments first (branch, subfolder, plan path), then shorten the source label
+ * ("Claude Code session" → "Claude Code"), and if it still runs over, let the meta take a third line
+ * rather than clip it.
+ */
 function fitMeta(root: HTMLElement | null) {
   if (!root) return;
   for (const m of root.querySelectorAll<HTMLElement>(".frow .meta")) {
     const drops = [...m.querySelectorAll<HTMLElement>(":scope > [data-drop]")].sort((a, b) => Number(a.dataset.drop) - Number(b.dataset.drop));
+    const kindWord = m.querySelectorAll<HTMLElement>(":scope > .sg .sx");
+    delete m.dataset.tall;
     for (const d of drops) d.hidden = false;
+    for (const k of kindWord) k.hidden = false;
+    // Too tall for two lines, or one segment (a long count at 320px) wider than the line.
+    const over = () => m.scrollHeight > 33 || m.scrollWidth > m.clientWidth + 1;
     for (const d of drops) {
-      if (m.scrollHeight <= 33) break;
+      if (!over()) break;
       d.hidden = true;
     }
+    if (over()) for (const k of kindWord) k.hidden = true;
+    if (over()) m.dataset.tall = "";
   }
 }
 

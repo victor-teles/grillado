@@ -130,6 +130,58 @@ function readRecent(fr) {
   }
   return { first: fr[0]?.top, last: fr.at(-1)?.top, foundAtFirstPaint: !!fr[0]?.found, gaps: [...new Set(fr.map((f) => f.gap))], snaps, moves: moves.length, steps: moves.slice(0, 6), frames: fr.length };
 }
+/**
+ * On a phone width (review-pr21 r2): every control's hit area (its border box, which the padding and
+ * negative margins make 44px) overlaps no other control and no other row, and taps at its corners and
+ * edge midpoints land on it; every row's meta shows its count in full.
+ */
+const phoneAudit = () => {
+  const root = document.querySelector("[data-testid=found]");
+  if (!root) return { controls: 0, overlaps: ["no group"], misses: [], meta: [] };
+  const ctl = [...root.querySelectorAll("button, a[href]")].filter((e) => e.getClientRects().length && getComputedStyle(e).visibility !== "hidden");
+  const rows = [...root.querySelectorAll("li[data-row]")];
+  const name = (e) => (e.getAttribute("aria-label") || e.textContent.trim()).slice(0, 24) + (e.closest("li[data-row]") ? ` @${e.closest("li[data-row]").querySelector(".nm")?.textContent.slice(0, 14)}` : "");
+  const cross = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+  const overlaps = [];
+  const misses = [];
+  for (const c of ctl) {
+    c.scrollIntoView({ block: "center", behavior: "instant" });
+    const r = c.getBoundingClientRect();
+    for (const d of ctl) if (d !== c && !c.contains(d) && !d.contains(c) && cross(r, d.getBoundingClientRect())) overlaps.push(`${name(c)} × ${name(d)}`);
+    for (const li of rows) if (!li.contains(c) && cross(r, li.getBoundingClientRect())) overlaps.push(`${name(c)} × row ${li.querySelector(".nm")?.textContent.slice(0, 14)}`);
+    // Edge midpoints 1px in; corners 1px in from where a rounded corner's curve meets the diagonal
+    // (a pill's or circle's square corner isn't part of it; the browser doesn't hit it either).
+    const rad = parseFloat(getComputedStyle(c).borderTopLeftRadius) || 0;
+    const ci = Math.min(rad, r.width / 2, r.height / 2) * (1 - Math.SQRT1_2) + 1;
+    const mx = (r.left + r.right) / 2;
+    const my = (r.top + r.bottom) / 2;
+    const pts = [[r.left + ci, r.top + ci], [r.right - ci, r.top + ci], [r.left + ci, r.bottom - ci], [r.right - ci, r.bottom - ci], [mx, r.top + 1], [mx, r.bottom - 1], [r.left + 1, my], [r.right - 1, my]];
+    for (const [x, y] of pts) {
+        const hitEl = document.elementFromPoint(x, y);
+        if (hitEl?.closest("button, a[href]") !== c) misses.push(`${name(c)} (${Math.round(x)},${Math.round(y)}) → ${hitEl ? hitEl.tagName + "." + hitEl.className : "none"}`);
+      }
+  }
+  const meta = [...root.querySelectorAll("li[data-row] .meta")].map((m) => {
+    const segs = [...m.querySelectorAll(":scope > .sg")].filter((x) => !x.hidden);
+    const last = segs.at(-1);
+    const mb = m.getBoundingClientRect();
+    const lb = last.getBoundingClientRect();
+    return {
+      row: m.closest("li").querySelector(".nm").textContent.slice(0, 18),
+      lines: new Set(segs.map((x) => Math.round(x.getBoundingClientRect().top))).size,
+      count: last.innerText.trim(),
+      shown: m.scrollHeight <= m.clientHeight + 1 && lb.bottom <= mb.bottom + 0.5 && lb.right <= mb.right + 0.5 && lb.top >= mb.top - 0.5,
+      short: [...m.querySelectorAll(".sx")].some((x) => x.hidden),
+      tall: m.hasAttribute("data-tall"),
+    };
+  });
+  const slotText = root.querySelector(".slot > span:not([aria-hidden])");
+  const slot = root.querySelector(".slot");
+  const statusFits = !slotText || slotText.getBoundingClientRect().bottom <= slot.getBoundingClientRect().bottom + 0.5;
+  return { controls: ctl.length, overlaps, misses, meta, statusFits };
+};
+const COUNT = /(\d+ decisions?|\d+ questions? answered|\d+ answers? to turn into decisions)$/;
+
 /** A phone control's tap target: its box, and whether a tap at its top and bottom edges lands on it. */
 const hit = (loc) =>
   loc.evaluate((e) => {
@@ -761,6 +813,56 @@ try {
     await sme.stop();
     await sm.stop();
     await mctx.close();
+
+    // ---------------------------------------------------------------- narrow phones (review-pr21 r2)
+    const wn = world();
+    const sn = await server(wn);
+    const wne = world("empty-app", { sources: false });
+    const sne = await server(wne);
+    for (const width of [390, 375, 360, 320]) {
+      const nctx = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: true, isMobile: true });
+      await nctx.addInitScript((th) => localStorage.setItem("grillado-theme", th), theme);
+      const np = await nctx.newPage();
+      lastPage = np;
+      await home(np, sn.url);
+      await np.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
+      // Partial, collapsed: Show n more · Showing what we found in 1.5 s · Look again.
+      await fakeView(np, (v) => ({ ...v, partial: true }));
+      await np.reload();
+      await found(np).locator(".slot .lnk").waitFor({ timeout: 10000 });
+      await settle(np);
+      const pa = await np.evaluate(phoneAudit);
+      check(`${theme} phone ${width} partial: no hit area overlaps another control or row, taps at its edges and corners land on it`, pa.controls >= 5 && !pa.overlaps.length && !pa.misses.length, JSON.stringify({ overlaps: pa.overlaps, misses: pa.misses.slice(0, 6) }));
+      check(`${theme} phone ${width} partial: the status text stays inside the bottom line`, pa.statusFits);
+      if (width !== 390 && width !== 375) await shot(np, "1-group", `m-partial-${width}-${theme}-r3`);
+      await np.unroute("**/api/found");
+      await np.reload();
+      await np.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
+      await shot(np, "1-group", `m-found-${width}-${theme}-r3`);
+      await expand(np);
+      await np.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length >= 9, null, { timeout: 10000 });
+      await settle(np);
+      const ra = await np.evaluate(phoneAudit);
+      const lost = ra.meta.filter((m) => !m.shown || !COUNT.test(m.count) || m.lines > 3);
+      check(`${theme} phone ${width}: every row shows its count in full (#151)`, ra.meta.length >= 9 && !lost.length, JSON.stringify(lost.length ? lost : ra.meta.map((m) => `${m.row}:${m.lines}${m.short ? "s" : ""}${m.tall ? "t" : ""}`)));
+      check(`${theme} phone ${width}: all rows: no hit area overlaps another control or row`, !ra.overlaps.length && !ra.misses.length, JSON.stringify({ overlaps: ra.overlaps, misses: ra.misses.slice(0, 6) }));
+      if (width === 390) check(`${theme} phone 390: the full source label, 2 lines at most`, ra.meta.every((m) => !m.short && !m.tall && m.lines <= 2), JSON.stringify(ra.meta));
+      await shot(np, "2-rows", `m-rows-${width}-${theme}-r3`);
+      // Empty: No plans found in empty-app · Look again   ×
+      const ep = await nctx.newPage();
+      lastPage = ep;
+      await ep.goto(sne.url);
+      await select(ep, "claude");
+      await ep.reload();
+      await ep.locator(".fempty").waitFor({ timeout: 10000 });
+      await settle(ep);
+      const ea = await ep.evaluate(phoneAudit);
+      check(`${theme} phone ${width} empty: Look again and × don't overlap, taps at their edges land on them`, ea.controls === 2 && !ea.overlaps.length && !ea.misses.length, JSON.stringify({ overlaps: ea.overlaps, misses: ea.misses.slice(0, 6) }));
+      if (width !== 390 && width !== 375) await shot(ep, "1-group", `m-empty-${width}-${theme}-r3`);
+      await nctx.close();
+    }
+    await sne.stop();
+    await sn.stop();
   }
 } catch (err) {
   failures++;
