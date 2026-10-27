@@ -12,6 +12,9 @@ import { createMcpServer } from "../src/cli/mcp.ts";
 import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
 import { ImportError } from "../src/core/found/import.ts";
+import { reasonText } from "../src/core/reason.ts";
+import { createAdapters } from "../src/core/providers/adapters.ts";
+import { fakeBinDir, fakeEnv } from "./helpers.ts";
 import { type ImportLine, fold, groupLabel, groupMeta, groups, importRows, metaParts, title } from "../src/core/activity.ts";
 
 const FIX = path.join(import.meta.dir, "fixtures", "found");
@@ -399,9 +402,33 @@ describe("found in this project: HTTP API and MCP", () => {
     const free = (await call("POST", "/api/found/rescan", {})).json.rows.find((x: Row) => x.importable === "agent");
     const r = await call("POST", "/api/found/import", { id: free.id });
     expect(r.status).toBe(502);
-    expect(r.json).toMatchObject({ code: "agent", reason: "missing" });
+    expect(r.json).toMatchObject({ code: "agent", reason: "not_found" });
+    // Found's row says reasonText(reason): "Couldn't import · Claude Code isn't installed".
+    expect(reasonText(r.json.reason, "Claude Code")).toBe("Claude Code isn’t installed");
     expect(w.store.list()).toHaveLength(1);
     expect((await call("POST", "/api/found/stop", { id: free.id })).status).toBe(200);
+  });
+
+  test("a free-text import that hits the usage limit says so (usage-limit wording fix)", async () => {
+    const w = world();
+    cpFree(w, "free.jsonl");
+    const web = mkdtempSync(path.join(os.tmpdir(), "grillado-web-"));
+    writeFileSync(path.join(web, "index.html"), "<!doctype html>");
+    const adapters = createAdapters({ env: fakeEnv(fakeBinDir(["claude"]), { FAKE_IMPORT: "fail" }) });
+    const server = new GrilladoServer({ adapters, store: w.store, webDir: web, port: 0, strictPort: true, found: w.svc() });
+    servers.push(server);
+    await server.detect();
+    await server.listen();
+    const call = (m: string, p: string, b?: unknown) => req(server.port, server.token, m, p, b);
+    await server.scanProject();
+    const free = (await call("GET", "/api/found")).json.rows.find((x: Row) => x.importable === "agent");
+    const r = await call("POST", "/api/found/import", { id: free.id });
+    expect(r.status).toBe(502);
+    expect(r.json).toMatchObject({ code: "agent", reason: "rate_limit" });
+    expect(reasonText(r.json.reason, "Claude Code")).toBe("Claude Code hit its usage limit");
+    // The row's failed state, after a reload, reads the same code from the view.
+    const failed = (await call("GET", "/api/found")).json.agent.failed[free.id];
+    expect(reasonText(failed, "Claude Code")).toBe("Claude Code hit its usage limit");
   });
 
   test("the scan off: GET says why, POSTs are refused", async () => {

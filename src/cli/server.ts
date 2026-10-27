@@ -589,7 +589,7 @@ export class GrilladoServer {
     return async (x, signal) => {
       const id = this.selected ?? this.opts.store.readConfig().defaultProvider;
       const adapter = this.providers.some((p) => p.id === id && p.detection.status === "ready") ? this.opts.adapters.find((p) => p.id === id) : undefined;
-      if (!adapter) return { ok: false, code: "missing" };
+      if (!adapter) return { ok: false, code: "not_found" };
       const cwd = mkdtempSync(path.join(os.tmpdir(), "grillado-import-"));
       try {
         const r = await decisionsFromAnswers(stripInvocation(x.idea), x.pairs ?? [], adapter, { cwd, timeoutMs: this.opts.timeoutMs ?? 180_000, signal });

@@ -1,4 +1,5 @@
 // In-session screens: dispatcher, problem banners, confirm (+ reopen dialogs), plating.
+import { failureCode } from "../../../src/core/reason.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
@@ -59,7 +60,8 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
   const provider = app.providers.find((p) => p.id === session.provider);
   const name = provider?.displayName ?? session.provider;
   const others = app.providers.filter((p) => p.status === "ready" && p.id !== session.provider);
-  const code = session.error?.code ?? "unknown";
+  // The shared normalisation (core/reason.ts), so any code the server sends picks a card.
+  const code = failureCode(session.error?.code);
   const retry = () => quiet(act("retry"));
   const sw = others.length ? (
     <button type="button" className="btn quiet" onClick={onSwitch}>

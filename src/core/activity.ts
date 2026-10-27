@@ -2,6 +2,7 @@
 // JSON object per line, append-only, written by Grillado (never by the agent). This module is
 // DOM-free: the server folds lines into entries; the browser formats titles, meta, durations, the
 // copied log and the live-region messages from the same functions.
+import { reasonText } from "./reason.ts";
 
 export type RunKind = "round" | "plan" | "reply" | "apply" | "diagrams" | "addplan";
 export type RunStatus = "running" | "done" | "failed" | "stopped" | "interrupted";
@@ -285,26 +286,7 @@ export function title(e: Entry): string {
   return "plan.md changed on disk";
 }
 
-/** The CLI's failure codes (classify.ts) as reasonText reads them. */
-export const reasonCode = (code: string | null | undefined) => (code === "rate_limit" ? "rate" : code === "not_found" ? "missing" : code);
-
-/** Plain words for a failure code from the agent CLI (AC17: never the raw text). */
-export function reasonText(code: string | null | undefined, agent: string): string {
-  switch (code) {
-    case "rate":
-      return `${agent} hit its usage limit`;
-    case "auth":
-      return `${agent} isn’t signed in`;
-    case "timeout":
-      return `${agent} took too long`;
-    case "missing":
-      return `${agent} isn’t installed`;
-    case "malformed":
-      return `${agent}’s reply didn’t come through`;
-    default:
-      return `${agent} stopped responding`;
-  }
-}
+export { failureCode, reasonText } from "./reason.ts";
 
 export function time(iso: string, seconds = false): string {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...(seconds ? { second: "2-digit" } : {}) });

@@ -533,7 +533,7 @@ try {
       await openAsk(fp);
       await fp.keyboard.press("Control+Enter");
       await fp.getByTestId("diagram-failed").waitFor({ timeout: 15000 });
-      check("failure bar: stopped responding · Nothing was changed · Try again", /Claude Code stopped responding\s*Nothing was changed\s*Dismiss\s*Try again/.test(await txt(fp.getByTestId("diagram-failed"))), await txt(fp.getByTestId("diagram-failed")));
+      check("failure bar: hit its usage limit · Nothing was changed · Try again", /Claude Code hit its usage limit\s*Nothing was changed\s*Dismiss\s*Try again/.test(await txt(fp.getByTestId("diagram-failed"))), await txt(fp.getByTestId("diagram-failed")));
       check("Try again is the blue one", (await fp.getByTestId("diagram-failed").locator(".btn.primary").textContent()) === "Try again" && (await fp.$eval(".copy-md", (e) => !e.matches(".btn.primary") || getComputedStyle(e).backgroundColor !== getComputedStyle(document.querySelector("[data-testid=diagram-failed] .btn.primary")).backgroundColor)));
       if (SHOTS) await fp.screenshot({ path: path.join(SHOTS, `i5-failed-d-${theme}.png`) });
       await axe(fp, "dark desktop: failure bar");
