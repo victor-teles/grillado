@@ -2,6 +2,7 @@
 // thread's status row says. Unit-tested in test/comments-ui.test.ts.
 import { locate, plainQuote, sectionAt } from "../../../../src/core/comments.ts";
 import type { CommentThread, Suggestion } from "../types.ts";
+import { editorName } from "../../../../src/core/editor.ts";
 
 export const fill = (t: string, agent: string) => t.replace(/\{agent\}/g, agent);
 
@@ -30,12 +31,12 @@ export const CCOPY = {
   toReview: (n: number) => `${n} to review`,
   bulk: (n: number, a: "accepted" | "rejected") => `${n} ${n === 1 ? "suggestion" : "suggestions"} ${a}`,
   rtfHint: "Switch to Rich to comment",
-  /** A comment sent over `grillado mcp` (v1.2 item 1) by the agent the user builds with. */
-  coder: "Coding agent",
+  /** After the editor's name on a comment sent over `grillado mcp` (v1.2 item 1 §9, DECISIONS #107). */
+  fromEditor: "from your editor",
 };
 
 /** Who wrote a thread message, as the rail labels it. */
-export const author = (m: CommentThread["messages"][number], agent: string) => (m.by === "you" ? "You" : m.by === "coder" ? CCOPY.coder : agent);
+export const author = (m: CommentThread["messages"][number], agent: string) => (m.by === "you" ? "You" : m.by === "coder" ? editorName(m.client) : agent);
 
 export interface Placed {
   s: Suggestion;

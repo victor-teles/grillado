@@ -1153,3 +1153,7 @@ body:has([data-testid=diagram-run],[data-testid=diagram-failed],.review) .back6{
 @media (prefers-reduced-motion:reduce){
   .evh .chev,.ev6[data-open] .evh .chev,.gh6 button .chev{transition:none}
 }
+
+/* v1.2 item 1: editor-started sessions in Recent, and editor comments in the rail (#107, #108). */
+.rrow .meta .src1{color:var(--foreground)}
+.th .msg .who .via{display:inline-flex;align-items:center;gap:4px;font-size:var(--t-meta);color:var(--muted-foreground)}

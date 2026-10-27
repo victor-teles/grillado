@@ -3,6 +3,7 @@ import { AgentChip, useMobile } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { IPlus, IRefresh, IUp } from "./icons";
 import type { AppState, ProviderId, ProviderView, SessionSummary } from "./types";
+import { fromEditor } from "../../../src/core/editor.ts";
 
 // ---------------------------------------------------------------- 0c no agent
 
@@ -344,7 +345,16 @@ function Recent({ sessions, dataDir, onOpen }: { sessions: SessionSummary[]; dat
             >
               <span className="nm">{s.idea.split("\n")[0]}</span>
               <span className="meta">
-                {statusText(s)} · {when(s.updatedAt)}
+                {s.from !== undefined ? (
+                  // Started from an editor over MCP (item 1 §9, DECISIONS #108).
+                  <>
+                    <span className="src1">{fromEditor(s.from)}</span> · {s.queued ? "waiting for your answers" : `${statusText(s)} · ${when(s.updatedAt)}`}
+                  </>
+                ) : (
+                  <>
+                    {statusText(s)} · {when(s.updatedAt)}
+                  </>
+                )}
               </span>
             </a>
           </li>

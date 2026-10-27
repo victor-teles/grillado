@@ -5,16 +5,16 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { parseArgs } from "../src/cli/args.ts";
-import { mcpLaunch } from "../src/cli/launch.ts";
+import { appLine, mcpLaunch, shellQuote } from "../src/cli/launch.ts";
 import { createMcpServer } from "../src/cli/mcp.ts";
 import type { Store } from "../src/cli/store.ts";
 import { addCoderComment } from "../src/core/comments.ts";
 import { PLAN_MD, draftSession, platedSession, tempStore } from "./mcp-fixture.ts";
 
-async function connect(store: Store) {
+async function connect(store: Store, name = "test-coder", app?: string) {
   const [a, b] = InMemoryTransport.createLinkedPair();
-  await createMcpServer(store).connect(a);
-  const client = new Client({ name: "test-coder", version: "1.0.0" });
+  await createMcpServer(store, "0.0.0-dev", app).connect(a);
+  const client = new Client({ name, version: "1.0.0" });
   await client.connect(b);
   return client;
 }
@@ -200,18 +200,45 @@ describe("the launch command for editors (handoff §2a)", () => {
     }
   });
 
-  test("a local checkout: node with the absolute path; a custom data dir adds GRILLADO_HOME", () => {
-    expect(mcpLaunch("/src/my grillado/dist/cli.js", "/data/plans", "/home/u")).toEqual({
-      command: "node",
+  test("a local checkout: the absolute Node binary and cli.js, quoted; a custom data dir adds GRILLADO_HOME (#109)", () => {
+    const node = "/Users/v/.nvm/versions/node/v22.11.0/bin/node";
+    expect(mcpLaunch("/src/my grillado/dist/cli.js", "/data/plans", "/home/u", node)).toEqual({
+      command: node,
       args: ["/src/my grillado/dist/cli.js", "mcp"],
       env: { GRILLADO_HOME: "/data/plans" },
-      line: "node '/src/my grillado/dist/cli.js' mcp",
+      line: `${node} '/src/my grillado/dist/cli.js' mcp`,
     });
+    expect(mcpLaunch("/src/g/dist/cli.js", "/home/u/.grillado", "/home/u", "/opt/my node/bin/node").line).toBe("'/opt/my node/bin/node' /src/g/dist/cli.js mcp");
+  });
+
+  test("by default it is this process's Node, never a bare node", () => {
+    const l = mcpLaunch("/src/g/dist/cli.js", "/home/u/.grillado", "/home/u");
+    expect(l.command).toBe(process.execPath);
+    expect(path.isAbsolute(l.command)).toBe(true);
+    expect(l.line).toBe(`${shellQuote(process.execPath)} /src/g/dist/cli.js mcp`);
+  });
+
+  test("start_plan's app-closed hint uses the same build and data dir", async () => {
+    const node = "/opt/node/bin/node";
+    expect(appLine("/src/g/dist/cli.js", "/home/u/.grillado", "/home/u", node)).toBe("/opt/node/bin/node /src/g/dist/cli.js");
+    expect(appLine("/src/g/dist/cli.js", "/tmp/d 2", "/home/u", node)).toBe("/opt/node/bin/node /src/g/dist/cli.js --data-dir '/tmp/d 2'");
+    expect(appLine("/usr/local/lib/node_modules/grillado/dist/cli.js", "/home/u/.grillado", "/home/u", node)).toBe("npx grillado");
+    const r = await call(await connect(tempStore(), "test-coder", "/opt/node/bin/node /src/g/dist/cli.js"), "start_plan", { idea: "x" });
+    expect(r.structuredContent.url).toBeNull();
+    expect(r.structuredContent.next).toBe("Grillado's web app isn't running. Run `/opt/node/bin/node /src/g/dist/cli.js` and open this idea from Recent; the questions start there.");
   });
 
   test("start_plan remembers which editor sent the idea", async () => {
     const store = tempStore();
     const r = await call(await connect(store), "start_plan", { idea: "x" });
     expect(store.load(r.structuredContent.id)!.from).toBe("test-coder");
+  });
+
+  test("start_plan always marks the session as editor-started, even with no client name (#108)", async () => {
+    const store = tempStore();
+    const r = await call(await connect(store, ""), "start_plan", { idea: "x" });
+    const s = store.load(r.structuredContent.id)!;
+    expect(s.from).toBe("");
+    expect(s.queued).toBe(true);
   });
 });

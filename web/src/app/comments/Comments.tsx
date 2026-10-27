@@ -13,7 +13,7 @@ import { api } from "../api";
 import type { DocMarks } from "../Markdown";
 import { type EditorMode, type PlanDraft } from "../editor/PlanEditor";
 import { cleanSelection, sourceRange } from "../editor/selection";
-import { IActivity, ICheck, IChev, IDown, IEdit, IMore, IMsg, IUndo, IUp, IX } from "../icons";
+import { IActivity, ICheck, IChev, IDown, IEdit, IMore, IMsg, IPlug, IUndo, IUp, IX } from "../icons";
 import { type ActivityFocus, ActivityPanel, openActivity } from "../activity/Activity";
 import { jumpTo } from "../editor/link";
 import type { CommentThread, SessionView, Suggestion } from "../types";
@@ -981,8 +981,16 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
       {t.messages.map((m) => (
         <div key={m.id} className="msg">
           <div className="who">
-            <b title={m.client}>{author(m, agentName)}</b>
-            <span className="m">{time(m.at)}</span>
+            <b>{author(m, agentName)}</b>
+            {m.by === "coder" ? (
+              // From the editor over MCP: its name, the plug and "from your editor", no time (#107).
+              <span className="via">
+                <IPlug s={12} />
+                {CCOPY.fromEditor}
+              </span>
+            ) : (
+              <span className="m">{time(m.at)}</span>
+            )}
           </div>
           <p>{m.text}</p>
         </div>

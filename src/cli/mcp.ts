@@ -7,6 +7,7 @@ import { z } from "zod";
 import { MAX_COMMENT, MAX_QUOTE, addCoderComment } from "../core/comments.ts";
 import { PROVIDER_IDS } from "../core/providers/types.ts";
 import { type Session, createSession } from "../core/session.ts";
+import { shellQuote } from "./launch.ts";
 import { type Store, defaultDataDir } from "./store.ts";
 
 const URI = "grillado://plans/";
@@ -85,7 +86,9 @@ async function safely(fn: () => { content: ReturnType<typeof text>[]; structured
   }
 }
 
-export function createMcpServer(store: Store, version = "0.0.0-dev"): McpServer {
+/** appLine: how to start the web app for this build and data dir, for start_plan's app-closed hint
+ *  (main passes launch.ts's appLine; the fallback is the published package with this data dir). */
+export function createMcpServer(store: Store, version = "0.0.0-dev", appLine = `npx grillado${store.dir === defaultDataDir() ? "" : ` --data-dir ${shellQuote(store.dir)}`}`): McpServer {
   const mcp = new McpServer({ name: "grillado", version });
   const clientName = () => mcp.server.getClientVersion()?.name;
 
@@ -152,15 +155,14 @@ export function createMcpServer(store: Store, version = "0.0.0-dev"): McpServer 
       safely(() => {
         const s = createSession({ idea, context, provider: store.readConfig().defaultProvider ?? PROVIDER_IDS[0] });
         s.queued = true;
-        const from = clientName();
-        if (from) s.from = from.slice(0, 80);
+        // Always marked editor-started; a client without a usable name reads "From your editor" (#108).
+        s.from = (clientName() ?? "").slice(0, 80);
         store.create(s);
         const info = store.readServerInfo();
         const url = info ? `http://127.0.0.1:${info.port}/s/${s.id}?t=${info.token}` : null;
-        const dir = store.dir === defaultDataDir() ? "" : ` --data-dir ${JSON.stringify(store.dir)}`;
         const next = url
           ? `Open ${url} to answer Grillado's questions.`
-          : `Grillado's web app isn't running. Run \`npx grillado${dir}\` and open this idea from Recent; the questions start there.`;
+          : `Grillado's web app isn't running. Run \`${appLine}\` and open this idea from Recent; the questions start there.`;
         return { content: [text(`Started plan ${s.id}. ${next}`)], structuredContent: { id: s.id, url, uri: URI + s.id, next } };
       }),
   );
@@ -219,8 +221,8 @@ export function createMcpServer(store: Store, version = "0.0.0-dev"): McpServer 
   return mcp;
 }
 
-export async function runMcp(store: Store, version: string): Promise<void> {
-  const mcp = createMcpServer(store, version);
+export async function runMcp(store: Store, version: string, appLine?: string): Promise<void> {
+  const mcp = createMcpServer(store, version, appLine);
   await mcp.connect(new StdioServerTransport());
   console.error(`grillado mcp: serving ${store.dir} over stdio`);
 }

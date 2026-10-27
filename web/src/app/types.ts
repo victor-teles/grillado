@@ -24,6 +24,10 @@ export interface SessionSummary {
   /** Open decisions listed in the plan (wrapped up early). */
   open?: number;
   updatedAt: string;
+  /** Started over `grillado mcp`: the client's raw clientInfo.name ("" when it sent none). Shown via editorName(). */
+  from?: string;
+  /** Started over MCP and not opened in the web app yet. */
+  queued?: boolean;
 }
 
 export interface AppState {

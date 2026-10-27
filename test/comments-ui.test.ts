@@ -90,10 +90,19 @@ describe("wording", () => {
 });
 
 describe("comment authors (v1.2 item 1)", () => {
-  test("the rail names you, the coding agent over MCP, or the selected agent", () => {
-    const m = (by: "you" | "agent" | "coder") => ({ id: "m", by, text: "x", at: "" });
+  const m = (by: "you" | "agent" | "coder", client?: string) => ({ id: "m", by, text: "x", at: "", ...(client !== undefined ? { client } : {}) });
+  test("the rail names you, the editor over MCP by its name, or the selected agent (#107)", () => {
     expect(author(m("you"), "Codex")).toBe("You");
-    expect(author(m("coder"), "Codex")).toBe("Coding agent");
     expect(author(m("agent"), "Codex")).toBe("Codex");
+    expect(author(m("coder", "cursor-vscode"), "Codex")).toBe("Cursor");
+    expect(author(m("coder", "claude-code"), "Codex")).toBe("Claude Code");
+    expect(author(m("coder", "codex-mcp-client"), "Claude Code")).toBe("Codex");
+    expect(author(m("coder", "mcp-client"), "Codex")).toBe("Your editor");
+    expect(author(m("coder"), "Codex")).toBe("Your editor");
+  });
+  test("an editor comment is told apart from the agent with the same name by “from your editor”", () => {
+    // The selected agent and the editor are both Claude Code: same bold name, the meta tells them apart.
+    expect(author(m("coder", "claude-code"), "Claude Code")).toBe(author(m("agent"), "Claude Code"));
+    expect(CCOPY.fromEditor).toBe("from your editor");
   });
 });

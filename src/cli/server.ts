@@ -471,6 +471,7 @@ export class GrilladoServer {
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
         from: s.from,
+        queued: !!s.queued,
       })),
       dataDir: tildify(this.opts.store.dir),
       mcp: this.opts.mcpLaunch ?? null,

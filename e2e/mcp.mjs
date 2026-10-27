@@ -4,8 +4,9 @@
 // Uses the built dist/cli.js and the fake agents. One server and one browser at a time; only
 // processes started here are killed.
 //   node e2e/mcp.mjs
+//   SHOTS=dir node e2e/mcp.mjs      also writes the rail and Recent shots (dark and light) to dir
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,8 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const CLI = path.join(ROOT, "dist/cli.js");
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-mcp-e2e-"));
 const NODE = process.execPath;
+const SHOTS = process.env.SHOTS;
+if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail = "") {
@@ -114,7 +117,9 @@ try {
   await pg.getByTestId("plan").waitFor({ timeout: 15000 });
 
   const launch = await pg.evaluate(async () => (await (await fetch("/api/state")).json()).mcp);
-  check("the web app knows the command that starts `grillado mcp` (local build: node + absolute path)", JSON.stringify(launch) === JSON.stringify({ command: "node", args: [CLI, "mcp"], line: `node ${CLI} mcp` }), JSON.stringify(launch));
+  // DECISIONS #109: a local build names the absolute Node binary, not a bare `node`.
+  check("the web app knows the command that starts `grillado mcp` (local build: absolute node + absolute cli.js)", JSON.stringify(launch) === JSON.stringify({ command: NODE, args: [CLI, "mcp"], line: `${NODE} ${CLI} mcp` }), JSON.stringify(launch));
+  if (SHOTS) writeFileSync(path.join(SHOTS, "api-state-mcp-local.json"), `${JSON.stringify(launch, null, 2)}\n`);
   const list = (await call(c, "list_plans")).structuredContent.plans;
   const plan = list[0];
   check("list_plans: the plated plan, not a draft", list.length === 1 && plan.status === "plated" && plan.draft === false, JSON.stringify(plan));
@@ -149,8 +154,21 @@ try {
   const rail = pg.getByRole("complementary", { name: "Comments" });
   await rail.getByText("I'll build this part first.").waitFor({ timeout: 5000 });
   check("the comment is in the Comments rail", true);
-  check("it shows as from the coding agent", (await rail.locator(".msg .who b").first().textContent()) === "Coding agent");
-  check("its client name is kept", (await rail.locator(".msg .who b").first().getAttribute("title")) === "e2e-coder");
+  // DECISIONS #107: the editor's name, a plug and "from your editor"; no time, never the raw client name.
+  const who = rail.locator(".msg .who").first();
+  check("an unknown client reads “Your editor”, from your editor", (await who.textContent()) === "Your editorfrom your editor", await who.textContent());
+  check("…with the 12px plug and no time or raw-name tooltip", (await who.locator(".via svg.s12").count()) === 1 && (await who.locator(".m").count()) === 0 && (await who.locator("[title]").count()) === 0);
+  const editors = [];
+  const lines = ["Yes, one core flow", "Local storage"];
+  for (const [i, [client, name]] of [["cursor-vscode", "Cursor"], ["claude-code", "Claude Code"]].entries()) {
+    const e = await mcpClient([], client);
+    editors.push(e);
+    const r = await call(e.client, "add_comment", { plan: plan.id, quote: lines[i], text: `A note from ${client}.` });
+    check(`add_comment from ${client}`, !r.isError, textOf(r));
+    const t = rail.locator(".th", { hasText: `A note from ${client}.` });
+    await t.waitFor({ timeout: 5000 });
+    check(`${client} reads “${name}”, from your editor`, (await t.locator(".msg .who").first().textContent()) === `${name}from your editor`);
+  }
   check("add_comment: a quote not in the plan is a clear error", /That quote isn't in the plan/.test(textOf(await call(c, "add_comment", { plan: plan.id, quote: "zzz not there", text: "x" }))));
 
   // start_plan: the URL opens the new session in the browser, which starts its first round.
@@ -167,6 +185,39 @@ try {
   check("get_plan on it: a draft, marked as one", draft.structuredContent.draft === true && /^# Draft: Garden watering planner/.test(draft.content[0].text));
   check("add_comment on a draft: clear error", /still a draft/.test(textOf(await call(c, "add_comment", { plan: sp.id, quote: "x", text: "y" }))));
   check("bad input is rejected at the boundary", (await call(c, "start_plan", { idea: "   " })).isError === true);
+
+  // Recent (DECISIONS #108): queued rows say who sent them and that they wait; opened ones add the usual status.
+  const queued = (await call(editors[0].client, "start_plan", { idea: "Recipe scaler for the cafe" })).structuredContent;
+  await pg.reload();
+  const row = (t) => pg.locator(".rrow", { hasText: t }).locator(".meta");
+  await row("Recipe scaler for the cafe").waitFor({ timeout: 5000 });
+  check("Recent: a queued row reads From Cursor · waiting for your answers", (await row("Recipe scaler for the cafe").textContent()) === "From Cursor · waiting for your answers", await row("Recipe scaler for the cafe").textContent());
+  check("Recent: “From Cursor” is in the foreground colour", (await row("Recipe scaler for the cafe").locator(".src1").textContent()) === "From Cursor");
+  const opened = await row("Garden watering planner").textContent();
+  check("Recent: an opened one reads From your editor · status · when", /^From your editor · Round 1 · (just now|\d+ min ago)$/.test(opened), opened);
+  check("Recent: rows started in the browser are unchanged", /^(Plated|Wrapped early)/.test(await row("Shared shopping list").textContent()));
+  if (SHOTS) {
+    const token = new URL(app.url).searchParams.get("t");
+    const origin = new URL(app.url).origin;
+    for (const theme of ["dark", "light"]) {
+      const sc = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, reducedMotion: "reduce" });
+      await sc.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const sp2 = await sc.newPage();
+      await sp2.goto(`${origin}/?t=${token}`);
+      await sp2.locator(".rrow", { hasText: "Recipe scaler for the cafe" }).waitFor();
+      await sp2.screenshot({ path: path.join(SHOTS, `pr9-recent-queued-${theme}.png`) });
+      await sp2.goto(`${origin}/s/${plan.id}?t=${token}`);
+      await sp2.locator("mark.cmk").first().waitFor();
+      await sp2.waitForLoadState("networkidle");
+      const tg = sp2.getByRole("button", { name: "Comments 3" });
+      if ((await tg.getAttribute("aria-pressed")) !== "true") await tg.click();
+      await sp2.getByRole("complementary", { name: "Comments" }).getByText("A note from claude-code.").waitFor({ timeout: 5000 });
+      await sp2.waitForTimeout(300);
+      await sp2.screenshot({ path: path.join(SHOTS, `pr9-rail-editors-${theme}.png`) });
+      await sc.close();
+    }
+  }
+  for (const e of editors) await e.close();
   await ctx.close();
   await p2.context().close();
 } finally {
@@ -180,13 +231,15 @@ try {
   const m2 = await mcpClient();
   const c = m2.client;
   const plans = (await call(c, "list_plans")).structuredContent.plans;
-  check("works with the web app stopped", plans.length === 2);
+  check("works with the web app stopped", plans.length === 3, String(plans.length));
   const sp = (await call(c, "start_plan", { idea: "Offline idea" })).structuredContent;
-  check("start_plan with the app stopped: no URL, says to run grillado", sp.url === null && /npx grillado/.test(sp.next), sp.next);
+  check("start_plan with the app stopped: no URL, says to run this build (absolute node, #109)", sp.url === null && sp.next.includes(`Run \`${NODE} ${CLI}\` and open this idea from Recent`), sp.next);
   await m2.close();
   const other = path.join(WORK, "other");
   const m3 = await mcpClient(["--data-dir", other]);
   check("--data-dir points it at another data dir", /No plans yet/.test(textOf(await call(m3.client, "list_plans"))));
+  const sp3 = (await call(m3.client, "start_plan", { idea: "Elsewhere" })).structuredContent;
+  check("…and start_plan's hint keeps that data dir", sp3.next.includes(`Run \`${NODE} ${CLI} --data-dir ${other}\``), sp3.next);
   await m3.close();
 }
 
