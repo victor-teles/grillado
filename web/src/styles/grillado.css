@@ -975,7 +975,8 @@ body:has(.acc4) .mbar{display:none}
 .drw{display:flex;align-items:center;margin:14px 0 4px;min-height:44px;padding:0;font-size:var(--t-body);color:var(--muted-foreground)}
 /* the ⋯ entry and the popover (§3); blue goes to the open task's primary (§18 C) */
 .icon-btn.on5{background:var(--muted);color:var(--foreground)}
-.planv:has(.pop5,.ask5,.run5 .btn.primary) .copy-md{background:var(--muted);color:var(--foreground)}
+/* "Use in your editor" (.ue.pop5) is not a decision: Copy Markdown keeps its blue (MF1, #111). */
+.planv:has(.pop5:not(.ue),.ask5,.run5 .btn.primary) .copy-md{background:var(--muted);color:var(--foreground)}
 .pop5{position:fixed;z-index:40;border-radius:12px;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);transform-origin:top right;transition:opacity var(--d-quick) var(--ease-out),transform var(--d-quick) var(--ease-out)}
 @starting-style{.pop5{opacity:0;transform:scale(.97)}}
 .ask5{width:360px;padding:14px 16px 16px;display:grid;gap:14px}
@@ -1173,7 +1174,7 @@ body:has([data-testid=diagram-run],[data-testid=diagram-failed],.review) .back6{
 .ue .uh b{flex:1;font-size:var(--t-h);font-weight:600;line-height:24px}
 .ue .ud{margin:0;font-size:var(--t-body);line-height:20px;color:var(--muted-foreground);text-wrap:pretty}
 .ue .sw{display:grid;grid-template-columns:repeat(3,1fr);margin:0;width:100%}
-.ue .sw button{height:30px;padding:0 8px;font-size:var(--t-meta)}
+.ue .sw button{height:30px;padding:0 8px;font-size:var(--t-body);font-weight:500}
 .ue .sw button[aria-selected=true]{background:var(--background);color:var(--foreground)}
 .light .ue .sw button[aria-selected=true]{background:var(--card);box-shadow:0 0 0 1px var(--hair)}
 .ue .sw button:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
@@ -1203,8 +1204,10 @@ body:has([data-testid=diagram-run],[data-testid=diagram-failed],.review) .back6{
 .ue .err1{display:flex;gap:8px;align-items:flex-start;margin:0;font-size:var(--t-meta);line-height:16px;color:var(--foreground)}
 .ue .err1 svg{flex:none;color:var(--warning-ink);margin-top:1px}
 .ue .kb1{font:500 var(--t-meta)/1 var(--sans);color:var(--muted-foreground);letter-spacing:.02em;margin-left:2px}
-.ue .sn.alt{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.ue .sn.alt .copy-inl{margin:-4px 0}
+/* Codex "Or run": the copy stays on the code's last line; its ring keeps 4px clear of the note below. */
+.ue .sn.alt{display:block;padding-bottom:4px}
+.ue .sn.alt .copy-inl{margin:-4px 0 -4px 6px}
+.ue ::selection{background:color-mix(in oklab,var(--primary) 30%,transparent)}
 /* phones: the same content in a bottom sheet (§4) */
 .csheet.ue{width:auto;max-width:none;padding:0 0 calc(12px + env(safe-area-inset-bottom));gap:0;max-height:88dvh;display:flex}
 .csheet.ue .uh{height:44px;margin:0;padding:0 8px 0 20px}
@@ -1219,7 +1222,10 @@ body:has([data-testid=diagram-run],[data-testid=diagram-failed],.review) .back6{
 .csheet.ue .mcopy .ic svg{width:16px;height:16px}
 .csheet.ue .ask .rq{padding:0 0 0 12px;font-size:15px}
 .csheet.ue .ask .rq .icon-btn{width:44px;height:44px}
-.csheet.ue .copy-inl{width:44px;height:44px;margin:-10px 0}
+.csheet.ue .copy-inl{width:44px;height:44px;margin:-13px 0 -13px 2px}
+.csheet.ue .sn.alt{padding:10px 0 14px}
+/* phones: menu rows (⋯, More) are 44px targets */
+@media (max-width:640px){:is([data-slot=dropdown-menu-item],[data-slot=dropdown-menu-checkbox-item],[data-slot=dropdown-menu-radio-item]){min-height:44px}}
 /* a comment written by the editor (§9) */
 .th .msg .who .via{display:inline-flex;align-items:baseline;gap:4px;font-size:var(--t-meta);color:var(--muted-foreground)}
 .th .msg .who .via svg{align-self:center}
