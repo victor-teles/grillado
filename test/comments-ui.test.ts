@@ -1,7 +1,7 @@
 // Item 3 UI logic without a DOM: the selection toolbar's ⌘B/⌘I (#27), how suggestions are drawn,
 // thread status rows (#28: all accepted offers Resolve, never resolves), and the wording (#29).
 import { describe, expect, test } from "bun:test";
-import { CCOPY, canApply, fill, minimal, place, rowText, statusRow } from "../web/src/app/comments/model.ts";
+import { CCOPY, author, canApply, fill, minimal, place, rowText, statusRow } from "../web/src/app/comments/model.ts";
 import { formatEdit, formatKey } from "../web/src/app/editor/selection.ts";
 import type { CommentThread, Suggestion } from "../src/core/comments.ts";
 
@@ -86,5 +86,14 @@ describe("wording", () => {
     expect(all).toMatch(/suggestions/);
     expect(fill(CCOPY.from(2), "Codex")).toBe("2 suggestions from Codex");
     expect(Object.values(CCOPY).filter((v) => typeof v === "string").join(" ")).not.toMatch(/Claude|Codex/);
+  });
+});
+
+describe("comment authors (v1.2 item 1)", () => {
+  test("the rail names you, the coding agent over MCP, or the selected agent", () => {
+    const m = (by: "you" | "agent" | "coder") => ({ id: "m", by, text: "x", at: "" });
+    expect(author(m("you"), "Codex")).toBe("You");
+    expect(author(m("coder"), "Codex")).toBe("Coding agent");
+    expect(author(m("agent"), "Codex")).toBe("Codex");
   });
 });

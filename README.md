@@ -25,12 +25,58 @@ the answer behind every decision.
 
 Requires Node.js 22 or newer.
 
+## Use it from your coding agent (MCP)
+
+`npx grillado mcp` is an MCP server over stdio on the same data as the web app (`~/.grillado`,
+`$GRILLADO_HOME` or `--data-dir`). It works whether or not the web app is running and needs no
+network. Tools: `list_plans`, `get_plan` (Markdown plus the decisions and their answers; a plan
+that isn't finished comes back marked as a draft), `get_decisions`, `start_plan` (sends an idea to
+Grillado and returns the link to answer its questions in the browser) and `add_comment` (shows in
+the plan's Comments rail as from the coding agent). Each plan is also a resource,
+`grillado://plans/<id>`.
+
+Set it up once, for every project (`npx -y` skips npx's install prompt). If you use a custom
+data dir, pass it as `GRILLADO_HOME` (the web app's "Use in your editor" shows these with the
+right command and env filled in).
+
+Claude Code:
+
+```sh
+claude mcp add --scope user grillado -- npx -y grillado mcp
+```
+
+Cursor, in `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "grillado": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "grillado", "mcp"]
+    }
+  }
+}
+```
+
+Codex, in `~/.codex/config.toml` (or `codex mcp add grillado -- npx -y grillado mcp`):
+
+```toml
+[mcp_servers.grillado]
+command = "npx"
+args = ["-y", "grillado", "mcp"]
+```
+
+Then ask your agent to "build the Grillado plan for …".
+
 ## Security
 
 - The server listens on `127.0.0.1` only, checks `Host` and `Origin`, and requires the per-run
   token from the printed URL (exchanged for an HttpOnly cookie).
 - Grillado runs no tools itself. It starts your agent CLI with a fixed argv, in an empty
   temporary folder, with tools off (Claude Code, Grok, pi) or in Codex's read-only sandbox.
+- While the web app runs it writes `server.json` (port and token, mode 0600) in the data dir, so
+  `grillado mcp` can link `start_plan` straight to the new session. It is removed on exit.
 - No telemetry.
 
 ## Development

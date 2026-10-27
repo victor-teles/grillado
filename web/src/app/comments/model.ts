@@ -30,7 +30,12 @@ export const CCOPY = {
   toReview: (n: number) => `${n} to review`,
   bulk: (n: number, a: "accepted" | "rejected") => `${n} ${n === 1 ? "suggestion" : "suggestions"} ${a}`,
   rtfHint: "Switch to Rich to comment",
+  /** A comment sent over `grillado mcp` (v1.2 item 1) by the agent the user builds with. */
+  coder: "Coding agent",
 };
+
+/** Who wrote a thread message, as the rail labels it. */
+export const author = (m: CommentThread["messages"][number], agent: string) => (m.by === "you" ? "You" : m.by === "coder" ? CCOPY.coder : agent);
 
 export interface Placed {
   s: Suggestion;

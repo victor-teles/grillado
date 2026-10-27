@@ -1,7 +1,8 @@
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderId } from "../core/providers/types.ts";
+import { adoptThreads } from "../core/comments.ts";
 import type { Session } from "../core/session.ts";
 
 export interface Config {
@@ -20,9 +21,70 @@ function writeAtomic(file: string, data: string) {
   renameSync(tmp, file);
 }
 
+/** Where a running web app can be reached, for `grillado mcp` (start_plan's URL). */
+export interface ServerInfo {
+  pid: number;
+  port: number;
+  token: string;
+}
+
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Hold `<file>.lock` while `fn` runs, so the web app and `grillado mcp` never interleave a
+ * read-modify-write on one session. A lock older than 10 s was left by a crash and is taken over.
+ */
+function withLock<T>(file: string, fn: () => T): T {
+  const lock = `${file}.lock`;
+  mkdirSync(path.dirname(lock), { recursive: true });
+  for (let i = 0; ; i++) {
+    try {
+      closeSync(openSync(lock, "wx"));
+      break;
+    } catch (err: any) {
+      if (err?.code !== "EEXIST") throw err;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 10_000) unlinkSync(lock);
+      } catch {}
+      if (i > 250) throw new Error("Another Grillado process is holding this session; try again.");
+      pause(20);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      unlinkSync(lock);
+    } catch {}
+  }
+}
+
 export class Store {
   constructor(readonly dir: string) {
     mkdirSync(path.join(dir, "sessions"), { recursive: true });
+  }
+
+  /** A running web app writes this (0600) so `grillado mcp` can link straight to a session. */
+  writeServerInfo(info: ServerInfo) {
+    writeAtomic(path.join(this.dir, "server.json"), `${JSON.stringify(info)}\n`);
+  }
+
+  /** The running web app, or null when none is (its pid is gone). */
+  readServerInfo(): ServerInfo | null {
+    try {
+      const info = JSON.parse(readFileSync(path.join(this.dir, "server.json"), "utf8")) as ServerInfo;
+      process.kill(info.pid, 0);
+      return info;
+    } catch {
+      return null;
+    }
+  }
+
+  clearServerInfo(pid: number) {
+    const file = path.join(this.dir, "server.json");
+    try {
+      if (JSON.parse(readFileSync(file, "utf8")).pid === pid) unlinkSync(file);
+    } catch {}
   }
 
   readConfig(): Config {
@@ -42,13 +104,47 @@ export class Store {
     return path.join(this.dir, "sessions", id);
   }
 
+  private sessionFile(id: string) {
+    return path.join(this.sessionDir(id), "session.json");
+  }
+
+  /**
+   * Save, keeping comment threads another process (`grillado mcp`) added since `s` was loaded:
+   * they are adopted into `s` too, so the caller's copy shows them.
+   */
   save(s: Session) {
-    writeAtomic(path.join(this.sessionDir(s.id), "session.json"), JSON.stringify(s, null, 2));
+    const file = this.sessionFile(s.id);
+    withLock(file, () => {
+      const disk = this.load(s.id);
+      if (disk) adoptThreads(s, disk);
+      writeAtomic(file, JSON.stringify(s, null, 2));
+    });
+  }
+
+  /** Create a session that isn't on disk yet. */
+  create(s: Session) {
+    const file = this.sessionFile(s.id);
+    withLock(file, () => {
+      if (existsSync(file)) throw new Error("Session already exists");
+      writeAtomic(file, JSON.stringify(s, null, 2));
+    });
+  }
+
+  /** Load, change and save one session under its lock (for `grillado mcp`). */
+  update<T>(id: string, fn: (s: Session) => T): T | null {
+    const file = this.sessionFile(id);
+    return withLock(file, () => {
+      const s = this.load(id);
+      if (!s) return null;
+      const out = fn(s);
+      writeAtomic(file, JSON.stringify(s, null, 2));
+      return out;
+    });
   }
 
   load(id: string): Session | null {
     try {
-      return JSON.parse(readFileSync(path.join(this.sessionDir(id), "session.json"), "utf8"));
+      return JSON.parse(readFileSync(this.sessionFile(id), "utf8"));
     } catch {
       return null;
     }

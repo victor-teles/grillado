@@ -7,7 +7,10 @@
 
 export interface CommentMessage {
   id: string;
-  by: "you" | "agent";
+  /** "coder": the coding agent the user builds with, over `grillado mcp` (v1.2 item 1). */
+  by: "you" | "agent" | "coder";
+  /** For "coder": the MCP client's own name (e.g. "claude-code"), when it sent one. */
+  client?: string;
   text: string;
   at: string;
 }
@@ -135,6 +138,22 @@ export function addComment(s: CommentState & { plan?: { markdown: string } }, in
   const t: CommentThread = { id: newId(), quote, at, createdAt: now(), messages: [{ id: newId(), by: "you", text: text.slice(0, MAX_COMMENT), at: now() }] };
   s.comments = [...(s.comments ?? []), t];
   return t;
+}
+
+/** A comment from the coding agent over MCP: same anchoring rules as the user's. */
+export function addCoderComment(s: CommentState & { plan?: { markdown: string } }, input: { quote: unknown; text: unknown; client?: string }): CommentThread {
+  const t = addComment(s, { quote: input.quote, at: 0, text: input.text });
+  t.messages[0].by = "coder";
+  if (input.client) t.messages[0].client = input.client.slice(0, 80);
+  return t;
+}
+
+/** Threads in `other` that `s` doesn't have yet (written by another process) are added to `s`. Returns how many. */
+export function adoptThreads(s: CommentState, other: CommentState): number {
+  const have = new Set((s.comments ?? []).map((t) => t.id));
+  const extra = (other.comments ?? []).filter((t) => !have.has(t.id));
+  if (extra.length) s.comments = [...(s.comments ?? []), ...extra];
+  return extra.length;
 }
 
 export function addMessage(s: CommentState, threadId: string, by: CommentMessage["by"], text: string): CommentThread {

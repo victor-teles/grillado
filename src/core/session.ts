@@ -87,6 +87,10 @@ export interface Session extends CommentState {
   keepGoing: boolean;
   summary: string;
   error?: SessionError;
+  /** Created by a coding agent over `grillado mcp`: the first round starts when the web app opens it. */
+  queued?: boolean;
+  /** The MCP client that started it (its clientInfo.name, e.g. "cursor-vscode"), for Recent. */
+  from?: string;
   plan?: {
     title: string;
     markdown: string;

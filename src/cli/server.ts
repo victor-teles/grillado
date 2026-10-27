@@ -1,12 +1,12 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync, mkdtempSync, rmSync, statSync, unwatchFile, watchFile } from "node:fs";
+import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, statSync, unwatchFile, watch, watchFile } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { nextRound, replyToComment, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
-import { addComment, addMessage, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, sectionAt, startRun, undoReview } from "../core/comments.ts";
+import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, finishRun, locate, pending, pruneSuggestions, resolveThread, review, sectionAt, startRun, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
@@ -53,6 +53,8 @@ export interface ServerOptions {
   model?: string;
   timeoutMs?: number;
   onQuit?: () => void;
+  /** How an editor starts `grillado mcp`, for "Use in your editor" (v1.2 item 1). */
+  mcpLaunch?: import("./launch.ts").McpLaunch;
 }
 
 export interface ProviderInfo {
@@ -93,6 +95,7 @@ export class GrilladoServer {
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
   private watched = new Set<string>();
+  private dirWatch?: FSWatcher;
   /** The activity log (item 6): lines read once per session, then appended in memory and on disk. */
   private logs = new Map<string, ActivityLine[]>();
   /** Runs in progress, by session, for the running step shown in the Activity tab. */
@@ -162,6 +165,9 @@ export class GrilladoServer {
         const addr = this.server.address();
         if (!addr || typeof addr === "string" || addr.address !== LOOPBACK) throw new Error("Bound to an unexpected address");
         this.port = addr.port;
+        // For `grillado mcp`: start_plan links straight to the new session (v1.2 item 1).
+        this.opts.store.writeServerInfo({ pid: process.pid, port: this.port, token: this.token });
+        this.watchSessions();
         return this.port;
       } catch (err: any) {
         if (err?.code === "EADDRINUSE" && port < last) {
@@ -188,6 +194,8 @@ export class GrilladoServer {
     for (const dir of this.agentDirs.values()) rmSync(dir, { recursive: true, force: true });
     for (const file of this.watched) unwatchFile(file);
     this.watched.clear();
+    this.dirWatch?.close();
+    if (this.port) this.opts.store.clearServerInfo(process.pid);
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
@@ -268,7 +276,8 @@ export class GrilladoServer {
       if (t === this.token) {
         res.setHeader("Set-Cookie", `${this.cookieName}=${this.token}; Path=/; HttpOnly; SameSite=Strict`);
       }
-      res.writeHead(302, { Location: "/" });
+      // A session link (from `grillado mcp`'s start_plan) keeps its path.
+      res.writeHead(302, { Location: /^\/s\/[\w-]+$/.test(url.pathname) ? url.pathname : "/" });
       return res.end();
     }
     const root = path.resolve(this.opts.webDir);
@@ -335,6 +344,40 @@ export class GrilladoServer {
       this.log(live, { v: 1, type: "file", what: "reloaded", at: new Date().toISOString() });
       this.changed(live);
     });
+  }
+
+  /**
+   * `grillado mcp` writes to the same data dir (v1.2 item 1): a new session refreshes Home, and a
+   * comment on an open session lands in its rail live. Our own saves adopt those threads too
+   * (Store.save), so nothing it wrote is overwritten.
+   */
+  private watchSessions() {
+    if (this.dirWatch) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      this.dirWatch = watch(path.join(this.opts.store.dir, "sessions"), () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => this.broadcast({ type: "app" }), 200);
+      });
+      this.dirWatch.on("error", () => {});
+    } catch {}
+  }
+
+  private watchSession(s: Session) {
+    const file = path.join(this.opts.store.sessionDir(s.id), "session.json");
+    if (this.watched.has(file)) return;
+    this.watched.add(file);
+    watchFile(file, { interval: 500 }, (cur, prev) => {
+      if (cur.mtimeMs !== prev.mtimeMs) this.adoptExternal(s.id, true);
+    });
+  }
+
+  /** Threads another process wrote to session.json since we loaded it. Our own writes add none. */
+  private adoptExternal(id: string, push: boolean) {
+    const live = this.sessions.get(id);
+    const disk = live && this.opts.store.load(id);
+    if (!live || !disk || !adoptThreads(live, disk)) return;
+    if (push) this.broadcast({ type: "session", session: this.view(live) });
   }
 
   // ---------------------------------------------------------------- activity log (item 6)
@@ -427,8 +470,10 @@ export class GrilladoServer {
         decisions: Object.keys(s.decisions).length,
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
+        from: s.from,
       })),
       dataDir: tildify(this.opts.store.dir),
+      mcp: this.opts.mcpLaunch ?? null,
     };
   }
 
@@ -455,6 +500,8 @@ export class GrilladoServer {
 
   private getSession(id: string): Session {
     let s = this.sessions.get(id);
+    // The watcher polls; a request reads the file too, so it never misses a comment sent over MCP.
+    if (s) this.adoptExternal(id, true);
     if (!s) {
       const loaded = this.opts.store.load(id);
       if (!loaded) throw new Error("Session not found");
@@ -463,8 +510,10 @@ export class GrilladoServer {
       // (or by hand, in another editor).
       const md = s.plan ? this.opts.store.readPlan(id) : null;
       if (s.plan && md !== null && md !== s.plan.markdown) s.plan.markdown = md;
+      const queued = s.queued;
       // A run that was cut off by a restart can't resume on its own (AC14): offer Retry.
-      if ((s.status === "asking" || s.status === "synthesizing") && !s.error) {
+      if (queued) delete s.queued;
+      else if ((s.status === "asking" || s.status === "synthesizing") && !s.error) {
         setError(s, "unknown", "Interrupted. Retry to continue.");
       }
       for (const t of s.comments ?? []) if (t.run?.state === "running") finishRun(t, { ok: false, message: "Interrupted. Retry to continue." });
@@ -478,6 +527,13 @@ export class GrilladoServer {
       });
       if (ended.length) this.log(s, ...ended);
       this.watchPlan(s);
+      this.watchSession(s);
+      if (queued) {
+        // Started from a coding agent (`grillado mcp` start_plan): the first round runs when it's
+        // opened here, on the agent picked here.
+        if (this.selected) s.provider = this.selected;
+        this.startRound(s);
+      }
     }
     return s;
   }
@@ -856,6 +912,7 @@ export class GrilladoServer {
       const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), provider: this.selected });
       this.sessions.set(s.id, s);
       this.opts.store.save(s);
+      this.watchSession(s);
       this.startRound(s);
       return this.json(res, 201, this.view(s));
     }

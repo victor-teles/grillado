@@ -1,0 +1,217 @@
+import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { parseArgs } from "../src/cli/args.ts";
+import { mcpLaunch } from "../src/cli/launch.ts";
+import { createMcpServer } from "../src/cli/mcp.ts";
+import type { Store } from "../src/cli/store.ts";
+import { addCoderComment } from "../src/core/comments.ts";
+import { PLAN_MD, draftSession, platedSession, tempStore } from "./mcp-fixture.ts";
+
+async function connect(store: Store) {
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await createMcpServer(store).connect(a);
+  const client = new Client({ name: "test-coder", version: "1.0.0" });
+  await client.connect(b);
+  return client;
+}
+
+const call = async (c: Client, name: string, args: Record<string, unknown> = {}) => (await c.callTool({ name, arguments: args })) as any;
+const textOf = (r: any) => r.content.map((x: any) => x.text).join("\n");
+
+describe("grillado mcp tools", () => {
+  test("lists exactly the five tools", async () => {
+    const c = await connect(tempStore());
+    const { tools } = await c.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(["add_comment", "get_decisions", "get_plan", "list_plans", "start_plan"]);
+    for (const t of tools) expect(JSON.stringify(t).toLowerCase()).not.toMatch(/grill-me|grilling|pocock/);
+  });
+
+  test("list_plans: empty, then newest first with draft flags", async () => {
+    const store = tempStore();
+    const c = await connect(store);
+    expect(textOf(await call(c, "list_plans"))).toContain("No plans yet");
+    const plated = platedSession(store);
+    const draft = draftSession(store);
+    const r = await call(c, "list_plans");
+    expect(r.structuredContent.plans.map((p: any) => [p.id, p.draft])).toEqual([
+      [draft.id, true],
+      [plated.id, false],
+    ]);
+    expect(r.structuredContent.plans[1]).toMatchObject({ title: "Recipe box", status: "plated", decisions: 2, uri: `grillado://plans/${plated.id}` });
+  });
+
+  test("get_plan: plan.md plus resolved decisions with answers", async () => {
+    const store = tempStore();
+    const s = platedSession(store);
+    store.writePlan(s.id, `${PLAN_MD}\nEdited by hand.\n`); // plan.md is the source of truth
+    const r = await call(await connect(store), "get_plan", { plan: s.id });
+    expect(r.isError).toBeFalsy();
+    expect(r.content[0].text).toContain("Edited by hand.");
+    expect(r.structuredContent).toMatchObject({ id: s.id, draft: false, open: ["export"] });
+    expect(r.structuredContent.decisions.map((d: any) => [d.key, d.answer])).toEqual([
+      ["storage", "SQLite on the device"],
+      ["sync", "Not in v1"],
+    ]);
+  });
+
+  test("get_plan: an unconfirmed plan comes back as a draft", async () => {
+    const store = tempStore();
+    const s = draftSession(store);
+    const r = await call(await connect(store), "get_plan", { plan: s.id });
+    expect(r.structuredContent.draft).toBe(true);
+    expect(r.content[0].text).toStartWith("# Draft: A habit tracker");
+    expect(r.content[0].text).toContain("**Draft.**");
+    expect(r.content[0].text).toContain("- **Which platform?**: iOS first");
+  });
+
+  test("get_plan / get_decisions / add_comment: unknown and malformed ids are clear errors", async () => {
+    const c = await connect(tempStore());
+    for (const tool of ["get_plan", "get_decisions"]) {
+      const r = await call(c, tool, { plan: "2026-01-01-nope" });
+      expect(r.isError).toBe(true);
+      expect(textOf(r)).toBe('No plan with id "2026-01-01-nope". Call list_plans to see the ids.');
+    }
+    const r = await call(c, "add_comment", { plan: "2026-01-01-nope", quote: "x", text: "y" });
+    expect(textOf(r)).toContain('No plan with id "2026-01-01-nope"');
+    const bad = await call(c, "get_plan", { plan: "../etc" });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("A plan id looks like");
+  });
+
+  test("get_decisions: answers, dependencies, open and stale", async () => {
+    const store = tempStore();
+    const s = platedSession(store);
+    store.update(s.id, (x) => {
+      x.stale = { color: { key: "color", label: "Color", title: "Accent color?", answer: "Orange", round: 1, dependsOn: [], reason: "Brand changed" } };
+    });
+    const r = await call(await connect(store), "get_decisions", { plan: s.id });
+    expect(r.structuredContent.decisions[1]).toEqual({ key: "sync", title: "Sync between devices?", answer: "Not in v1", round: 2, kind: "other", acceptedRecommendation: false, dependsOn: ["storage"] });
+    expect(r.structuredContent.open).toEqual(["export"]);
+    expect(r.structuredContent.stale).toEqual([{ key: "color", title: "Accent color?", reason: "Brand changed" }]);
+  });
+
+  test("start_plan: queues a session; links to it when the web app is running", async () => {
+    const store = tempStore();
+    const c = await connect(store);
+    const off = await call(c, "start_plan", { idea: "  A plant watering reminder  " });
+    expect(off.structuredContent.url).toBeNull();
+    expect(off.structuredContent.next).toContain("npx grillado --data-dir");
+    const s = store.load(off.structuredContent.id)!;
+    expect(s).toMatchObject({ idea: "A plant watering reminder", status: "asking", queued: true, rounds: [] });
+
+    store.writeServerInfo({ pid: process.pid, port: 4999, token: "tok" });
+    const on = await call(c, "start_plan", { idea: "Another", context: "Uses Expo" });
+    expect(on.structuredContent.url).toBe(`http://127.0.0.1:4999/s/${on.structuredContent.id}?t=tok`);
+    expect(store.load(on.structuredContent.id)!.context).toBe("Uses Expo");
+    expect((await call(c, "start_plan", { idea: "   " })).isError).toBe(true);
+  });
+
+  test("add_comment: lands on the plan as the coding agent", async () => {
+    const store = tempStore();
+    const s = platedSession(store);
+    const c = await connect(store);
+    const r = await call(c, "add_comment", { plan: s.id, quote: "No sync in v1.", text: "I can add iCloud sync cheaply." });
+    expect(r.isError).toBeFalsy();
+    const t = store.load(s.id)!.comments!;
+    expect(t).toHaveLength(1);
+    expect(t[0]).toMatchObject({ id: r.structuredContent.thread, quote: "No sync in v1.", at: PLAN_MD.indexOf("No sync in v1.") });
+    expect(t[0].messages[0]).toMatchObject({ by: "coder", client: "test-coder", text: "I can add iCloud sync cheaply." });
+
+    expect(textOf(await call(c, "add_comment", { plan: s.id, quote: "Not in the plan", text: "x" }))).toContain("That quote isn't in the plan");
+    const d = draftSession(store);
+    expect(textOf(await call(c, "add_comment", { plan: d.id, quote: "x", text: "y" }))).toContain("is still a draft");
+    expect(store.load(s.id)!.comments).toHaveLength(1);
+  });
+});
+
+describe("grillado mcp resources", () => {
+  test("one resource per plan, read as Markdown", async () => {
+    const store = tempStore();
+    const s = platedSession(store);
+    const d = draftSession(store);
+    const c = await connect(store);
+    const { resources } = await c.listResources();
+    expect(resources.map((r) => [r.uri, r.name, r.mimeType])).toEqual([
+      [`grillado://plans/${d.id}`, "A habit tracker", "text/markdown"],
+      [`grillado://plans/${s.id}`, "Recipe box", "text/markdown"],
+    ]);
+    const read = await c.readResource({ uri: `grillado://plans/${s.id}` });
+    expect(read.contents[0]).toMatchObject({ mimeType: "text/markdown", text: PLAN_MD });
+    expect(c.readResource({ uri: "grillado://plans/2026-01-01-nope" })).rejects.toThrow('No plan with id "2026-01-01-nope"');
+  });
+});
+
+describe("two processes writing at once", () => {
+  test("a stale save keeps the threads another process added", () => {
+    const store = tempStore();
+    const s = platedSession(store);
+    const stale = store.load(s.id)!; // the web app's copy
+    store.update(s.id, (x) => void addCoderComment(x, { quote: "No sync in v1.", text: "from mcp" }));
+    stale.summary = "changed by the web app";
+    store.save(stale);
+    const disk = store.load(s.id)!;
+    expect(disk.summary).toBe("changed by the web app");
+    expect(disk.comments!.map((t) => t.messages[0].text)).toEqual(["from mcp"]);
+    expect(stale.comments).toHaveLength(1); // adopted into the caller's copy too
+  });
+
+  test("parallel writers never lose or corrupt a comment", () => {
+    const store = tempStore();
+    const s = platedSession(store);
+    const script = `
+      import { Store } from ${JSON.stringify(path.resolve("src/cli/store.ts"))};
+      import { addCoderComment } from ${JSON.stringify(path.resolve("src/core/comments.ts"))};
+      const store = new Store(process.argv[2]);
+      for (let i = 0; i < 25; i++) store.update(process.argv[3], (s) => void addCoderComment(s, { quote: "No sync in v1.", text: process.argv[4] + i }));
+    `;
+    const file = path.join(store.dir, "writer.ts");
+    writeFileSync(file, script);
+    const procs = ["a", "b", "c"].map((tag) => Bun.spawn([process.execPath, file, store.dir, s.id, tag], { stderr: "inherit" }));
+    // Meanwhile this process keeps saving its own stale copy, the way the web app would.
+    const mine = store.load(s.id)!;
+    for (let i = 0; i < 25; i++) store.save(mine);
+    return Promise.all(procs.map((p) => p.exited)).then((codes) => {
+      expect(codes).toEqual([0, 0, 0]);
+      const disk = store.load(s.id)!; // parses: never half-written
+      expect(disk.comments).toHaveLength(75);
+      expect(spawnSync("ls", [store.sessionDir(s.id)]).stdout.toString()).not.toContain(".lock");
+    });
+  });
+});
+
+describe("grillado mcp args", () => {
+  test("`mcp` takes only --data-dir", async () => {
+    expect(parseArgs(["mcp"])).toMatchObject({ command: "mcp" });
+    expect(parseArgs(["mcp", "--data-dir", "/tmp/x"])).toMatchObject({ command: "mcp", dataDir: "/tmp/x" });
+    expect(() => parseArgs(["mcp", "--port", "5000"])).toThrow("mcp only takes --data-dir");
+    expect(() => parseArgs(["--port", "5000", "mcp"])).toThrow('Unknown option "mcp"');
+  });
+});
+
+describe("the launch command for editors (handoff §2a)", () => {
+  test("npx or a global install: npx -y grillado mcp", () => {
+    const home = "/home/u";
+    for (const f of ["/home/u/.npm/_npx/1a2b/node_modules/grillado/dist/cli.js", "/usr/local/lib/node_modules/grillado/dist/cli.js"]) {
+      expect(mcpLaunch(f, "/home/u/.grillado", home)).toEqual({ command: "npx", args: ["-y", "grillado", "mcp"], line: "npx -y grillado mcp" });
+    }
+  });
+
+  test("a local checkout: node with the absolute path; a custom data dir adds GRILLADO_HOME", () => {
+    expect(mcpLaunch("/src/my grillado/dist/cli.js", "/data/plans", "/home/u")).toEqual({
+      command: "node",
+      args: ["/src/my grillado/dist/cli.js", "mcp"],
+      env: { GRILLADO_HOME: "/data/plans" },
+      line: "node '/src/my grillado/dist/cli.js' mcp",
+    });
+  });
+
+  test("start_plan remembers which editor sent the idea", async () => {
+    const store = tempStore();
+    const r = await call(await connect(store), "start_plan", { idea: "x" });
+    expect(store.load(r.structuredContent.id)!.from).toBe("test-coder");
+  });
+});

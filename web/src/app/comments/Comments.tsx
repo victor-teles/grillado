@@ -19,7 +19,7 @@ import { jumpTo } from "../editor/link";
 import type { CommentThread, SessionView, Suggestion } from "../types";
 import { SuggestionBlock } from "../diagrams/SuggestionBlock";
 import { formatDuration } from "../../../../src/core/diagrams.ts";
-import { CCOPY, type Placed, type Row, anchorOf, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
+import { CCOPY, type Placed, type Row, anchorOf, author, canApply, fill, place, plainQuote, rowText, sectionOf, statusRow } from "./model";
 
 const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = mac ? "⌘" : "Ctrl+";
@@ -981,7 +981,7 @@ function Thread(p: Parameters<typeof Rail>[0] & { t: CommentThread }) {
       {t.messages.map((m) => (
         <div key={m.id} className="msg">
           <div className="who">
-            <b>{m.by === "you" ? "You" : agentName}</b>
+            <b title={m.client}>{author(m, agentName)}</b>
             <span className="m">{time(m.at)}</span>
           </div>
           <p>{m.text}</p>
