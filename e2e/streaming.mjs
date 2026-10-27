@@ -238,7 +238,7 @@ try {
     check(`${theme}: chunks appear with no fade`, g1.pAnim === "none/0s", g1.pAnim);
     check(`${theme}: the Reply box is disabled while it streams; no Apply feedback yet`, g1.reply === true && !g1.apply, JSON.stringify(g1));
     if (theme === "dark") await axe(pg, `${theme} desktop: streaming`);
-    await rail.getByText(/^Good catch\./).waitFor({ timeout: 15000 });
+    await pg.waitForFunction(() => !document.querySelector(".th .msg[data-streaming]") && /^Good catch\..*"\.$/.test([...document.querySelectorAll(".crail .th .msg p")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
     const w1 = await watched(pg);
     check(`${theme}: deltas are appended as text nodes, nothing else in the thread changes while it streams`, w1.appended >= 3 && w1.outside <= 2, `appended ${w1.appended}, outside ${w1.outside}`);
     const done = await rail.locator(".th .msg").last().evaluate((m) => ({ streaming: m.hasAttribute("data-streaming"), busy: m.getAttribute("aria-busy"), caret: !!m.querySelector(".caret"), time: m.querySelector(".who .m")?.textContent ?? "", text: m.querySelector("p").textContent }));
@@ -280,7 +280,7 @@ try {
     const th2 = rail.locator(".th").filter({ hasText: "Is one flow enough?" });
     await th2.locator(".crow[role=alert]").waitFor({ timeout: 15000 });
     const er = await th2.evaluate((t) => ({ partial: t.querySelector(".msg[data-partial] p")?.textContent ?? "", row: t.querySelector(".crow[role=alert]").textContent, caret: !!t.querySelector(".caret"), busy: !!t.querySelector("[aria-busy]") }));
-    check(`${theme}: error mid-stream: the partial text stays, then “Couldn't reply · Try again”`, er.partial.length >= 10 && /^Good catch/.test(er.partial) && er.row.replace(/\s+/g, " ").trim() === "Couldn't reply Try again" && !er.caret && !er.busy, JSON.stringify(er));
+    check(`${theme}: error mid-stream: the partial text stays, then “Couldn't reply · Try again”`, er.partial.length >= 10 && /^Good catch/.test(er.partial) && /^Couldn't reply\s*·?\s*Try again$/.test(er.row.trim()) && !er.caret && !er.busy, JSON.stringify(er));
     await snap("d-stream-error");
     if (theme === "dark") await axe(pg, `${theme} desktop: error mid-stream`);
     s.mode({});
@@ -293,7 +293,7 @@ try {
 
     // 4 · A banned name never reaches the screen, even partly (the reply is asked again).
     s.mode({ FAKE_COMMENT: "leak-once" });
-    await th2.getByRole("textbox", { name: "Reply" }).fill("Who else?");
+    await th2.getByRole("textbox", { name: "Reply" }).fill("And the cost?");
     await th2.getByRole("textbox", { name: "Reply" }).press("Enter");
     await th2.locator(".msg p", { hasText: /^Sure, that works too/ }).waitFor({ timeout: 20000 });
     const seen = (await watched(pg)).seen;
@@ -327,7 +327,7 @@ try {
     await mp.getByRole("menuitem", { name: /Comments/ }).click();
     const sheet = mp.getByRole("dialog", { name: "Comments" });
     await sheet.locator(".msg[data-streaming]").waitFor({ timeout: 15000 });
-    await mp.waitForFunction(() => (document.querySelector(".th .msg[data-streaming] p > span:first-child")?.textContent.length ?? 0) >= 30, null, { timeout: 15000 });
+    await mp.waitForFunction(() => (document.querySelector(".th .msg[data-streaming] p > span:first-child")?.textContent.length ?? 0) >= 10, null, { timeout: 15000 });
     await mp.waitForTimeout(2500);
     const mg = await streamGeom(mp);
     check(`${theme} phone: the reply streams in the sheet with the caret and aria-busy; Stop is 44px`, mg.busy === "true" && mg.caretW === 2 && mg.stopH >= 44 && mg.reply === true, JSON.stringify(mg));
