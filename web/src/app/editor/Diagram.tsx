@@ -1,5 +1,6 @@
 import { Dialog } from "radix-ui";
-import { IAlert, IEdit, IMax, IMinus, IPlus, IX } from "../icons";
+import { IAlert, ICode, IEdit, IMax, IMinus, IMore, IPlus, IX } from "../icons";
+import { ActionSheet } from "../ActionSheet";
 import { useMobile } from "../chrome";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { describeDiagram } from "../../../../src/core/diagrams.ts";
@@ -230,6 +231,7 @@ export function Diagram({ code, onEdit, bare = false }: { code: string; onEdit?:
   const [details, setDetails] = useState(false);
   const hint = useId();
   const { title } = accOf(code);
+  const kind = kindName(code);
   const explained = res && !res.ok ? explainDiagramError(code, res.error) : null;
   const said = useSaid(explained ? `This diagram can't be drawn. ${explained.message}` : "");
   const state = res === null ? "loading" : res.ok ? "ok" : "error";
@@ -303,7 +305,21 @@ export function Diagram({ code, onEdit, bare = false }: { code: string; onEdit?:
       }}
     >
       {body}
-      {ok && title ? <figcaption>{title}</figcaption> : null}
+      {ok && mobile && (title || onEdit) ? (
+        // Phones (#105): the caption row carries a quiet, always-there Edit (44px hit area); a tap
+        // anywhere else on the figure still zooms.
+        <figcaption className="fcap">
+          <span className="ct">{title}</span>
+          {onEdit ? (
+            <button type="button" className="fed" aria-label={`Edit source: ${title || kind}`} onClick={(e) => (e.stopPropagation(), onEdit())}>
+              <IEdit s={16} />
+              Edit
+            </button>
+          ) : null}
+        </figcaption>
+      ) : ok && title ? (
+        <figcaption>{title}</figcaption>
+      ) : null}
       {ok ? (
         <div className="ovb">
           <span>Showing part of this diagram</span>
@@ -405,6 +421,17 @@ export function FullScreen({ code, svg, mobile, onEdit, onClose }: { code: strin
   const counts = isState
     ? `State diagram · ${d.shapes.length} ${d.shapes.length === 1 ? "state" : "states"}, ${d.edges.length} ${d.edges.length === 1 ? "transition" : "transitions"}`
     : `${kind} · ${d.shapes.length} ${d.shapes.length === 1 ? "shape" : "shapes"}, ${d.edges.length} ${d.edges.length === 1 ? "arrow" : "arrows"}`;
+  const [menu, setMenu] = useState(false);
+  const more = useRef<HTMLButtonElement>(null);
+  const seg = (
+    <div className="seg2" role="radiogroup" aria-label="View">
+      {(["diagram", "text"] as const).map((v) => (
+        <button key={v} type="button" role="radio" aria-checked={view === v} onClick={() => setView(v)}>
+          {v === "diagram" ? "Diagram" : "Text"}
+        </button>
+      ))}
+    </div>
+  );
   return (
     <Dialog.Root open onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
@@ -413,6 +440,7 @@ export function FullScreen({ code, svg, mobile, onEdit, onClose }: { code: strin
           className={`fs5${mobile ? " m" : ""}`}
           aria-describedby={undefined}
           onCloseAutoFocus={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => menu && e.preventDefault()}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
             if (view !== "diagram" || (e.target as HTMLElement).closest("button,[role=radio]")) {
@@ -434,15 +462,15 @@ export function FullScreen({ code, svg, mobile, onEdit, onClose }: { code: strin
             <Dialog.Title asChild>
               <b>{title || kind}</b>
             </Dialog.Title>
-            <div className="seg2" role="radiogroup" aria-label="View">
-              {(["diagram", "text"] as const).map((v) => (
-                <button key={v} type="button" role="radio" aria-checked={view === v} onClick={() => setView(v)}>
-                  {v === "diagram" ? "Diagram" : "Text"}
-                </button>
-              ))}
-            </div>
+            {mobile ? null : seg}
             <span className="sp" />
             {view === "diagram" && !mobile ? <Zoom zoom={zoom} step={step} fit={fit} /> : null}
+            {onEdit && mobile ? (
+              // Phones (#105): title · ⋯ · Close; ⋯ holds Edit source in an action sheet.
+              <button type="button" className="icon-btn" ref={more} aria-label="More actions" aria-haspopup="dialog" aria-expanded={menu} onClick={() => setMenu(true)}>
+                <IMore s={18} />
+              </button>
+            ) : null}
             {onEdit && !mobile ? (
               <button
                 type="button"
@@ -508,7 +536,10 @@ export function FullScreen({ code, svg, mobile, onEdit, onClose }: { code: strin
             </div>
           )}
           {mobile ? (
-            <div className="mzb">{view === "diagram" ? <Zoom zoom={zoom} step={step} fit={fit} /> : <span />}</div>
+            <div className="mzb">
+              {seg}
+              {view === "diagram" ? <Zoom zoom={zoom} step={step} fit={fit} /> : <span />}
+            </div>
           ) : (
             <div className="fhint" aria-hidden="true">
               <span>Drag to pan</span>
@@ -523,6 +554,26 @@ export function FullScreen({ code, svg, mobile, onEdit, onClose }: { code: strin
               </span>
             </div>
           )}
+          {menu && onEdit ? (
+            // Inside the dialog, so its focus trap and inert outside leave the sheet usable.
+            <ActionSheet
+              title={title || kind}
+              rows={[
+                {
+                  label: "Edit source",
+                  icon: <ICode s={20} />,
+                  run: () => {
+                    onClose();
+                    onEdit();
+                  },
+                },
+              ]}
+              onClose={(refocus) => {
+                setMenu(false);
+                if (refocus) requestAnimationFrame(() => more.current?.focus());
+              }}
+            />
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

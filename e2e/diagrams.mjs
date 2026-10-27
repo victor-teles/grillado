@@ -554,7 +554,9 @@ try {
     if (one) check("mobile: run bar", /Claude Code is adding diagrams/.test(await txt(mp.getByTestId("diagram-run"))));
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i5-run-m-${theme}.png`) });
     await waitRunEnd(mp);
-    await mp.getByTestId("diagram-suggestion").locator("svg").first().waitFor({ timeout: 15000 });
+    // The drawn diagram, not the header's "+" icon (also an svg): waiting on that let the test tap
+    // Edit while the first Mermaid load was still compiling and drawing on the phone page.
+    await mp.getByTestId("diagram-suggestion").locator(".mmw svg").first().waitFor({ timeout: 15000 });
     await mp.getByTestId("diagram-suggestion").scrollIntoViewIfNeeded();
     {
       const hd = mp.getByTestId("diagram-suggestion").locator(".hd");
@@ -567,6 +569,9 @@ try {
     {
       const sg = mp.getByTestId("diagram-suggestion");
       await sg.locator(".hd").getByRole("button", { name: "Edit diagram source" }).tap();
+      // If the editor doesn't open, say what the page was doing instead of a bare 30s timeout.
+      if (!(await sg.locator(".ned5 textarea").waitFor({ timeout: 5000 }).then(() => true, () => false)))
+        check(`${theme} mobile: tapping Edit diagram source opens the editor`, false, JSON.stringify(await mp.evaluate(() => ({ suggestions: document.querySelectorAll("[data-testid=diagram-suggestion]").length, editor: !!document.querySelector(".ned5"), active: `${document.activeElement?.tagName}.${document.activeElement?.className}`, dialogs: document.querySelectorAll("[role=dialog]").length }))));
       await mobileSwitch(mp, sg.locator(".ned5"), theme, "suggestion edit", "i5-msugg");
       check(`${theme} mobile: the suggestion is still there to review`, (await mp.getByTestId("diagram-suggestion").count()) === 1);
       await sg.locator(".hd").getByRole("button", { name: "Edit diagram source" }).tap();

@@ -249,6 +249,12 @@ try {
     check(`${theme}: the plan text hasn't changed`, !/R2:storage/.test(sj.plan.markdown.replace(/```[\s\S]*?```/g, "")));
     await snap("d-ap-ready");
     await axe(pg, `${theme} desktop: ready`);
+    // #125: a waiting suggestion demotes Copy Markdown on the Document tab only; Decisions keeps its one blue.
+    const copyBg = async () => { await pg.waitForTimeout(300); return pg.locator(".copy-md").first().evaluate((b) => getComputedStyle(b).backgroundColor); };
+    {
+      const bg = await copyBg();
+      check(`${theme}: on Decisions, Copy Markdown stays blue while the suggestion waits (#125)`, bg === blue, `${bg} vs ${blue}`);
+    }
     await rowOf(pg, "storage").getByRole("button", { name: "Review the suggestion" }).click();
     await pg.getByTestId("plan").waitFor();
     const rv = await pg.waitForFunction(
@@ -264,6 +270,10 @@ try {
     check(`${theme}: Review opens the Document tab on the suggestion, focused, with the 1/1 pill and the bar`, rv?.doc === "true" && rv.f && /^1\/1/.test(rv.pill) && /^1 suggestion from Claude Code/.test(rv.bar), JSON.stringify(rv));
     check(`${theme}: the inserted cite isn't shown raw`, rv && !rv.raw, JSON.stringify(rv));
     check(`${theme}: its margin cite is there and lit`, rv?.lit?.length === 1 && rv.lit[0] === true, JSON.stringify(rv?.lit));
+    {
+      const bg = await copyBg();
+      check(`${theme}: on the Document tab, the review bar takes the blue and Copy Markdown is grey (#125)`, bg !== blue && (await pg.locator(".planv[data-reviewing][data-tab=doc]").count()) === 1, bg);
+    }
     await snap("d-ap-plan");
     await axe(pg, `${theme} desktop: reviewing the suggestion`);
     await pg.locator(".ipill").getByRole("button", { name: /^Accept/ }).click();
@@ -280,9 +290,15 @@ try {
     await card.scrollIntoViewIfNeeded();
     const cb = await card.evaluate((el) => {
       const b = el.querySelector(".dz-h .apb button");
-      return { orph: /Not in the plan text yet/.test(el.querySelector(".dz-h").textContent), btn: b?.textContent.trim(), vis: b ? getComputedStyle(b.closest(".apb")).visibility : "", colour: b ? getComputedStyle(b).color : "" };
+      const m = document.createElement("span");
+      m.style.color = "var(--muted-foreground)";
+      el.appendChild(m);
+      const muted = getComputedStyle(m).color;
+      m.remove();
+      return { orph: /Not in the plan text yet/.test(el.querySelector(".dz-h").textContent), btn: b?.textContent.trim(), vis: b ? getComputedStyle(b.closest(".apb")).visibility : "", colour: b ? getComputedStyle(b).color : "", muted };
     });
     check(`${theme}: the orphan's DecisionCard header always has Add to plan, never blue`, cb.orph && cb.btn === "Add to plan" && cb.vis === "visible" && cb.colour !== blue, JSON.stringify(cb));
+    check(`${theme}: …in muted ink, like the row's button`, cb.colour === cb.muted, JSON.stringify(cb));
     await pg.locator(".toast").waitFor({ state: "detached", timeout: 10000 }).catch(() => {}); // the Accepted toast and flash go first
     await card.hover();
     await snap("d-ap-card");
