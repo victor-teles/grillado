@@ -23,7 +23,7 @@
   --t-meta:12px;--t-body:14px;--t-h:17px;--t-title:24px;
   --ease-out:cubic-bezier(0.23,1,0.32,1);--ease-in-out:cubic-bezier(0.77,0,0.175,1);
   /* --d-sheet: the 300ms sheet slide sits outside the 150–220ms band on purpose (#21; item 6 §18 J). */
-  --d-press:120ms;--d-quick:160ms;--d-base:220ms;--d-sheet:300ms;
+  --d-press:120ms;--d-quick:160ms;--d-base:220ms;--d-sheet:300ms;--d-ok-hold:2000ms;
   --sans:"Inter Variable",ui-sans-serif,system-ui,sans-serif;--mono:"Geist Mono Variable",ui-monospace,monospace;
 }
 /* Light inks a step darker than the board tokens so small text on --sel clears 4.5:1. */
@@ -680,6 +680,14 @@ del.sg{color:inherit;text-decoration:line-through;text-decoration-color:var(--de
 ins.sg.f{background:color-mix(in oklab,var(--success) var(--sg-f-a),transparent);text-decoration:underline;text-decoration-color:var(--success-ink);text-decoration-thickness:2px;text-underline-offset:4px}
 del.sg.f{background:color-mix(in oklab,var(--destructive) calc(var(--del-a) + 6%),transparent)}
 ins.sg:focus-visible,del.sg:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+/* The held accept (#102): the deletion fades (120ms) and leaves, the green fades to plain (220ms), and
+   "✓ Accepted" holds beside the text for --d-ok-hold without taking layout space, then fades (160ms). */
+del.sg.out,ins.sg.out{opacity:0;transition:opacity var(--d-press) var(--ease-out)}
+ins.sg.ok{background:transparent;text-decoration:none;cursor:text;transition:background-color var(--d-base) var(--ease-out)}
+.okm{position:absolute;z-index:2;display:inline-flex;align-items:center;gap:4px;font-size:var(--t-meta);line-height:16px;color:var(--success-ink);pointer-events:none;white-space:nowrap;transition:opacity var(--d-quick) var(--ease-out)}
+.okm svg{width:14px;height:14px;flex:none}
+.okm.bye{opacity:0}
+html[data-kbd] :is(del.sg.out,ins.sg.out,ins.sg.ok,.okm){transition:none}
 .ipill{white-space:nowrap;display:inline-flex;align-items:center;gap:0;margin-left:6px;padding:1px;border-radius:9px;background:var(--popover);box-shadow:0 0 0 1px var(--hair);vertical-align:1px;line-height:1}
 .ipill .ix{font-size:var(--t-meta);color:var(--muted-foreground);padding:0 6px}
 .ipill .btn{height:24px;padding:0 8px;gap:4px;font-size:var(--t-meta);color:var(--foreground)}

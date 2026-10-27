@@ -27,7 +27,11 @@ export type CiteRenderer = (round: number, key: string, n: number) => ReactNode;
 export interface DocMarks {
   /** `details`: id of the thread element when it is on screen (the rail is open). */
   anchors: { id: string; start: number; end: number; active: boolean; label: string; details?: string }[];
-  edits: { id: string; start: number; end: number; after: string; focused: boolean }[];
+  /**
+   * `phase` (v1.1 polish #102): "out" fades the deletion (120ms), "ok" drops it from the DOM and fades the
+   * insertion's tint to plain (220ms) while an accept is held; "rej" fades the insertion out.
+   */
+  edits: { id: string; start: number; end: number; after: string; focused: boolean; phase?: "out" | "ok" | "rej" }[];
   onAnchor: (id: string) => void;
   onAnchorHover: (id: string | null) => void;
   onEdit: (id: string) => void;
@@ -84,6 +88,8 @@ interface MarkState {
   first?: boolean;
   /** Anchors that already have their Tab stop. */
   seen?: Set<number>;
+  /** Pieces so far of the current part, so each piece keys by suggestion id, not position (#102). */
+  piece?: number;
 }
 
 /** Plan text ↔ decision linking (item 2 handoff §2). */
@@ -475,14 +481,22 @@ function runs(text: string, ctx: Ctx, key: string | number): ReactNode {
   const flush = () => {
     if (!buf) return;
     let node: ReactNode = buf;
-    const k = `${key}-${out.length}`;
+    let k = `${key}-${out.length}`;
     if (mk.edit !== null && mk.part) {
       const e = marks.edits[mk.edit];
       const Tag = mk.part;
+      // A held accept's deletion has faded (phase "out") and now leaves the DOM: the text reflows once.
+      if (Tag === "del" && e.phase === "ok") {
+        buf = "";
+        return;
+      }
       const first = mk.first;
       mk.first = false;
+      // Keyed by suggestion id: a held accept keeps its elements, so its fades run (#102).
+      k = `${key}-sg-${e.id}-${Tag}-${(mk.piece = (mk.piece ?? 0) + 1)}`;
+      const ph = e.phase === "out" ? (Tag === "del" ? " out" : "") : e.phase === "ok" ? " ok" : e.phase === "rej" ? (Tag === "ins" ? " out" : "") : "";
       node = (
-        <Tag key={`${k}e`} className={`sg${e.focused ? " f" : ""}`} data-sg={e.id} tabIndex={-1}>
+        <Tag key={`${k}e`} className={`sg${e.focused ? " f" : ""}${ph}`} data-sg={e.id} tabIndex={-1}>
           {first ? <span className="sr-only">{Tag === "del" ? "suggested removal: " : "suggested insertion: "}</span> : null}
           {node}
         </Tag>
@@ -532,6 +546,7 @@ function runs(text: string, ctx: Ctx, key: string | number): ReactNode {
         mk.edit = n;
         mk.part = "del";
         mk.first = true;
+        mk.piece = 0;
       }
     } else if (c === A_CLOSE) {
       flush();
@@ -540,6 +555,7 @@ function runs(text: string, ctx: Ctx, key: string | number): ReactNode {
       flush();
       mk.part = "ins";
       mk.first = true;
+      mk.piece = 0;
     } else if (c === E_CLOSE) {
       flush();
       const e = mk.edit === null ? null : marks.edits[mk.edit];

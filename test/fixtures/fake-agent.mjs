@@ -2,7 +2,7 @@
 // A stand-in for the claude / codex / grok / pi CLIs. It speaks each CLI's output format and plays
 // a small deterministic interview, so tests and the e2e run exercise the real adapters end to end.
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
-// leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once), FAKE_COMMENT_DELAY_MS, FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
+// leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS, FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -223,7 +223,8 @@ function commentReply() {
   // A comment on a decision block: answers change through the decision itself, so no edits.
   const inFence = [...plan.matchAll(/^```[\s\S]*?^```/gm)].some((m) => m[0].includes(quote));
   if (inFence || !plan.includes(quote)) return { type: "edits", summary: "Nothing to change in the text", edits: [] };
-  const edits = [{ before: quote, after: `${quote}, shared by everyone at home` }];
+  // FAKE_COMMENT=swap: the first edit rewrites the quote, so it has a deletion as well as an insertion.
+  const edits = [{ before: quote, after: process.env.FAKE_COMMENT === "swap" ? `One list the whole household shares` : `${quote}, shared by everyone at home` }];
   const item = /^- (Yes, one core flow)/m.exec(plan);
   if (item && !quote.includes(item[1])) edits.push({ before: item[1], after: "Yes, one core flow, shipped first" });
   return { type: "edits", summary: "Spelled it out", edits };
