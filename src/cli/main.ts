@@ -5,6 +5,7 @@ import { HELP, UsageError, parseArgs } from "./args.ts";
 import { appLine, mcpLaunch } from "./launch.ts";
 import { runMcp } from "./mcp.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
+import { FoundService } from "./found.ts";
 import { GrilladoServer } from "./server.ts";
 import { Store, defaultDataDir } from "./store.ts";
 
@@ -56,6 +57,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     timeoutMs: process.env.GRILLADO_TIMEOUT_MS ? Number(process.env.GRILLADO_TIMEOUT_MS) : undefined,
     onQuit: () => void shutdown("quit"),
     mcpLaunch: mcpLaunch(fileURLToPath(import.meta.url), store.dir),
+    found: new FoundService({ store, cwd: process.cwd(), off: !args.scan || process.env.GRILLADO_NO_SCAN === "1" }),
   });
 
   process.stdout.write(`${orange("●")} ${bold("Grillado")} ${dim(VERSION)}  ${dim("warming up…")}\n`);
@@ -91,6 +93,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   process.stdout.write(`  ${bold(server.url)}\n`);
   process.stdout.write(dim(`  Server listening on 127.0.0.1:${server.port}. Press Ctrl+C to stop.\n`));
   if (args.open && canOpenBrowser()) openBrowser(server.url);
+  // After the URL is out: the scan never delays the first paint (budget 1.5 s, results over SSE).
+  setImmediate(() => void server.scanProject());
 
   let stopping = false;
   async function shutdown(reason: string) {

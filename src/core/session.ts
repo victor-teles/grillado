@@ -91,6 +91,10 @@ export interface Session extends CommentState {
   queued?: boolean;
   /** The MCP client that started it (its clientInfo.name, e.g. "cursor-vscode"), for Recent. */
   from?: string;
+  /** Imported from a source found in the project (v1.3 item 1). */
+  source?: ImportedSource;
+  /** The project root the source was found in (v1.3 item 1). */
+  project?: string;
   plan?: {
     title: string;
     markdown: string;
@@ -108,6 +112,32 @@ export interface Session extends CommentState {
      */
     external?: ExternalEdit[];
   };
+}
+
+/** Where an imported plan came from (v1.3 item 1). Only text was copied; the source is never written. */
+export interface ImportedSource {
+  app: "claude" | "codex" | "cursor" | "file";
+  kind: "session" | "plan";
+  /** Absolute path of the transcript or plan file. */
+  path: string;
+  sessionId?: string;
+  /** app + absolute path + session id: the key in sources.json, so a source never imports twice. */
+  fingerprint: string;
+  /** Hash of the imported text (idea, Q&A, plan); a new hash on disk offers Update. */
+  contentHash: string;
+  importedAt: string;
+  /** Hash of the plan.md the import wrote, to tell a user's edit from our own on Update. */
+  planHash?: string;
+  /** Answered questions copied. */
+  questions: number;
+  /** Questions in the source that had no answer (a session cut short); not imported. */
+  unanswered?: number;
+  /** Part of the session was compacted away; the import holds what was left. */
+  compacted?: boolean;
+  /** The opening idea came from the compaction summary. */
+  ideaFromSummary?: boolean;
+  /** Last Update landed in plan.conflict.md because the plan had been edited (v1.1 Q5). */
+  conflict?: string;
 }
 
 export function createSession(input: { idea: string; context?: string; provider: ProviderId }): Session {

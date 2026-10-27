@@ -40,6 +40,8 @@ import { textHash } from "../core/text-hash.ts";
 import { buildTree } from "../core/tree.ts";
 import { type McpLaunch, mcpLaunch } from "./launch.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
+import { type FoundService, type Writer, storeWriter } from "./found.ts";
+import { ImportError } from "../core/found/import.ts";
 import type { Store } from "./store.ts";
 
 export const LOOPBACK = "127.0.0.1";
@@ -57,6 +59,8 @@ export interface ServerOptions {
   onQuit?: () => void;
   /** How an editor starts `grillado mcp`, for "Use in your editor" (v1.2 item 1). */
   mcpLaunch?: McpLaunch;
+  /** "Found in this project" (v1.3 item 1): the launch folder's scan. None: the feature is off. */
+  found?: FoundService;
 }
 
 export interface ProviderInfo {
@@ -109,6 +113,7 @@ export class GrilladoServer {
   port = 0;
 
   constructor(private opts: ServerOptions) {
+    if (opts.found) opts.found.onChange = () => this.broadcast({ type: "found" });
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => {
         if (!res.headersSent) this.json(res, 500, { error: "Internal error" });
@@ -266,6 +271,7 @@ export class GrilladoServer {
         return;
       }
       if (parts[0] === "sessions") return await this.sessionRoutes(req, res, parts.slice(1), body);
+      if (parts[0] === "found") return await this.foundRoutes(req, res, parts.slice(1), body);
       return this.json(res, 404, { error: "Not found" });
     } catch (err: any) {
       return this.json(res, 400, { error: err?.message ?? "Bad request" });
@@ -478,6 +484,8 @@ export class GrilladoServer {
         decisions: Object.keys(s.decisions).length,
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
+        // Imported (v1.3 item 1): where it came from, for Recent's "From Claude Code session" line.
+        ...(s.source ? { source: { app: s.source.app, kind: s.source.kind } } : {}),
         from: s.from,
         queued: !!s.queued,
       })),
@@ -505,6 +513,65 @@ export class GrilladoServer {
       activity: this.activityView(s),
       acceptStreak: acceptStreak(s),
       nudge: shouldNudge(s),
+    };
+  }
+
+  // ---------------------------------------------------------------- found in this project (v1.3 item 1)
+
+  /** The launch scan. Errors stay local: a scan that fails shows nothing, it never stops the app. */
+  async scanProject() {
+    if (!this.opts.found || this.opts.found.skip) return;
+    try {
+      await this.opts.found.scan();
+    } catch (err) {
+      console.error(`grillado: project scan failed: ${(err as Error)?.message ?? err}`);
+    }
+  }
+
+  private static FOUND_STATUS: Record<ImportError["code"], number> = { unknown: 404, in_progress: 409, needs_agent: 409, busy: 409, not_qualified: 422, unreadable: 422, filtered: 422 };
+
+  private async foundRoutes(req: http.IncomingMessage, res: http.ServerResponse, parts: string[], body: any) {
+    const f = this.opts.found;
+    const view = () => (f ? f.view() : { enabled: false, reason: "off" });
+    if (req.method === "GET" && parts.length === 0) return this.json(res, 200, view());
+    if (req.method !== "POST" || parts.length !== 1) return this.json(res, 404, { error: "Not found" });
+    if (!f || f.skip) return this.json(res, 409, { error: "The project scan is off.", code: "off" });
+    if (parts[0] === "rescan") {
+      await f.scan();
+      return this.json(res, 200, view());
+    }
+    if (parts[0] === "dismiss") {
+      f.setHidden(body?.hidden !== false);
+      this.broadcast({ type: "found" });
+      return this.json(res, 200, view());
+    }
+    if (parts[0] === "import") {
+      if (typeof body?.id !== "string") return this.json(res, 400, { error: "Expected { id }" });
+      try {
+        const r = await f.import(body.id, this.selected ?? this.opts.store.readConfig().defaultProvider ?? PROVIDER_IDS[0], this.foundWriter());
+        this.broadcast({ type: "app" });
+        return this.json(res, 200, { ...r, url: `/s/${r.planId}`, row: f.last?.rows.find((x) => x.id === body.id) ?? null });
+      } catch (err) {
+        if (err instanceof ImportError) return this.json(res, GrilladoServer.FOUND_STATUS[err.code], { error: err.message, code: err.code });
+        throw err;
+      }
+    }
+    return this.json(res, 404, { error: "Not found" });
+  }
+
+  /** Imports go through the live copy when the plan is open, so the browser sees them at once. */
+  private foundWriter(): Writer {
+    const base = storeWriter(this.opts.store);
+    return {
+      load: (id) => {
+        if (this.inflight.has(id) || this.addPlanRuns.has(id)) throw new ImportError("busy", "The agent is working on this plan. Update it when it's done.");
+        return this.sessions.get(id) ?? this.opts.store.load(id);
+      },
+      create: (s, md) => base.create(s, md),
+      save: (s, md, conflict) => {
+        base.save(s, md, conflict);
+        if (this.sessions.get(s.id) === s) this.broadcast({ type: "session", session: this.view(s) });
+      },
     };
   }
 

@@ -23,10 +23,10 @@ const call = async (c: Client, name: string, args: Record<string, unknown> = {})
 const textOf = (r: any) => r.content.map((x: any) => x.text).join("\n");
 
 describe("grillado mcp tools", () => {
-  test("lists exactly the five tools", async () => {
+  test("lists exactly the seven tools", async () => {
     const c = await connect(tempStore());
     const { tools } = await c.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["add_comment", "get_decisions", "get_plan", "list_plans", "start_plan"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["add_comment", "get_decisions", "get_plan", "import_source", "list_plans", "list_project_sources", "start_plan"]);
     for (const t of tools) expect(JSON.stringify(t).toLowerCase()).not.toMatch(/grill-me|grilling|pocock/);
   });
 
