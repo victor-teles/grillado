@@ -415,6 +415,101 @@ try {
     await ctx3.close();
     await s3.stop();
 
+    // ---------------------------------------------------------------- the block's Edit (#119)
+    // A line that ends about 170px short of the column: the pill would fit before the column's edge
+    // but sits on the block's Edit, so it goes below, and that spot keeps off Edit too. The Reject is
+    // muted, and a width change drops the pill.
+    for (const width of [1100, 1440]) {
+      const f5 = path.join(mkdtempSync(path.join(WORK, "e5-")), "after2.txt");
+      const s5 = await server({ FAKE_COMMENT: "swap", FAKE_COMMENT_DELAY_MS: "300", FAKE_EDIT2_FILE: f5 });
+      const c5 = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
+      await c5.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const p5 = await c5.newPage();
+      await holdTransitions(p5);
+      await p5.goto(s5.url);
+      const tag = `${theme} ${width}px, a line ending near Edit`;
+      const ids5 = await toSuggestions(p5, async () => {
+        const fill = await p5.evaluate(() => {
+          const doc = document.querySelector(".doc");
+          const col = doc.getBoundingClientRect().right - parseFloat(getComputedStyle(doc).paddingRight);
+          const w = document.createTreeWalker(document.querySelector("[data-testid=plan]"), NodeFilter.SHOW_TEXT);
+          let n = w.nextNode();
+          while (n && !n.data.includes("Yes, one core flow")) n = w.nextNode();
+          const span = document.createElement("span");
+          n.parentNode.insertBefore(span, n.nextSibling);
+          const words = "shipped first so everyone at home can try it on their own phones this week and tell us what is missing before we add the rest".split(" ");
+          let best = { gap: Infinity, text: "" };
+          for (let i = 1; i <= words.length; i++) {
+            span.textContent = `, ${words.slice(0, i).join(" ")}`;
+            const r = [...span.getClientRects()].filter((x) => x.width > 0);
+            const g = col - r.at(-1).right;
+            if (r.length === 1 && Math.abs(g - 170) < Math.abs(best.gap - 170)) best = { gap: g, text: span.textContent };
+          }
+          span.remove();
+          return best;
+        });
+        check(`${tag}: it ends ${Math.round(fill.gap)}px short of the column`, Math.abs(fill.gap - 170) < 40, JSON.stringify(fill));
+        writeFileSync(f5, `Yes, one core flow${fill.text}`);
+      });
+      const B5 = ids5[1];
+      await p5.mouse.move(width - 60, 860);
+      await p5.evaluate(() => window.__release());
+      const sp5 = await spot(p5, B5);
+      await p5.mouse.move(sp5.x, sp5.y, { steps: 4 });
+      await p5.locator(".ipill.hp.in").waitFor({ timeout: 2000 });
+      await p5.waitForTimeout(300);
+      await p5.evaluate(() => window.__release());
+      const g = await p5.evaluate((id) => {
+        const box = (e) => {
+          const r = e.getBoundingClientRect();
+          return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), op: getComputedStyle(e).opacity };
+        };
+        const pill = document.querySelector(".ipill.hp");
+        const ins = [...document.querySelectorAll(`ins.sg[data-sg="${id}"]`)].pop();
+        const blk = ins.closest(".blk");
+        const p = box(pill);
+        const edit = box(blk.querySelector(":scope > .blk-act"));
+        const cites = [...blk.querySelectorAll(".gut-cite")].map(box);
+        const doc = document.querySelector(".doc");
+        const d = doc.getBoundingClientRect();
+        const cs = getComputedStyle(doc);
+        const last = [...ins.getClientRects()].filter((r) => r.width > 0).pop();
+        const touch = [edit, ...cites].filter((t) => p.l < t.r && p.r > t.l && p.t < t.b && p.b > t.t);
+        const probe = document.createElement("span");
+        probe.style.color = "var(--muted-foreground)";
+        document.body.append(probe);
+        const muted = getComputedStyle(probe).color;
+        probe.remove();
+        const [acc, rej] = pill.querySelectorAll("button");
+        return {
+          p,
+          edit,
+          touch,
+          inCol: p.l >= d.left + parseFloat(cs.paddingLeft) - 1 && p.r <= d.right - parseFloat(cs.paddingRight) + 1,
+          below: p.t >= last.bottom,
+          inlineWouldHit: last.right + 6 < edit.r && last.right + 6 + p.r - p.l > edit.l,
+          rej: getComputedStyle(rej).color,
+          acc: getComputedStyle(acc).color,
+          muted,
+        };
+      }, B5);
+      check(`${tag}: Edit is showing, and the pill after the line would sit on it`, g.edit.op === "1" && g.inlineWouldHit, JSON.stringify(g));
+      check(`${tag}: so the pill goes below the line, inside the column`, g.below && g.inCol, JSON.stringify(g.p));
+      check(`${tag}: …touching neither Edit nor a cite`, g.touch.length === 0, JSON.stringify(g.touch));
+      check(`${tag}: the compact pill's Reject is muted, Accept isn't`, g.rej === g.muted && g.acc !== g.muted, `${g.rej} / ${g.acc} / ${g.muted}`);
+      if (SHOTS) {
+        await p5.evaluate(() => dispatchEvent(new Event("grillado:editor-open")));
+        await p5.screenshot({ path: path.join(SHOTS, `d-hover-edit-${width}-r2-${theme}.png`) });
+      }
+      if (width === 1440) await axe(p5, `${theme} desktop, hover pill clear of Edit`);
+      // A width change drops it (as it does the ✓ Accepted mark, #116): here, the window.
+      await p5.setViewportSize({ width: width - 40, height: 900 });
+      await p5.waitForTimeout(200);
+      check(`${tag}: a resize drops the pill`, (await p5.locator(".ipill.hp").count()) === 0);
+      await c5.close();
+      await s5.stop();
+    }
+
     // ---------------------------------------------------------------- phone: no hover pill, ever
     const s2 = await server({ FAKE_COMMENT: "swap", FAKE_COMMENT_DELAY_MS: "300" });
     const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: "no-preference" });
