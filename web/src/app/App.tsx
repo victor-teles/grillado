@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, subscribe } from "./api";
 import { Header, useMobile, useTheme } from "./chrome";
 import { CopyButton } from "./CopyButton";
+import { setReplyText } from "./comments/stream";
 import { Landing, NoAgent, Picker } from "./Home";
 import { IPlug } from "./icons";
 import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
@@ -49,6 +50,8 @@ export function App() {
         if (e.type === "app") void refreshApp();
         else if (e.type === "session") setSession((cur) => (cur && cur.id === e.session.id ? e.session : cur));
         else if (e.type === "progress") setSession((cur) => (cur && cur.id === e.sessionId ? { ...cur, progress: e.label } : cur));
+        // Not React state: the streaming message appends it itself (#97).
+        else if (e.type === "reply-text") setReplyText(e.threadId, e.text);
       },
       () => setDown(true),
     );

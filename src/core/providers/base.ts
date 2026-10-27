@@ -22,6 +22,15 @@ export interface AdapterSpec {
   buildInvocation(req: RunRequest, files: RunFiles): Invocation;
   /** Turn a finished process into a result or a classified error. */
   parse(result: ProcessResult, files: RunFiles): ProviderEvent;
+  /**
+   * Real streaming, for CLIs that emit text deltas (#97). When a request asks for `stream`, this
+   * invocation is used instead, and each stdout line goes through a reader made for the run.
+   * `parse` still turns the finished process into the result.
+   */
+  stream?: {
+    buildInvocation(req: RunRequest, files: RunFiles): Invocation;
+    reader(field: string): (line: string) => ProviderEvent[];
+  };
   /** Optional extra check that the binary on PATH is the CLI we support. */
   verify?(bin: string, env: NodeJS.ProcessEnv): Promise<string | null>;
 }
@@ -71,15 +80,51 @@ export function createAdapter(spec: AdapterSpec, opts: AdapterOptions = {}): Pro
       }
       const files = writeRunFiles(req);
       try {
-        const inv = spec.buildInvocation(req, files);
+        const streaming = req.stream && spec.stream ? spec.stream : undefined;
+        const inv = streaming ? streaming.buildInvocation(req, files) : spec.buildInvocation(req, files);
         yield { type: "progress", label: "Thinking" };
-        const res = await runProcess(bin, inv.args, {
+        // Events read from stdout while the process runs; the loop below hands them out in order.
+        const queue: ProviderEvent[] = [];
+        let wake: (() => void) | null = null;
+        const read = streaming && req.stream ? streaming.reader(req.stream.field) : undefined;
+        let pending = "";
+        const onStdout = read
+          ? (chunk: string) => {
+              pending += chunk;
+              let nl = pending.indexOf("\n");
+              while (nl !== -1) {
+                const line = pending.slice(0, nl).trim();
+                pending = pending.slice(nl + 1);
+                if (line) queue.push(...read(line));
+                nl = pending.indexOf("\n");
+              }
+              if (queue.length) wake?.();
+            }
+          : undefined;
+        let finished = false;
+        const done = runProcess(bin, inv.args, {
           cwd: req.cwd,
           env: { ...e, ...inv.env },
           stdin: inv.stdin,
           timeoutMs: req.timeoutMs,
           signal,
+          onStdout,
+        }).then((r) => {
+          finished = true;
+          wake?.();
+          return r;
         });
+        while (read && !finished) {
+          if (!queue.length) await new Promise<void>((r) => (wake = r));
+          wake = null;
+          // Nothing streamed after Stop: the run ends as stopped.
+          while (queue.length && !signal.aborted) yield queue.shift()!;
+        }
+        const res = await done;
+        if (read && !res.aborted) {
+          if (pending.trim()) queue.push(...read(pending.trim()));
+          while (queue.length) yield queue.shift()!;
+        }
         if (res.aborted) {
           yield { type: "error", code: "unknown", message: "Stopped." };
           return;

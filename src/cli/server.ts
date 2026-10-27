@@ -954,9 +954,29 @@ export class GrilladoServer {
     const work = async () => {
       if (kind === "reply") {
         rec.step("Read your comment", "{agent} is writing a reply");
-        const r = await replyToComment(s, t, this.adapterFor(s), { ...opts, onRepair: () => rec.step("{agent}’s reply didn’t fit the format; asked again", "{agent} is writing a reply") });
-        if (controller.signal.aborted) return (stopped("writing a reply"), finishRun(t, { ok: false, stopped: true, message: "Stopped." }));
+        const run = t.run!;
+        const r = await replyToComment(s, t, this.adapterFor(s), {
+          ...opts,
+          onRepair: () => rec.step("{agent}’s reply didn’t fit the format; asked again", "{agent} is writing a reply"),
+          // Streamed text (#97, Claude Code): kept on the run so a reload shows it, pushed as it grows.
+          onText: (text) => {
+            if (t.run !== run || run.state !== "running") return;
+            if (text) run.partial = text;
+            else delete run.partial;
+            this.broadcast({ type: "reply-text", sessionId: s.id, threadId: t.id, text });
+          },
+        });
+        if (controller.signal.aborted) {
+          stopped("writing a reply");
+          // Stop keeps what was written: it's real text, so Apply feedback is offered on it.
+          const partial = run.partial;
+          delete run.partial;
+          if (partial && s.comments?.includes(t)) addMessage(s, t.id, "agent", partial, { stopped: true });
+          return finishRun(t, { ok: false, stopped: true, message: "Stopped." });
+        }
+        // An error keeps the partial text on the run; Try again starts a new run, which replaces it.
         if (!r.ok) return (failed(r.code), finishRun(t, { ok: false, message: redact(r.message, userText(s)) }));
+        delete run.partial;
         addMessage(s, t.id, "agent", r.value.text);
         rec.step("{agent} replied");
         rec.end("done", { read: [section] });

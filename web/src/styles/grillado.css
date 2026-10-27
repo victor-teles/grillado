@@ -770,6 +770,10 @@ html[data-kbd] .ipill.hp{transition:none}
 .th .msg .who .m{font-size:var(--t-meta)}
 .th .msg .who .stop{margin-left:auto;height:24px;padding:0 8px;font-size:var(--t-meta)}
 .th .msg p{margin:2px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+/* #97 · a streamed reply: a static 2px caret after the text so far (no blink, no fade), and what a
+   stopped reply had written ends in a muted "(stopped)" */
+.th .msg .caret{display:inline-block;width:2px;height:1.1em;margin-left:1px;vertical-align:-0.2em;background:var(--muted-foreground)}
+.th .msg .stopped{color:var(--muted-foreground)}
 .th .m{color:var(--muted-foreground);font-weight:400}
 .th .acts{display:flex;gap:6px}
 .crow{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 6px 0 12px;border-radius:10px;background:var(--background)}
