@@ -10,8 +10,10 @@ import { type Extract, contentHash, stripInvocation } from "./extract.ts";
 
 export class ImportError extends Error {
   constructor(
-    readonly code: "unknown" | "in_progress" | "needs_agent" | "not_qualified" | "unreadable" | "filtered" | "busy",
+    readonly code: "unknown" | "in_progress" | "needs_agent" | "not_qualified" | "unreadable" | "filtered" | "busy" | "stopped" | "agent",
     message: string,
+    /** "agent": the failure code from the CLI (rate, auth, timeout…), shown as words in the row. */
+    readonly reason?: string,
   ) {
     super(message);
   }
@@ -93,12 +95,26 @@ export interface ImportInput {
   provider: ProviderId;
   /** Source still being written (last change < 2 min ago). */
   inProgress?: boolean;
+  /** Free-text sessions (§4): the decisions {agent} made from the answers, one round. */
+  agentDecisions?: AgentDecision[];
 }
 
-function check(x: Extract, inProgress?: boolean) {
+/** One decision {agent} read out of a free-text answer. */
+export interface AgentDecision {
+  label: string;
+  title: string;
+  answer: string;
+}
+
+/** The free-text source with {agent}'s decisions in place of structured questions (one round). */
+function withDecisions(x: Extract, ds: AgentDecision[]): Extract {
+  return { ...x, qualifies: "structured", qa: ds.map((d) => ({ call: 1, header: d.label, question: d.title, options: [], answer: d.answer })) };
+}
+
+function check(x: Extract, inProgress?: boolean, decided?: boolean) {
   if (inProgress) throw new ImportError("in_progress", "This session is still going. Import it once it's finished.");
-  if (x.qualifies === "freetext") throw new ImportError("needs_agent", "This interview has no structured questions; turning its answers into decisions needs an agent run.");
-  if (x.qualifies !== "structured") throw new ImportError("not_qualified", "This isn't a planning session.");
+  if (x.qualifies === "freetext" && !decided) throw new ImportError("needs_agent", "This interview has no structured questions; turning its answers into decisions needs an agent run.");
+  if (x.qualifies !== "structured" && !(x.qualifies === "freetext" && decided)) throw new ImportError("not_qualified", "This isn't a planning session.");
 }
 
 /** Fill `s` (new or existing) from the source: idea, rounds, decisions, status and plan text. */
@@ -119,9 +135,10 @@ function fill(s: Session, x: Extract, title: string, at: string): string | null 
   return md;
 }
 
-function sourceOf(inp: ImportInput, at: string, planHash?: string): ImportedSource {
+function sourceOf(inp: ImportInput, at: string, title: string, planHash?: string): ImportedSource {
   const x = inp.extract;
   const unanswered = x.qa.filter((q) => q.answer === undefined).length;
+  const viaAgent = !!inp.agentDecisions;
   return {
     app: x.app,
     kind: x.kind,
@@ -130,8 +147,10 @@ function sourceOf(inp: ImportInput, at: string, planHash?: string): ImportedSour
     fingerprint: inp.fingerprint,
     contentHash: contentHash(x),
     importedAt: at,
+    title,
     ...(planHash ? { planHash } : {}),
-    questions: x.qa.length - unanswered,
+    questions: viaAgent ? (x.pairs?.length ?? 0) : x.qa.length - unanswered,
+    ...(viaAgent ? { viaAgent: true } : {}),
     ...(unanswered ? { unanswered } : {}),
     ...(x.compacted ? { compacted: true } : {}),
     ...(x.ideaFromSummary ? { ideaFromSummary: true } : {}),
@@ -140,14 +159,14 @@ function sourceOf(inp: ImportInput, at: string, planHash?: string): ImportedSour
 
 /** A new session from a source. The caller writes it (and plan.md, when `markdown` isn't null). */
 export function sessionFromSource(inp: ImportInput, now = new Date()): { session: Session; markdown: string | null } {
-  check(inp.extract, inp.inProgress);
+  check(inp.extract, inp.inProgress, !!inp.agentDecisions);
   const at = now.toISOString();
-  const x = inp.extract;
+  const x = inp.agentDecisions ? withDecisions(inp.extract, inp.agentDecisions) : inp.extract;
   const title = agentText(x.title) || "Untitled session";
   const s = createSession({ idea: title, provider: inp.provider });
   const md = fill(s, x, title, at);
   s.project = inp.project;
-  s.source = sourceOf(inp, at, md ? textHash(md) : undefined);
+  s.source = sourceOf(inp, at, title, md ? textHash(md) : undefined);
   if (md) s.plan = { title, markdown: md, path: "", openDecisions: [], createdAt: at };
   return { session: s, markdown: md };
 }
@@ -158,23 +177,23 @@ export function sessionFromSource(inp: ImportInput, now = new Date()): { session
  * import wrote), their plan stays as it is and the new import goes to plan.conflict.md (v1.1 Q5).
  */
 export function updateFromSource(s: Session, inp: ImportInput, diskPlan: string | null, now = new Date()): { markdown: string | null; conflict: string | null } {
-  check(inp.extract, inp.inProgress);
+  check(inp.extract, inp.inProgress, !!inp.agentDecisions);
   const at = now.toISOString();
-  const x = inp.extract;
+  const x = inp.agentDecisions ? withDecisions(inp.extract, inp.agentDecisions) : inp.extract;
   const title = agentText(x.title) || s.plan?.title || "Untitled session";
   const edited = !!s.plan && diskPlan !== null && !!s.source?.planHash && textHash(diskPlan) !== s.source.planHash;
   if (edited) {
     // Built on a copy: the user's plan, rounds and decisions stay exactly as they are.
     const md = fill(structuredClone(s), x, title, at);
     if (md) {
-      s.source = { ...sourceOf(inp, at, s.source!.planHash), conflict: at };
+      s.source = { ...sourceOf(inp, at, title, s.source!.planHash), conflict: at };
       s.updatedAt = at;
       return { markdown: null, conflict: md };
     }
   }
   const keep = s.plan;
   const md = fill(s, x, title, at);
-  s.source = sourceOf(inp, at, md ? textHash(md) : undefined);
+  s.source = sourceOf(inp, at, title, md ? textHash(md) : undefined);
   if (md) s.plan = { ...(keep ?? { openDecisions: [], createdAt: at, path: "" }), title, markdown: md, editedAt: undefined, external: undefined, waiting: undefined };
   else s.plan = undefined;
   s.updatedAt = at;

@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentChip, useMobile } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { IPlus, IRefresh, IUp } from "./icons";
 import type { AppState, ProviderId, ProviderView, SessionSummary } from "./types";
 import { fromEditor } from "../../../src/core/editor.ts";
+import { sourceLabel } from "../../../src/core/activity.ts";
+import { Found } from "./found/Found";
+import { useFoundHandoff } from "./found/handoff";
 
 // ---------------------------------------------------------------- 0c no agent
 
@@ -217,6 +220,7 @@ export function Landing({
 }) {
   const mobile = useMobile();
   const [idea, setIdea] = useState("");
+  const handoff = useFoundHandoff(state.sessions);
   const [context, setContext] = useState("");
   const [showContext, setShowContext] = useState(false);
   const [sending, setSending] = useState(false);
@@ -294,7 +298,9 @@ export function Landing({
             </button>
           </div>
         </form>
-        <Recent sessions={state.sessions} dataDir={state.dataDir} onOpen={onOpen} />
+        {/* Found in this project (v1.3 item 1): its one mount point. Q1 (placement) moves only this line. */}
+        <Found agent={provider?.displayName ?? "Your agent"} initial={state.found} onOpen={onOpen} {...handoff.found} />
+        <Recent sessions={handoff.sessions} dataDir={state.dataDir} onOpen={onOpen} enter={handoff.enter} onEntered={handoff.entered} />
       </div>
     </main>
   );
@@ -321,8 +327,42 @@ function statusText(s: SessionSummary) {
   return `Round ${Math.max(1, s.rounds)}`;
 }
 
-function Recent({ sessions, dataDir, onOpen }: { sessions: SessionSummary[]; dataDir: string; onOpen: (id: string) => void }) {
+function Recent({
+  sessions,
+  dataDir,
+  onOpen,
+  enter,
+  onEntered,
+}: {
+  sessions: SessionSummary[];
+  dataDir: string;
+  onOpen: (id: string) => void;
+  /** A plan that just left Found (v1.3 item 1): its row opens in (220ms ease-out), nothing else moves. */
+  enter?: { id: string; focus: boolean } | null;
+  onEntered?: () => void;
+}) {
   const home = dataDir.replace(/^\/(home|Users)\/[^/]+/, "~");
+  const list = useRef<HTMLUListElement>(null);
+  useLayoutEffect(() => {
+    if (!enter) return;
+    const li = list.current?.querySelector<HTMLElement>(`li[data-id="${CSS.escape(enter.id)}"]`);
+    if (!li) return;
+    onEntered?.();
+    if (enter.focus) li.querySelector<HTMLElement>("a")?.focus({ preventScroll: true });
+    if (document.documentElement.hasAttribute("data-kbd")) return;
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const ease = "cubic-bezier(0.23,1,0.32,1)";
+    if (still) {
+      li.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: ease });
+      return;
+    }
+    const h = li.offsetHeight;
+    li.style.overflow = "hidden";
+    const a = li.animate([{ height: "0px", opacity: 0 }, { height: `${h}px`, opacity: 1 }], { duration: 220, easing: ease });
+    a.onfinish = a.oncancel = () => {
+      li.style.overflow = "";
+    };
+  }, [enter, sessions, onEntered]);
   if (!sessions.length)
     return (
       <p className="note empty">
@@ -332,9 +372,9 @@ function Recent({ sessions, dataDir, onOpen }: { sessions: SessionSummary[]; dat
   return (
     <section className="recent" aria-labelledby="recent-title">
       <h2 id="recent-title">Recent</h2>
-      <ul>
+      <ul ref={list}>
         {sessions.map((s) => (
-          <li key={s.id}>
+          <li key={s.id} data-id={s.id}>
             <a
               className="rrow"
               href={`/s/${s.id}`}
@@ -343,9 +383,14 @@ function Recent({ sessions, dataDir, onOpen }: { sessions: SessionSummary[]; dat
                 onOpen(s.id);
               }}
             >
-              <span className="nm">{s.idea.split("\n")[0]}</span>
+              <span className="nm">{s.title || s.idea.split("\n")[0]}</span>
               <span className="meta">
-                {s.from !== undefined ? (
+                {s.source ? (
+                  // Imported from a source found in the project (v1.3 item 1 §6, #143).
+                  <>
+                    <span className="src1">From {sourceLabel(s.source.app, s.source.kind).replace(/^Plan file$/, "plan file")}</span> · {statusText(s)} · {when(s.updatedAt)}
+                  </>
+                ) : s.from !== undefined ? (
                   // Started from an editor over MCP (item 1 §9, DECISIONS #108).
                   <>
                     <span className="src1">{fromEditor(s.from)}</span> · {s.queued ? "waiting for your answers" : `${statusText(s)} · ${when(s.updatedAt)}`}

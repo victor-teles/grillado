@@ -5,7 +5,8 @@
 // leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
 // FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
-// FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS.
+// FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
+// FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -107,6 +108,7 @@ const isComment = /"type":"reply"/.test(system);
 const isEdit = /"type":"edits"/.test(system);
 const isDiagram = /"type":"diagram"/.test(system);
 const isAddPlan = /"type":"addplan"/.test(system);
+const isImport = /"type":"decisions"/.test(system);
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -280,11 +282,27 @@ function addPlanReply() {
   return { type: "addplan", place: true, before: last, after: `${last} ${said} ${state.cite}` };
 }
 
+// v1.3 item 1 §4: a free-text interview's replies, one decision each. FAKE_IMPORT=fail | fail-once
+// (usage limit), FAKE_IMPORT_DELAY_MS (each run takes this long, so Waiting and Stop can be seen).
+function importReply() {
+  const m = process.env.FAKE_IMPORT ?? "";
+  if (m === "fail" || (m === "fail-once" && once("import-fail"))) fail("rate");
+  const answers = state.answers ?? [];
+  return {
+    type: "decisions",
+    decisions: answers.map((a) => {
+      const q = String(a.question).split(/(?<=[.!])\s+/).filter((x) => x.includes("?")).pop() ?? String(a.question);
+      return { label: q.replace(/\?.*$/, "").split(/\s+/).slice(-2).join(" ").replace(/^\w/, (c) => c.toUpperCase()).slice(0, 60), title: q.trim().slice(0, 200), answer: String(a.reply).trim().slice(0, 1000) };
+    }),
+  };
+}
+
+if (isImport && process.env.FAKE_IMPORT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_IMPORT_DELAY_MS)));
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
 if (isDiagram && process.env.FAKE_DIAGRAM_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DIAGRAM_DELAY_MS)));
 if (isAddPlan && process.env.FAKE_ADDPLAN_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ADDPLAN_DELAY_MS)));
-const reply = isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
+const reply = isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude" && flag("--output-format") === "stream-json") {

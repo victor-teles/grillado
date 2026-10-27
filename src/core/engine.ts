@@ -4,7 +4,7 @@ import { extractCandidate } from "./extract.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { StreamGuard } from "./stream-guard.ts";
-import { addPlanSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { addPlanSystemPrompt, importSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
@@ -20,6 +20,9 @@ import {
   diagramJsonSchema,
   type EditReply,
   EditReplySchema,
+  type ImportReply,
+  ImportReplySchema,
+  importJsonSchema,
   type PlanReply,
   PlanReplySchema,
   type RoundReply,
@@ -339,6 +342,28 @@ export function buildAddPlanPrompt(s: Session, md: string, d: Decision): string 
     "",
     `Work the answer "${d.answer}" to "${d.title}" into the plan with one edit, cited as ${cite}, or say there is no place for it.`,
   ].join("\n");
+}
+
+/** v1.3 item 1 §4: the prompt for a free-text import, the opening idea and each question with its reply. */
+export function buildImportPrompt(idea: string, pairs: { question: string; answer: string }[]): string {
+  return [
+    "The opening idea and the conversation (JSON):",
+    `<state>${JSON.stringify({ idea, answers: pairs.map((p, i) => ({ n: i + 1, question: p.question.slice(-1200), reply: p.answer })) })}</state>`,
+    "",
+    `Turn the ${pairs.length} replies into decisions.`,
+  ].join("\n");
+}
+
+/** §4: {agent} turns free-text answers into decisions. At least one, each with an answer. */
+export async function decisionsFromAnswers(idea: string, pairs: { question: string; answer: string }[], adapter: ProviderAdapter, opts: RunOptions): Promise<Validated<ImportReply>> {
+  return runValidated<ImportReply>(
+    adapter,
+    { kind: "import", systemPrompt: importSystemPrompt(), userPrompt: buildImportPrompt(idea, pairs), jsonSchema: importJsonSchema() },
+    ImportReplySchema,
+    (r) => (!r.decisions.length ? "No decisions in the reply." : r.decisions.some((d) => !d.title.trim() || !d.answer.trim()) ? "Every decision needs a question and an answer." : null),
+    opts,
+    [idea, ...pairs.map((p) => p.answer)].join("\n"),
+  );
 }
 
 /** "Add to plan": one edit checked against the plan as it was when the run started, or no place. */

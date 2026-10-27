@@ -25,6 +25,12 @@ export interface QA {
   answer?: string;
 }
 
+/** A free-text interview turn: the agent's question and the user's reply (case b). */
+export interface Pair {
+  question: string;
+  answer: string;
+}
+
 export interface Extract {
   app: SourceApp;
   kind: "session" | "plan";
@@ -47,6 +53,8 @@ export interface Extract {
    * "freetext" (an interview in plain turns, case b: needs an agent run to import), or null.
    */
   qualifies: "structured" | "freetext" | null;
+  /** Free-text sessions: the question/answer turns {agent} turns into decisions at import (§4). */
+  pairs?: Pair[];
   /** Part of the session was compacted away; what's left is imported and the plan says so. */
   compacted: boolean;
   /** The opening idea came from the compaction summary, since the first prompt is gone. */
@@ -58,8 +66,9 @@ export interface Extract {
 }
 
 /** Hash of what an import copies: a source whose hash changes offers Update. */
-export function contentHash(x: Pick<Extract, "idea" | "qa" | "plan">): string {
-  return textHash(JSON.stringify([x.idea, x.qa.map((q) => [q.question, q.answer ?? null]), x.plan?.markdown ?? null]));
+export function contentHash(x: Pick<Extract, "idea" | "qa" | "plan"> & { pairs?: Pair[] }): string {
+  const qa = x.pairs?.length ? x.pairs.map((p) => [p.question, p.answer]) : x.qa.map((q) => [q.question, q.answer ?? null]);
+  return textHash(JSON.stringify([x.idea, qa, x.plan?.markdown ?? null]));
 }
 
 // ---------------------------------------------------------------- shared helpers
@@ -139,9 +148,9 @@ interface Turn {
   text: string;
 }
 
-/** Case (b): ≥ 4 assistant turns that end on one question, each answered in < 400 chars with no write in between. */
-function freeTextTurns(turns: (Turn | { role: "tool"; write: boolean })[]): number {
-  let n = 0;
+/** Case (b): assistant turns that end on one question, each answered in < 400 chars with no write in between. */
+function freeTextTurns(turns: (Turn | { role: "tool"; write: boolean })[]): Pair[] {
+  const out: Pair[] = [];
   for (let i = 0; i < turns.length; i++) {
     const a = turns[i];
     if (a.role !== "assistant") continue;
@@ -155,18 +164,18 @@ function freeTextTurns(turns: (Turn | { role: "tool"; write: boolean })[]): numb
         continue;
       }
       if (b.role === "user") {
-        if (!wrote && b.text.trim().length > 0 && b.text.trim().length < 400) n++;
+        if (!wrote && b.text.trim().length > 0 && b.text.trim().length < 400) out.push({ question: t, answer: b.text.trim() });
         break;
       }
       if (b.role === "assistant" && b.text.trim()) break;
     }
   }
-  return n;
+  return out;
 }
 
 function qualify(qa: QA[], turns: Parameters<typeof freeTextTurns>[0], invoked: boolean, asked: boolean): Extract["qualifies"] {
   if (qa.filter((q) => q.answer !== undefined).length >= 3) return "structured";
-  if ((invoked || asked) && freeTextTurns(turns) >= 4) return "freetext";
+  if ((invoked || asked) && freeTextTurns(turns).length >= 4) return "freetext";
   return null;
 }
 
@@ -296,6 +305,7 @@ function finish(p: {
   truncated: boolean;
 }): Extract {
   const plan = p.plan?.trim() ? { title: firstH1(p.plan), markdown: p.plan.trim() } : undefined;
+  const qualifies = qualify(p.qa, p.turns, p.invoked, p.asked);
   return {
     app: p.app,
     kind: "session",
@@ -309,7 +319,8 @@ function finish(p: {
     plan,
     planRefs: p.planRefs,
     decisions: 0,
-    qualifies: qualify(p.qa, p.turns, p.invoked, p.asked),
+    qualifies,
+    ...(qualifies === "freetext" ? { pairs: freeTextTurns(p.turns).slice(0, 60) } : {}),
     compacted: p.compacted,
     ideaFromSummary: p.ideaFromSummary,
     skipped: p.skipped,

@@ -49,7 +49,7 @@ const freePort = () =>
 async function server(data = ".grillado") {
   const home = mkdtempSync(path.join(WORK, "home-"));
   const env = { PATH: `${bin}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, data), FAKE_STATE_DIR: home };
-  const child = spawn(NODE, [CLI, "--no-open", "--port", String(await freePort())], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [CLI, "--no-open", "--no-scan", "--port", String(await freePort())], { env, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {

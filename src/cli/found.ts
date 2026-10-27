@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { redact } from "../core/filter.ts";
 import { type Extract, codexMeta, contentHash, exportedPlanId, isPlanCandidate, mentionedPaths, parseClaude, parseCodex, parsePlanFile } from "../core/found/extract.ts";
-import { ImportError, sessionFromSource, updateFromSource } from "../core/found/import.ts";
+import { type AgentDecision, ImportError, sessionFromSource, updateFromSource } from "../core/found/import.ts";
 import type { ProviderId } from "../core/providers/types.ts";
 import type { Session } from "../core/session.ts";
 import { type Store, withLock, writeAtomic } from "./store.ts";
@@ -92,9 +92,11 @@ export interface Row {
   questions: number;
   /** ```decision blocks (plan files). */
   decisions: number;
+  /** Free-text sessions: the answers {agent} would turn into decisions (§4). */
+  answers?: number;
   hasPlan: boolean;
   status: RowStatus;
-  /** "structured" imports here; "agent" needs an agent run to turn free-text answers into decisions (not built yet). */
+  /** "structured" imports as is; "agent" needs {agent} to turn free-text answers into decisions (§4). */
   importable: "structured" | "agent";
   planId?: string;
   compacted?: boolean;
@@ -124,9 +126,20 @@ interface CacheEntry {
   cwd?: string;
   seen: number;
 }
+/** The last scan's rows for a launch folder, shown at once on the next launch while it re-checks (§1). */
+interface CachedResult {
+  project: Project;
+  rows: Row[];
+  partial: boolean;
+  scannedAt: string;
+  /** Row id → sources.json key, so a cached row that was imported since reads as imported. */
+  fps: Record<string, string>;
+}
 interface Cache {
-  v: 1;
+  /** 2: extracts carry free-text pairs (§4), and `results` holds the last rows per launch folder. */
+  v: 2;
   entries: Record<string, CacheEntry>;
+  results?: Record<string, CachedResult>;
 }
 
 interface SourceEntry {
@@ -160,7 +173,7 @@ export interface ScanResult {
 }
 
 export const fingerprint = (app: string, file: string, sessionId?: string) => `${app}:${file}${sessionId ? `#${sessionId}` : ""}`;
-const rowId = (fp: string) => createHash("sha256").update(fp).digest("hex").slice(0, 16);
+export const rowId = (fp: string) => createHash("sha256").update(fp).digest("hex").slice(0, 16);
 
 export interface FoundOptions {
   store: Store;
@@ -172,6 +185,9 @@ export interface FoundOptions {
   budget?: Partial<Budget>;
   now?: () => number;
 }
+
+/** §4: {agent} turns a free-text session's answers into decisions. Resolves with them, or a failure code. */
+export type AgentRun = (x: Extract, signal: AbortSignal) => Promise<{ ok: true; decisions: AgentDecision[] } | { ok: false; code: string }>;
 
 /** What an import wrote, for the caller (the server keeps its live copy in step). */
 export interface Writer {
@@ -185,6 +201,8 @@ export interface ImportResult {
   result: "created" | "updated" | "unchanged" | "conflict";
   /** plan.conflict.md, when the user had edited the plan since the import. */
   conflictPath?: string;
+  /** What was read, for the plan's Activity entry (§5). */
+  source?: { app: Extract["app"]; kind: Extract["kind"]; path: string; date: string; answers: number; hasPlan: boolean; compacted: boolean; ideaFromSummary: boolean; viaAgent: boolean; project: string };
 }
 
 export class FoundService {
@@ -202,6 +220,11 @@ export class FoundService {
   private importedThisLaunch = false;
   /** Rows' source data from the last scan, by row id (paths, extracts), for import. */
   private found = new Map<string, { row: Row; extract: Extract | null; fp: string }>();
+  /** The last scan from an earlier launch in this folder, until this launch's scan is done (§1). */
+  private cached: CachedResult | null = null;
+  /** §4: one agent import at a time; the rest wait in click order. */
+  private agentRunning: { id: string; controller: AbortController } | null = null;
+  private agentQueue: { id: string; go: () => void; controller: AbortController }[] = [];
   onChange?: () => void;
 
   constructor(private o: FoundOptions) {
@@ -212,6 +235,22 @@ export class FoundService {
     this.launchedAt = this.now();
     this.skip = skipReason(o.cwd, { home: this.home, dataDir: o.store.dir, off: o.off });
     if (this.skip) this.state = "off";
+    else {
+      const c = this.readCache().results?.[norm(o.cwd)];
+      if (c) {
+        this.cached = c;
+        this.project = c.project;
+      }
+    }
+  }
+
+  private readCache(): Cache {
+    try {
+      const v = JSON.parse(readFileSync(this.cacheFile, "utf8"));
+      return v && v.v === 2 ? v : { v: 2, entries: {} };
+    } catch {
+      return { v: 2, entries: {} };
+    }
   }
 
   private get cacheFile() {
@@ -270,9 +309,10 @@ export class FoundService {
   private async doScan(): Promise<ScanResult> {
     const t0 = this.now();
     const deadline = t0 + this.budget.ms;
-    this.project ??= await resolveProject(this.o.cwd);
+    // Resolved again on every scan: the branch may have changed since the cached result.
+    this.project = await resolveProject(this.o.cwd);
     const project = this.project;
-    const cache = this.readJson<Cache>(this.cacheFile, { v: 1, entries: {} });
+    const cache = this.readCache();
     const stats: ScanStats = { paths: 0, read: 0, cached: 0 };
     let partial = false;
     const out = () => {
@@ -397,14 +437,20 @@ export class FoundService {
       });
     }
 
-    // Prune cache entries unseen for 90 days, then save it.
+    const rows = await this.toRows(project, found, plansDir);
+    const scannedAt = new Date(this.now()).toISOString();
+
+    // Prune cache entries unseen for 90 days, keep this result for the next launch, then save it.
     for (const [k, e] of Object.entries(cache.entries)) if (seen - (e.seen ?? 0) > CODEX_DAYS * 86_400_000) delete cache.entries[k];
+    const fps: Record<string, string> = {};
+    for (const [id, h] of this.found) fps[id] = h.fp;
+    cache.results = { ...cache.results, [norm(this.o.cwd)]: { project, rows, partial, scannedAt, fps } };
+    const keys = Object.keys(cache.results);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete cache.results[k];
     try {
       writeAtomic(this.cacheFile, JSON.stringify(cache));
     } catch {}
-
-    const rows = await this.toRows(project, found, plansDir);
-    return { project, rows, partial, scannedAt: new Date(this.now()).toISOString(), ms: this.now() - t0, stats };
+    return { project, rows, partial, scannedAt, ms: this.now() - t0, stats };
   }
 
   /** Attach referenced Claude plan files, dedupe, and give each row its status from sources.json. */
@@ -440,6 +486,7 @@ export class FoundService {
         hasPlan: !!x?.plan,
         status,
         importable: x?.qualifies === "freetext" ? "agent" : "structured",
+        ...(x?.pairs?.length ? { answers: x.pairs.length } : {}),
         ...(planId ? { planId } : {}),
         ...(x?.compacted ? { compacted: true } : {}),
         ...(x && x.qa.some((q) => q.answer === undefined) ? { unanswered: x.qa.filter((q) => q.answer === undefined).length } : {}),
@@ -489,34 +536,102 @@ export class FoundService {
     this.o.store.writeConfig({ ...c, foundHidden: [...set] });
   }
 
-  /** GET /api/found and list_project_sources. */
+  /** Rows from the last launch, with what was imported since then marked so (they never import twice). */
+  private cachedRows(c: CachedResult): Row[] {
+    const sources = this.readSources().sources;
+    return c.rows.map((r) => {
+      const src = sources[c.fps[r.id] ?? ""];
+      return src && r.status === "new" && this.o.store.load(src.planId) ? { ...r, status: "imported" as const, planId: src.planId } : r;
+    });
+  }
+
+  /** GET /api/found and list_project_sources. Cache-first: until this launch's scan is done, the last one's rows. */
   view() {
     if (this.skip) return { enabled: false as const, reason: this.skip };
+    const c = !this.last ? this.cached : null;
+    const failed: Record<string, string> = {};
+    for (const [id, code] of this.agentFailed) failed[id] = code;
     return {
       enabled: true as const,
       state: this.state,
+      /** The rows are the last launch's, shown while this launch re-checks quietly (no skeleton). */
+      cached: !!c,
       project: this.project,
       hidden: this.hidden(),
-      partial: this.last?.partial ?? false,
-      scannedAt: this.last?.scannedAt ?? null,
-      rows: this.last?.rows ?? [],
+      partial: this.last?.partial ?? c?.partial ?? false,
+      scannedAt: this.last?.scannedAt ?? c?.scannedAt ?? null,
+      /** This launch's scan: wall time in ms and paths looked at (the budget e2e reads them). */
+      ms: this.last?.ms ?? null,
+      paths: this.last?.stats.paths ?? null,
+      rows: this.last?.rows ?? (c ? this.cachedRows(c) : []),
       plans: this.planStates(),
+      /** §4: the agent import running now, the ones waiting (in order), and the last failure per row. */
+      agent: { running: this.agentRunning?.id ?? null, waiting: this.agentQueue.map((q) => q.id), failed },
     };
+  }
+
+  /** §5: an imported plan's source as its meta line shows it, and the row id its Update re-imports. */
+  sourceInfo(s: Session): { state: "current" | "changed" | "gone"; row: string } | null {
+    if (!s.source) return null;
+    const row = rowId(s.source.fingerprint);
+    if (!existsSync(s.source.path)) return { state: "gone", row };
+    const r = this.found.get(row)?.row;
+    return { state: r?.status === "changed" ? "changed" : "current", row };
+  }
+
+  /** §4: Stop an agent import (running or waiting). The row goes back to New; nothing is saved. */
+  stop(id: string): boolean {
+    this.agentFailed.delete(id);
+    if (this.agentRunning?.id === id) {
+      this.agentRunning.controller.abort();
+      return true;
+    }
+    const q = this.agentQueue.find((x) => x.id === id);
+    if (!q) return false;
+    q.controller.abort();
+    this.agentQueue = this.agentQueue.filter((x) => x !== q);
+    q.go();
+    this.onChange?.();
+    return true;
+  }
+
+  private agentFailed = new Map<string, string>();
+
+  /** Wait for the agent slot (click order), then run `fn` in it. */
+  private async inAgentSlot<T>(id: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    if (this.agentRunning) {
+      await new Promise<void>((go) => {
+        this.agentQueue.push({ id, go, controller });
+        this.onChange?.();
+      });
+    }
+    if (controller.signal.aborted) throw new ImportError("stopped", "Stopped. Nothing was saved.");
+    this.agentRunning = { id, controller };
+    this.onChange?.();
+    try {
+      return await fn(controller.signal);
+    } finally {
+      this.agentRunning = null;
+      const next = this.agentQueue.shift();
+      if (next) next.go();
+      else this.onChange?.();
+    }
   }
 
   /**
    * Import (or Update) one row. The source is read again, not taken from the cache. A source that
    * was imported before goes into the same plan: unchanged → nothing happens, changed → update.
    */
-  import(id: string, provider: ProviderId, w: Writer = storeWriter(this.o.store)): Promise<ImportResult> {
+  import(id: string, provider: ProviderId, w: Writer = storeWriter(this.o.store), agent?: AgentRun): Promise<ImportResult> {
     const busy = this.importing.get(id);
     if (busy) return busy;
-    const p = this.doImport(id, provider, w).finally(() => this.importing.delete(id));
+    const p = this.doImport(id, provider, w, agent).finally(() => this.importing.delete(id));
     this.importing.set(id, p);
     return p;
   }
 
-  private async doImport(id: string, provider: ProviderId, w: Writer): Promise<ImportResult> {
+  private async doImport(id: string, provider: ProviderId, w: Writer, agent?: AgentRun): Promise<ImportResult> {
     if (!this.found.has(id)) await this.scan();
     const hit = this.found.get(id);
     if (!hit || !this.project) throw new ImportError("unknown", "That source isn't in this project's scan any more. Look again.");
@@ -534,12 +649,31 @@ export class FoundService {
       row.app === "claude" ? parseClaude(text, { plansDir }) : row.app === "codex" ? parseCodex(text) : parsePlanFile(row.relPath ?? path.basename(row.path), text, row.app);
     if (x && x.kind === "session" && !x.plan && x.planRefs.length) x = await withPlanFile(x, plansDir, this.budget.planBytes);
     if (!x) throw new ImportError("not_qualified", "This source doesn't hold a plan any more.");
-    const inp = { extract: x, path: row.path, fingerprint: hit.fp, project: this.project.root, provider: providerFor(row.app, provider), inProgress: x.kind === "session" && this.now() - st.mtimeMs < IN_PROGRESS_MS };
+    const inProgress = x.kind === "session" && this.now() - st.mtimeMs < IN_PROGRESS_MS;
     const prev = this.readSources().sources[hit.fp];
-    const existing = prev ? w.load(prev.planId) : null;
+    let existing = prev ? w.load(prev.planId) : null;
+    if (existing && prev!.contentHash === contentHash(x)) return { planId: existing.id, result: "unchanged" };
+    let agentDecisions: AgentDecision[] | undefined;
+    if (x.qualifies === "freetext" && !inProgress) {
+      if (!agent) throw new ImportError("needs_agent", "Turning this session's answers into decisions needs an agent run.");
+      const fx = x;
+      this.agentFailed.delete(id);
+      const r = await this.inAgentSlot(id, async (signal) => {
+        const out = await agent(fx, signal).catch(() => ({ ok: false as const, code: "unknown" }));
+        if (signal.aborted) throw new ImportError("stopped", "Stopped. Nothing was saved.");
+        return out;
+      });
+      if (!r.ok) {
+        this.agentFailed.set(id, r.code);
+        throw new ImportError("agent", "The agent couldn't turn the answers into decisions. Nothing was saved.", r.code);
+      }
+      agentDecisions = r.decisions;
+      // The plan may have changed hands while the agent worked.
+      existing = prev ? w.load(prev.planId) : null;
+    }
+    const inp = { extract: x, path: row.path, fingerprint: hit.fp, project: this.project.root, provider: providerFor(row.app, provider), inProgress, ...(agentDecisions ? { agentDecisions } : {}) };
     let result: ImportResult;
     if (existing) {
-      if (prev!.contentHash === contentHash(x)) return { planId: existing.id, result: "unchanged" };
       const disk = this.o.store.readPlan(existing.id);
       const u = updateFromSource(existing, inp, disk, new Date(this.now()));
       w.save(existing, u.markdown, u.conflict);
@@ -553,6 +687,18 @@ export class FoundService {
       s.sources[hit.fp] = { planId: result.planId, contentHash: contentHash(x!), importedAt: new Date(this.now()).toISOString(), app: x!.app, path: row.path, ...(x!.sessionId ? { sessionId: x!.sessionId } : {}), project: this.project!.root };
     });
     Object.assign(row, { status: "imported", planId: result.planId });
+    result.source = {
+      app: x.app,
+      kind: x.kind,
+      path: row.path,
+      date: row.date,
+      answers: x.kind === "plan" ? row.decisions : agentDecisions ? (x.pairs?.length ?? 0) : x.qa.filter((q) => q.answer !== undefined).length,
+      hasPlan: !!x.plan,
+      compacted: x.compacted,
+      ideaFromSummary: x.ideaFromSummary,
+      viaAgent: !!agentDecisions,
+      project: this.project.name,
+    };
     if (!this.importedThisLaunch) {
       this.importedThisLaunch = true;
       const ms = this.now() - this.launchedAt;

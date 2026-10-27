@@ -4,9 +4,9 @@
 // Styling hooks: .act6, .grp6 (sticky .gh6), .ev6[data-status][data-open], .evb (row button),
 // .st6 (step), .chip6, .more6, .pill6, .ft6, .empty6.
 import { type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { type Entry, type Group, accName, copyText, fmt, groupLabel, groupMeta, groups, liveMessage, meta, say, stepText, time, title } from "../../../../src/core/activity.ts";
+import { type Entry, type Group, accName, copyText, fmt, groupLabel, importRows, groupMeta, groups, liveMessage, meta, say, stepText, time, title } from "../../../../src/core/activity.ts";
 import { api } from "../api";
-import { ICheck2, IChev, ICircleAlert, ICopy, IActivity, IFile, IFileDiff, IFlow, IHelp, IMsg, IOut, IEdit, IRetry, ISq, IUser } from "../icons";
+import { ICheck2, IChev, ICircleAlert, ICopy, IActivity, IDl, IFile, IFileDiff, IFlow, IHelp, IMsg, IOut, IEdit, IRetry, ISq, IUser } from "../icons";
 import type { ActivityView, Suggestion } from "../types";
 
 /** Run bars and status rows open Activity on their run (#66). */
@@ -50,6 +50,7 @@ function icon(e: Entry): ReactNode {
   if (e.type === "review") return <ICheck2 />;
   if (e.type === "user") return <IUser />;
   if (e.type === "file") return <IFileDiff />;
+  if (e.type === "import") return <IDl />;
   return { round: <IHelp />, plan: <IFile />, reply: <IMsg />, apply: <IEdit />, diagrams: <IFlow />, addplan: <IEdit /> }[e.kind ?? "diagrams"];
 }
 
@@ -88,7 +89,8 @@ export function ActivityPanel(p: ActivityProps) {
   const grs = useMemo(() => groups(entries), [entries]);
   const latestRun = entries.find((e) => e.type === "run");
   // Open by default: the live run, then the last finished run until the next one starts. No timers.
-  const isOpen = (e: Entry) => open[e.id] ?? (e.type === "run" && e.id === latestRun?.id);
+  // An imported plan's first entry (v1.3 item 1 §5) is open until a run takes over.
+  const isOpen = (e: Entry) => open[e.id] ?? ((e.type === "run" && e.id === latestRun?.id) || (e.type === "import" && !latestRun));
   const isGOpen = (g: Group, i: number) => gOpen[g.key] ?? i === 0;
 
   // Live region: run-level messages only (#61).
@@ -296,7 +298,7 @@ function Meta({ text }: { text: string }) {
 function Row({ e, p, o, open, tab, setOpen, onKey, onFocus }: { e: Entry; p: ActivityProps; o: MetaOpts; open: boolean; tab: boolean; setOpen: (v: boolean) => void; onKey: (e: React.KeyboardEvent) => void; onFocus: () => void }) {
   const A = o.agent;
   const running = e.status === "running";
-  const hasBody = e.type === "run";
+  const hasBody = e.type === "run" || e.type === "import";
   const bodyId = `evb-${e.id}`;
   const tipId = `tip-${e.id}`;
   // Only a pointer toggle animates the body; default-open, restored and keyboard opens don't (#81).
@@ -430,6 +432,20 @@ function Body({ id, e, p, A, animate }: { id: string; e: Entry; p: ActivityProps
     const s = p.suggestions.find((x) => x.id === sid);
     return s?.status === "accepted" ? "accepted" : s?.status === "rejected" ? "rejected" : s ? "to review" : "no longer in the plan";
   };
+  if (e.type === "import")
+    return (
+      <div className="evbody" id={id} ref={ref} data-anim={animate ? "" : undefined}>
+        <div>
+          <div className="fin6 imp6">
+            {importRows(e, A).map(([k, v]) => (
+              <p className="kv" key={k}>
+                <span className="k">{k}</span> {v}
+              </p>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   const done = e.status !== "running";
   const retry = e.status === "failed" ? (e.kind === "diagrams" || e.kind === "addplan" ? () => p.act(e.kind!, { op: "retry" }) : e.kind === "apply" && e.target?.comment ? () => p.act(`comments/${e.target!.comment}/retry`) : null) : null;
   return (

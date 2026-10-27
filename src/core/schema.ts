@@ -96,6 +96,21 @@ export const AddPlanReplySchema = z.object({
   after: z.string().max(2000),
 });
 
+/** v1.3 item 1 §4: the decisions {agent} read out of a free-text interview's answers. */
+export const ImportReplySchema = z.object({
+  type: z.literal("decisions"),
+  decisions: z
+    .array(
+      z.object({
+        label: z.string().max(60),
+        title: z.string().max(200),
+        answer: z.string().max(1000),
+      }),
+    )
+    .max(60),
+});
+
+export type ImportReply = z.infer<typeof ImportReplySchema>;
 export type Option = z.infer<typeof OptionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 export type Upcoming = z.infer<typeof UpcomingSchema>;
@@ -143,3 +158,4 @@ export const commentJsonSchema = () => toStrictJsonSchema(CommentReplySchema);
 export const editJsonSchema = () => toStrictJsonSchema(EditReplySchema);
 export const diagramJsonSchema = () => toStrictJsonSchema(DiagramReplySchema);
 export const addPlanJsonSchema = () => toStrictJsonSchema(AddPlanReplySchema);
+export const importJsonSchema = () => toStrictJsonSchema(ImportReplySchema);
