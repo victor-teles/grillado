@@ -37,6 +37,37 @@ export function selectText(el: Element | null | undefined) {
   sel?.addRange(r);
 }
 
+/** A word's last single "/" (not the "//" of a scheme): a line may break after it, so "https://x.ai/cli/" and "install.sh" each stay whole. */
+const lastSlash = (w: string) => {
+  const m = [...w.matchAll(/(?<!\/)\/(?!\/)/g)].at(-1);
+  return m?.index === undefined || m.index === w.length - 1 ? [w] : [w.slice(0, m.index + 1), w.slice(m.index + 1)];
+};
+/**
+ * A shell command laid out to wrap only between words (review-pr22 r4 #1): each word is a nowrap
+ * span with a plain space between them, a line may also break after a word's last single "/", and a lone
+ * operator ("|", "&&") stays with the word after it ("| bash"). The text is unchanged, so a manual
+ * selection copies the command exactly.
+ */
+export function cmdWords(text: string) {
+  const words: string[] = [];
+  for (const w of text.split(" ")) {
+    const prev = words.at(-1);
+    if (prev !== undefined && /^[^\w@./~-]+$/.test(prev)) words[words.length - 1] = `${prev} ${w}`;
+    else words.push(w);
+  }
+  return words.map((w, i) => (
+    <span key={i}>
+      {i ? " " : null}
+      {lastSlash(w).map((part, j) => (
+        <span key={j}>
+          {j ? <wbr /> : null}
+          <span className="w">{part}</span>
+        </span>
+      ))}
+    </span>
+  ));
+}
+
 /** How long "Copied" holds after the click (item 1 §5, --d-copied). */
 export const COPIED_MS = 1500;
 
@@ -61,7 +92,8 @@ export function CopyButton({
 }: {
   text: string;
   label?: string;
-  kind?: "pill" | "icon" | "inline" | "cmd";
+  /** `well`: the command on its own row (#165's command well), wrapping between words, with a visible Copy → ✓ Copied. */
+  kind?: "pill" | "icon" | "inline" | "cmd" | "well";
   tone?: "primary" | "soft" | "quiet";
   /** Pill only: a copy icon that turns into a check, and a fixed width. */
   icon?: boolean;
@@ -89,10 +121,31 @@ export function CopyButton({
   const cls = (base: string) => `${base}${className ? ` ${className}` : ""}`;
   if (kind === "cmd")
     return (
-      <button type="button" className={cls("cmd")} aria-label={done ? "Copied" : label} onClick={run}>
-        <code>{text}</code>
+      <button type="button" className={cls("cmd")} aria-label={done ? `Copied ${text}` : label} onClick={run}>
+        <code>{cmdWords(text)}</code>
         <span className="i" aria-hidden="true">
           {done ? <ICheck s={14} /> : <ICopy s={14} />}
+        </span>
+      </button>
+    );
+  if (kind === "well")
+    return (
+      <button type="button" className={cls("cmd well")} aria-label={done ? `Copied ${text}` : label} onClick={run}>
+        <code>{cmdWords(text)}</code>
+        <span className={`btn quiet cbtn${done ? " done" : ""}`} aria-hidden="true">
+          <span className="ic">
+            <span className="a">
+              <ICopy s={14} />
+            </span>
+            <span className="b">
+              <ICheck s={14} />
+            </span>
+          </span>
+          {/* The words come from CSS, so the name ("Copy …" / "Copied …") still contains all the visible text, in order (axe 2.5.3). */}
+          <span className="lb">
+            <span className="a" data-l="Copy" />
+            <span className="b" data-l="Copied" />
+          </span>
         </span>
       </button>
     );

@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
+import { quiet } from "./wait.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-act-"));
@@ -81,7 +82,7 @@ async function toPlan(pg, url) {
 const planMd = (pg) => pg.evaluate(async () => (await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan.md`)).text());
 const TA = ".blk-edit:not(.blk-bd)";
 async function axe(pg, name) {
-  await pg.waitForTimeout(400); // let fades finish
+  await quiet(pg); // colors read mid-transition fail contrast: wait until every fade has finished
   const r = await new AxeBuilder({ page: pg }).analyze();
   check(`axe: ${name}`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message ?? ""} ${v.nodes[0]?.html?.slice(0, 160) ?? ""}`).join("; "));
 }
@@ -335,7 +336,8 @@ try {
       await fpg.keyboard.press("Control+Alt+KeyA");
       const bad = row(fpg, "Couldn’t add diagrams");
       await bad.waitFor({ timeout: 5000 });
-      check(`${theme}: failed run is open, says nothing changed or what was kept`, (await bad.locator(".evb").getAttribute("aria-expanded")) === "true" && /nothing was changed|rate|limit/i.test(await metaOf(bad)), await metaOf(bad));
+      check(`${theme}: failed run is open, says the usage limit and that nothing changed`, (await bad.locator(".evb").getAttribute("aria-expanded")) === "true" && /Claude Code hit its usage limit · nothing was changed/.test(await metaOf(bad)), await metaOf(bad));
+      check(`${theme}: the failed step names the usage limit, never "stopped responding"`, /Claude Code hit its usage limit/.test(await bad.textContent()) && !/stopped responding/.test(await bad.textContent()), await bad.textContent());
       const tryBtn = bad.getByRole("button", { name: "Try again" });
       check(`${theme}: Try again is soft, before Copy log, with icons`, /soft/.test((await tryBtn.getAttribute("class")) ?? "") && (await bad.locator(".acts6 .btn").allTextContents()).map((t) => t.trim()).join("|") === "Try again|Copy log" && (await bad.locator(".acts6 .btn svg").count()) === 2);
       const fl = await bad.evaluate((li) => {

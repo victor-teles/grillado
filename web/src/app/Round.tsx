@@ -309,7 +309,8 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
   const last = session.rounds.at(-1);
   const next = (session.rounds.length || 0) + 1;
   const busy = session.busy;
-  const since = busy ? (last?.answeredAt ?? session.updatedAt) : undefined;
+  // From when this turn started, so a Retry after a failure starts at zero (review-pr22 r3 #2).
+  const since = busy ? (session.runAt ?? last?.answeredAt ?? session.updatedAt) : undefined;
   const elapsed = useSince(since, busy);
   const saved = last?.answers?.length ?? 0;
   const long = waitLabel(session, elapsed, "");
@@ -353,7 +354,7 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
 
 export function FiringUp({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
   const busy = session.busy;
-  const elapsed = useSince(session.createdAt, busy);
+  const elapsed = useSince(session.runAt ?? session.createdAt, busy);
   const base = elapsed < 6 ? "Sizing up your idea…" : "Finding the first decisions…";
   const label = waitLabel(session, elapsed, base);
   const mobile = useMobile();

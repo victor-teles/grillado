@@ -224,7 +224,14 @@ export class FoundService {
   private cached: CachedResult | null = null;
   /** §4: one agent import at a time; the rest wait in click order. */
   private agentRunning: { id: string; controller: AbortController } | null = null;
-  private agentQueue: { id: string; go: () => void; controller: AbortController }[] = [];
+  private agentQueue: { id: string; t: number; go: () => void; controller: AbortController }[] = [];
+  /**
+   * Click order (§4): each import takes a ticket when it's clicked, and the agent slot goes by ticket,
+   * not by whose source read happened to finish first. `reading` holds the tickets still reading their
+   * source: they may yet need the agent, so a later ticket doesn't jump ahead of them.
+   */
+  private ticket = 0;
+  private reading = new Set<number>();
   onChange?: () => void;
 
   constructor(private o: FoundOptions) {
@@ -591,31 +598,45 @@ export class FoundService {
     q.controller.abort();
     this.agentQueue = this.agentQueue.filter((x) => x !== q);
     q.go();
+    this.pump();
     this.onChange?.();
     return true;
   }
 
   private agentFailed = new Map<string, string>();
 
-  /** Wait for the agent slot (click order), then run `fn` in it. */
-  private async inAgentSlot<T>(id: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  /** Hand the free agent slot to the earliest ticket waiting, once no earlier ticket is still reading. */
+  private pump() {
+    if (this.agentRunning) return;
+    const next = this.agentQueue[0];
+    if (!next) return;
+    for (const r of this.reading) if (r < next.t) return;
+    this.agentQueue.shift();
+    this.agentRunning = { id: next.id, controller: next.controller };
+    next.go();
+  }
+
+  private doneReading(t: number) {
+    if (this.reading.delete(t)) this.pump();
+  }
+
+  /** Wait for the agent slot (click order: ticket `t`), then run `fn` in it. */
+  private async inAgentSlot<T>(id: string, t: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
-    if (this.agentRunning) {
-      await new Promise<void>((go) => {
-        this.agentQueue.push({ id, go, controller });
-        this.onChange?.();
-      });
-    }
+    await new Promise<void>((go) => {
+      const at = this.agentQueue.findIndex((q) => q.t > t);
+      this.agentQueue.splice(at < 0 ? this.agentQueue.length : at, 0, { id, t, go, controller });
+      this.reading.delete(t);
+      this.pump();
+      this.onChange?.();
+    });
     if (controller.signal.aborted) throw new ImportError("stopped", "Stopped. Nothing was saved.");
-    this.agentRunning = { id, controller };
-    this.onChange?.();
     try {
       return await fn(controller.signal);
     } finally {
       this.agentRunning = null;
-      const next = this.agentQueue.shift();
-      if (next) next.go();
-      else this.onChange?.();
+      this.pump();
+      this.onChange?.();
     }
   }
 
@@ -626,12 +647,17 @@ export class FoundService {
   import(id: string, provider: ProviderId, w: Writer = storeWriter(this.o.store), agent?: AgentRun): Promise<ImportResult> {
     const busy = this.importing.get(id);
     if (busy) return busy;
-    const p = this.doImport(id, provider, w, agent).finally(() => this.importing.delete(id));
+    const t = ++this.ticket;
+    this.reading.add(t);
+    const p = this.doImport(id, provider, w, agent, t).finally(() => {
+      this.importing.delete(id);
+      this.doneReading(t);
+    });
     this.importing.set(id, p);
     return p;
   }
 
-  private async doImport(id: string, provider: ProviderId, w: Writer, agent?: AgentRun): Promise<ImportResult> {
+  private async doImport(id: string, provider: ProviderId, w: Writer, agent: AgentRun | undefined, t: number): Promise<ImportResult> {
     if (!this.found.has(id)) await this.scan();
     const hit = this.found.get(id);
     if (!hit || !this.project) throw new ImportError("unknown", "That source isn't in this project's scan any more. Look again.");
@@ -658,7 +684,7 @@ export class FoundService {
       if (!agent) throw new ImportError("needs_agent", "Turning this session's answers into decisions needs an agent run.");
       const fx = x;
       this.agentFailed.delete(id);
-      const r = await this.inAgentSlot(id, async (signal) => {
+      const r = await this.inAgentSlot(id, t, async (signal) => {
         const out = await agent(fx, signal).catch(() => ({ ok: false as const, code: "unknown" }));
         if (signal.aborted) throw new ImportError("stopped", "Stopped. Nothing was saved.");
         return out;

@@ -1,7 +1,7 @@
 // v1.3 item 1 · Found in this project (handoff §1–§4, §7). The one component and the one mount
 // point for the group: Home renders <Found> once, so moving the group (Q1) is a one-line change.
 import { isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { reasonCode, reasonText, sourceLabel } from "../../../../src/core/activity.ts";
+import { reasonText, sourceLabel } from "../../../../src/core/activity.ts";
 import { ApiError, api, foundListeners } from "../api";
 import { IBranch, ICheck, IRetry, IX } from "../icons";
 import type { FoundRow, FoundView } from "../types";
@@ -39,7 +39,7 @@ function importReason(err: unknown, agent: string): { reason: string; retry: "im
   if (err.status === 0) return { reason: "Grillado isn’t running", retry: "import" };
   switch (code) {
     case "agent":
-      return { reason: reasonText(reasonCode(String(err.data.reason ?? "")), agent), retry: "import" };
+      return { reason: reasonText(String(err.data.reason ?? ""), agent), retry: "import" };
     case "unreadable":
       return { reason: "Couldn’t read the source", retry: "import" };
     case "busy":
@@ -111,14 +111,40 @@ function Meta({ segs }: { segs: React.ReactNode[] }) {
   );
 }
 
+/** Below this, an ellipsized branch would show a letter or two: drop it whole with its icon. */
+const BRANCH_MIN = 32;
+
 /**
  * Every row's meta fits in 2 lines, and the count always shows (#151, review-pr21 r2 #1): drop the
  * lowest-priority segments first (branch, subfolder, plan path), then shorten the source label
  * ("Claude Code session" → "Claude Code"), and if it still runs over, let the meta take a third line
  * rather than clip it.
  */
+/** The text's own width (a Range), not scrollWidth: a 0.03px shortfall already ellipsizes and scrollWidth rounds it away (review-pr23 #1). */
+function textWidth(el: Element) {
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  return r.getBoundingClientRect().width;
+}
+/** A name that ends in "…" gets its full text as a tooltip; a whole one has none (review-pr23 #2). */
+function titleIfCut(el: HTMLElement | null | undefined) {
+  if (!el) return;
+  if (textWidth(el) > el.getBoundingClientRect().width + 0.01) el.title = el.textContent ?? "";
+  else el.removeAttribute("title");
+}
+
 function fitMeta(root: HTMLElement | null) {
   if (!root) return;
+  // The header's branch (#157): "main…" or nothing, never a clipped stray letter.
+  const br = root.querySelector<HTMLElement>(".fh .br");
+  const bn = br?.querySelector<HTMLElement>(".bn");
+  if (br && bn) {
+    br.hidden = false;
+    if (bn.scrollWidth > bn.clientWidth + 0.5 && bn.clientWidth < BRANCH_MIN) br.hidden = true;
+  }
+  titleIfCut(root.querySelector<HTMLElement>(".fh .proj b"));
+  if (br && !br.hidden) titleIfCut(bn);
+  titleIfCut(root.querySelector<HTMLElement>(".fempty .fnm"));
   for (const m of root.querySelectorAll<HTMLElement>(".frow .meta")) {
     const drops = [...m.querySelectorAll<HTMLElement>(":scope > [data-drop]")].sort((a, b) => Number(a.dataset.drop) - Number(b.dataset.drop));
     const kindWord = m.querySelectorAll<HTMLElement>(":scope > .sg .sx");
@@ -379,7 +405,7 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
     const running = on.agent.running === r.id;
     const waiting = on.agent.waiting.includes(r.id);
     const failedCode = on.agent.failed[r.id];
-    const failed = ph?.p === "failed" ? ph : !ph && failedCode ? { reason: reasonText(reasonCode(failedCode), agent), retry: "import" as const } : null;
+    const failed = ph?.p === "failed" ? ph : !ph && failedCode ? { reason: reasonText(failedCode, agent), retry: "import" as const } : null;
     let nm: React.ReactNode = titleOf(r);
     let segs = restMeta(r, branch);
     let act: React.ReactNode = null;
@@ -449,7 +475,7 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
       <div className="fmount e" ref={mount} data-testid="found">
         <p className="fempty">
           <span>
-            No plans found in <span className="pn">{name}</span>
+            No plans found in <span className="fnm">{name}</span>
           </span>
           <span aria-hidden="true">·</span>
           <button type="button" className="lnk" onClick={() => void lookAgain()} aria-disabled={looking || undefined}>
@@ -472,9 +498,9 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
             <span className="proj">
               · <b>{on.project.name}</b>
               {branch ? (
-                <span className="brw" title={branch}>
+                <span className="br" data-testid="found-branch">
                   <IBranch s={12} />
-                  <span className="brn">{branch}</span>
+                  <span className="bn">{branch}</span>
                 </span>
               ) : null}
             </span>

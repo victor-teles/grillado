@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
+import { quiet, until as untilNode } from "./wait.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-ah-"));
@@ -463,17 +464,28 @@ try {
       for (let i = 0; i < 4 && !(await p3.evaluate((id) => !!document.querySelector(`.f[data-sg="${id}"]`), ids3[1])); i++) await p3.keyboard.press("Alt+ArrowDown");
       await pointer(p3);
       await p3.locator(".ipill:not(.hp)").getByRole("button", { name: /^Accept/ }).click();
-      let worst = 0;
-      for (let i = 0; i < 12; i++) {
-        // Nothing spills past the 732px scroller: not the hold, and not the decision gutter (#118).
-        worst = Math.max(worst, await p3.evaluate(() => {
-          const w = document.querySelector(".docwrap");
-          const edge = w.getBoundingClientRect().left + w.clientWidth;
-          return Math.max(0, w.scrollWidth - w.clientWidth, ...[...w.querySelectorAll("*")].filter((e) => !e.closest("pre")).map((e) => e.getBoundingClientRect().right - edge));
-        }));
-        await p3.waitForTimeout(50);
-      }
-      check(`${theme} 1100px: no room, so no mark, and nothing of the hold makes the plan scroll sideways`, worst === 0 && (await p3.locator(".okm").count()) === 0, `overflow ${worst}px, marks ${await p3.locator(".okm").count()}`);
+      // Nothing spills past the 732px scroller: not the hold, and not the decision gutter (#118). Every
+      // frame of the hold is measured, from the click until the accepted text is written.
+      const hold3 = await p3.evaluate(
+        (id) =>
+          new Promise((done) => {
+            let worst = 0, frames = 0, marks = 0;
+            const t0 = performance.now();
+            const frame = () => {
+              const w = document.querySelector(".docwrap");
+              const edge = w.getBoundingClientRect().left + w.clientWidth;
+              worst = Math.max(worst, w.scrollWidth - w.clientWidth, ...[...w.querySelectorAll("*")].filter((e) => !e.closest("pre")).map((e) => e.getBoundingClientRect().right - edge));
+              marks = Math.max(marks, [...document.querySelectorAll(".okm")].filter((m) => m.style.visibility !== "hidden").length);
+              frames++;
+              const written = !document.querySelector(`[data-sg="${CSS.escape(id)}"]`);
+              if ((written && frames > 2) || performance.now() - t0 > 4000) done({ worst, frames, marks, written });
+              else requestAnimationFrame(frame);
+            };
+            frame();
+          }),
+        ids3[1],
+      );
+      check(`${theme} 1100px: no room, so no mark, and nothing of the hold makes the plan scroll sideways`, hold3.written && hold3.worst <= 0 && hold3.marks === 0 && (await p3.locator(".okm").count()) === 0, JSON.stringify(hold3));
       check(`${theme} 1100px: …the bar still says Accepted`, /Accepted · /.test(await p3.locator(".review").textContent()));
       await c3.close();
       await s3.stop();
@@ -543,8 +555,10 @@ try {
       await p4.locator(".ipill").getByRole("button", { name: /^Accept/ }).first().click();
       if (near) {
         await p4.getByText(/^Accepted · /).waitFor({ timeout: 3000 });
-        await p4.waitForTimeout(300);
-        check(`${tag}: no mark (it would touch Edit, and a cited line has no margin)`, (await p4.locator(".okm").count()) === 0);
+        // The mark is placed (or dropped) in the same render that turns the text plain (ins.sg.ok).
+        await p4.locator("ins.sg.ok").first().waitFor({ state: "attached", timeout: 3000 });
+        const shown = await p4.evaluate(() => [...document.querySelectorAll(".okm")].filter((m) => m.style.visibility !== "hidden").length);
+        check(`${tag}: no mark (it would touch Edit, and a cited line has no margin)`, shown === 0 && (await p4.locator(".okm").count()) === 0, `shown ${shown}`);
         check(`${tag}: …the bar still says Accepted`, /Accepted · /.test(await p4.locator(".review").textContent()));
         await p4.evaluate(() => window.__release());
         await c4.close();
@@ -559,7 +573,16 @@ try {
         return { x: r.left + 20, y: (r.top + r.bottom) / 2 };
       });
       await p4.mouse.move(at.x, at.y, { steps: 2 });
-      await p4.waitForTimeout(250);
+      // Wait for the block's hover state: its cite and Edit faded in.
+      await untilNode(
+        () =>
+          p4.evaluate(() => {
+            const blk = [...document.querySelectorAll("[data-testid=plan] li")].find((e) => e.textContent.includes("Yes, one core flow"))?.closest(".blk");
+            const taken = blk ? [...blk.querySelectorAll(":scope > .blk-act, .gut-cite")] : [];
+            return !!blk && blk.matches(":hover") && taken.length > 0 && taken.every((e) => getComputedStyle(e).opacity === "1");
+          }),
+        "the block's hover state",
+      ).catch(() => {});
       const g = await p4.evaluate(() => {
         const ok = document.querySelector(".okm");
         const li = [...document.querySelectorAll("[data-testid=plan] li")].find((e) => e.textContent.includes("Yes, one core flow"));
@@ -632,7 +655,7 @@ try {
     await mbar.getByRole("button", { name: /^Accept suggestion/ }).tap();
     await mp.waitForFunction(() => document.querySelectorAll("[data-sg]").length > 0 && new Set([...document.querySelectorAll("[data-sg]")].map((e) => e.dataset.sg)).size === 1, null, { timeout: 5000 });
     check(`${theme} phone: Accept keeps today's path (no hold, no mark)`, (await mp.locator(".okm, .sg.out, .sg.ok").count()) === 0);
-    await mp.waitForTimeout(400);
+    await quiet(mp);
     await axe(mp, `${theme} phone, after an accept`);
     await mctx.close();
     await s2.stop();

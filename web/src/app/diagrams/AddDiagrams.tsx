@@ -4,6 +4,7 @@
 import { type ReactNode, type RefObject, useEffect, useId, useMemo, useRef, useState } from "react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { type DiagramKind, DIAGRAM_KINDS, planSections, suggestedCode } from "../../../../src/core/diagrams.ts";
+import { reasonText } from "../../../../src/core/reason.ts";
 import { openActivity } from "../activity/Activity";
 import { api } from "../api";
 import type { PlanDraft } from "../editor/PlanEditor";
@@ -30,7 +31,6 @@ export const DCOPY = {
   drawing: (s: string) => `{agent} is drawing a diagram for “${s}”`,
   arrived: (s: string) => `Diagram added for ${s}`,
   none: "No diagrams: {agent} found nothing a diagram would make clearer",
-  failed: "{agent} stopped responding",
   nothing: "Nothing was changed",
   stopped: "Stopped",
 };
@@ -82,7 +82,7 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
     if (p.key !== run.startedAt) msg = run.state === "running" ? A(DCOPY.running) : "";
     else if (run.added > p.added) msg = DCOPY.arrived(run.sections[run.done - 1] ?? "");
     else if (p.state === "running" && run.state !== "running")
-      msg = run.state === "stopped" ? DCOPY.stopped : run.state === "error" ? A(DCOPY.failed) : run.added ? `${run.added} ${run.added === 1 ? "diagram" : "diagrams"} from ${agentName} ready` : A(DCOPY.none);
+      msg = run.state === "stopped" ? DCOPY.stopped : run.state === "error" ? A(reasonText(run.code, "{agent}")) : run.added ? `${run.added} ${run.added === 1 ? "diagram" : "diagrams"} from ${agentName} ready` : A(DCOPY.none);
     prev.current = { key: run.startedAt, added: run.added, state: run.state };
     if (!msg) return;
     const t = setTimeout(() => setLive(msg), 1000);
@@ -199,21 +199,44 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
       </div>
     );
   } else if (failed) {
-    bar = (
-      <div className={`${mobile ? "mbar" : "review"} run5 bad5`} role="alert" data-testid="diagram-failed">
-        <span className="fi">
-          <IAlert s={16} />
-        </span>
-        <button type="button" className="lb5 tolog" title="Open in Activity" onClick={() => openActivity({ kind: "diagrams" })}>
-          {A(DCOPY.failed)}
-        </button>
-        <span className="dt">{run?.added ? `${run.added} ${run.added === 1 ? "suggestion" : "suggestions"} kept` : DCOPY.nothing}</span>
+    const why = (
+      <button type="button" className="lb5 tolog" title="Open in Activity" onClick={() => openActivity({ kind: "diagrams" })}>
+        {A(reasonText(run?.code, "{agent}"))}
+      </button>
+    );
+    const left = <span className="dt">{run?.added ? `${run.added} ${run.added === 1 ? "suggestion" : "suggestions"} kept` : DCOPY.nothing}</span>;
+    const acts = (
+      <>
         <button type="button" className="btn quiet" onClick={() => setDismissed(runKey)}>
           Dismiss
         </button>
         <button type="button" className="btn primary" onClick={() => void post({ op: "retry" })}>
           Try again
         </button>
+      </>
+    );
+    // On a phone the reason gets the whole first row and the two buttons a row of their own (review-pr22 #2).
+    bar = mobile ? (
+      <div className="mbar run5 bad5" role="alert" data-testid="diagram-failed">
+        <div className="r1">
+          <span className="fi">
+            <IAlert s={16} />
+          </span>
+          <span className="t5">
+            {why}
+            {left}
+          </span>
+        </div>
+        <div className="r2">{acts}</div>
+      </div>
+    ) : (
+      <div className="review run5 bad5" role="alert" data-testid="diagram-failed">
+        <span className="fi">
+          <IAlert s={16} />
+        </span>
+        {why}
+        {left}
+        {acts}
       </div>
     );
   } else if (none) {

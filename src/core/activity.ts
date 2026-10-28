@@ -2,6 +2,7 @@
 // JSON object per line, append-only, written by Grillado (never by the agent). This module is
 // DOM-free: the server folds lines into entries; the browser formats titles, meta, durations, the
 // copied log and the live-region messages from the same functions.
+import { reasonText } from "./reason.ts";
 
 export type RunKind = "round" | "plan" | "reply" | "apply" | "diagrams" | "addplan";
 export type RunStatus = "running" | "done" | "failed" | "stopped" | "interrupted";
@@ -285,26 +286,7 @@ export function title(e: Entry): string {
   return "plan.md changed on disk";
 }
 
-/** The CLI's failure codes (classify.ts) as reasonText reads them. */
-export const reasonCode = (code: string | null | undefined) => (code === "rate_limit" ? "rate" : code === "not_found" ? "missing" : code);
-
-/** Plain words for a failure code from the agent CLI (AC17: never the raw text). */
-export function reasonText(code: string | null | undefined, agent: string): string {
-  switch (code) {
-    case "rate":
-      return `${agent} hit its usage limit`;
-    case "auth":
-      return `${agent} isn’t signed in`;
-    case "timeout":
-      return `${agent} took too long`;
-    case "missing":
-      return `${agent} isn’t installed`;
-    case "malformed":
-      return `${agent}’s reply didn’t come through`;
-    default:
-      return `${agent} stopped responding`;
-  }
-}
+export { failureCode, reasonText } from "./reason.ts";
 
 export function time(iso: string, seconds = false): string {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...(seconds ? { second: "2-digit" } : {}) });
@@ -328,7 +310,7 @@ export function metaParts(e: Entry, o: { agent: string; agentId?: string; agentN
       if (e.kind === "addplan") out.push(r.suggestions ? plural(r.suggestions, "suggestion") : "no place found");
       if (e.kind === "diagrams") out.push([plural(r.diagrams ?? 0, "diagram"), r.skipped ? `${plural(r.skipped, "section")} skipped` : ""].filter(Boolean).join(" · "));
       if (e.kind === "round" && r.questions === 0) out.push("nothing left to ask");
-    } else if (s === "failed") out.push(`${reasonText(e.reason, A)} · nothing was changed`);
+    } else if (s === "failed") out.push(`${reasonText(e.reason, A)} · ${failedKept(e)}`);
     else if (s === "stopped") out.push(e.kind === "diagrams" ? `stopped by you · ${r.diagrams ?? 0} of ${(r.diagrams ?? 0) + (e.notDone?.length ?? 0) + (r.skipped ?? 0)} diagrams kept` : "stopped by you · nothing was changed");
     else if (s === "interrupted") out.push(`Grillado was closed during the run · ${e.kind === "round" ? "your answers are safe" : "nothing was changed"}`);
     // The agent's name only when it differs from the current one (#65).
@@ -438,16 +420,27 @@ export function copyText(e: Entry, o: { agent: string; statusOf?: (id: string) =
   const d = new Date(e.at);
   const when = `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time(e.at)}`;
   const head = [title(e).replace(/[“”]/g, '"'), ...(e.type === "run" ? [A] : []), when, ...(e.ms !== undefined ? [fmt(e.ms)] : [])].join(" · ");
-  const lines = [head, ...e.steps.filter((s) => s.state !== "running").map((s) => `- ${stepText(s.label, A).replace(/[‘’]/g, "'")}${s.ms !== undefined ? ` · ${fmt(s.ms)}` : ""}`)];
-  if (e.status === "failed") lines.push(`Result: failed — ${reasonText(e.reason, A)}. Nothing was changed.`);
+  const lines = [head, ...e.steps.filter((s) => s.state !== "running").map((s) => `- ${stepText(s.label, A)}${s.ms !== undefined ? ` · ${fmt(s.ms)}` : ""}`)];
+  if (e.status === "failed") lines.push(`Result: failed — ${reasonText(e.reason, A)}. ${cap(failedKept(e))}.`);
   else if (e.status === "stopped") lines.push("Result: stopped by you.");
   else if (e.status === "interrupted") lines.push("Result: Grillado was closed during the run.");
   else if (e.suggestions?.length) {
     const n = e.suggestions.length;
     lines.push(`Result: ${plural(n, "suggestion")} (${e.suggestions.map((x) => `${x.section ?? "Plan"}: ${o.statusOf?.(x.id) ?? "to review"}`).join(", ")})`);
   } else if (e.type === "run" && e.status === "done") lines.push(`Result: ${metaParts(e, { agent: A }).slice(1).join(" · ") || "done"}`);
-  return lines.join("\n");
+  // One apostrophe style in the whole log: the curly ’ the reasons use (review-pr22 #1).
+  return lines.join("\n").replace(/(?<=\w)'(?=\w)/g, "’");
 }
+
+/**
+ * What a failed run left (review-pr22 #1): the diagrams it drew before failing are kept as suggestions,
+ * and the run bar says so ("2 suggestions kept"), so Activity and Copy log say the same.
+ */
+function failedKept(e: Entry): string {
+  const kept = e.kind === "diagrams" ? (e.result?.diagrams ?? 0) : 0;
+  return kept ? `${plural(kept, "suggestion")} kept` : "nothing was changed";
+}
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 /** §5: the import entry's body, as label/value rows (Source, Imported, Left out, Missing, Now). */
 export function importRows(e: Entry, agent: string): [string, string][] {
