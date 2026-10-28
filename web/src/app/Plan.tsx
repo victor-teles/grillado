@@ -357,8 +357,12 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
                 Show file location
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuLabel className="pmenu-path">
-                <span data-testid="plan-path">{plan.path}</span>
+              {/* One line, cut in the middle so "plan.md" always shows; the whole path in the title (demo finding MUST 1). */}
+              <DropdownMenuLabel className="pmenu-path" title={plan.path}>
+                <span data-testid="plan-path" className="pp">
+                  <span className="pp-h">{plan.path.slice(0, plan.path.lastIndexOf("/") + 1)}</span>
+                  <span className="pp-t">{plan.path.slice(plan.path.lastIndexOf("/") + 1)}</span>
+                </span>
               </DropdownMenuLabel>
             </DropdownMenuContent>
           </DropdownMenu>
