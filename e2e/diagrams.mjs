@@ -789,7 +789,8 @@ try {
         const r = await new AxeBuilder({ page: ap }).analyze(); // right away, while Copied still shows
         check(`axe: ${theme} desktop: not-installed card in its Copied state`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target}`).join("; "));
       }
-      await ap.waitForFunction(() => !document.querySelector(".cmd.well .cbtn.done"), null, { timeout: 3000 });
+      // Copied lasts COPIED_MS (1.5 s) from the click; the cap only allows for a starved machine (it ran out at 3 s under load).
+      await ap.waitForFunction(() => !document.querySelector(".cmd.well .cbtn.done"), null, { timeout: 10000 });
       check(`${theme} ${ag.name} Copy: back to Copy`, (await well.getAttribute("aria-label")) === `Copy ${ag.hint}`);
       await actx.close();
       await sa.stop();
