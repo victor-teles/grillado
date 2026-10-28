@@ -317,6 +317,7 @@ button:disabled{cursor:default}
 .dr .k{color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dr .v{margin:0;display:flex;align-items:center;gap:8px;min-width:0}
 .dr .v>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dr .v>.yc{flex:none}
 .dr .v.open{color:var(--muted-foreground)}
 .dr .re{margin:0;opacity:0;transition:opacity var(--d-quick) var(--ease-out)}
 .dr:hover .re,.dr:focus-within .re{opacity:1}
@@ -636,6 +637,9 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .cmdrow .nm,.cmdrow .why{grid-column:1/-1}
   .dr{grid-template-columns:96px minmax(0,1fr) auto}
   .dr .re{opacity:1}
+  /* Narrow: the answer keeps its line and "Your call" goes under it. */
+  .dr .v:has(>.yc){flex-direction:column;align-items:flex-start;gap:0;padding:6px 0}
+  .dr .v:has(>.yc)>.va{max-width:100%}
   .scrim{place-items:end stretch;padding:0 12px 12px}
   .dialog{width:auto}
   .dtb{padding:0 8px 0 16px;gap:8px}
