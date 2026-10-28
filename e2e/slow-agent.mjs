@@ -250,6 +250,8 @@ try {
         await p2.getByRole("button", { name: /Send round|Yes, plate it/ }).first().waitFor({ timeout: 15000 });
       }
       s2.mode({ FAKE_DELAY_MS: "110000" });
+      // The page clock is still 65 s ahead from the round above; plating counts from its own start.
+      await p2.clock.setSystemTime(Date.now());
       await plate.click();
       const pst = p2.locator(".status[role=status]").first();
       await pst.getByText(/Plating your plan from/).waitFor({ timeout: 10000 });
