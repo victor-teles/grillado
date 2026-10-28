@@ -710,6 +710,8 @@ html:not([data-kbd]) .q [data-slot=agent-question-option]:has(:focus-visible){ou
   .dz .dz-n{display:block!important}
   /* A thumb-sized target for the problem card's Retry and the 60 s Stop (review-pr26 r2 n2). */
   .banner .btn,.status button{min-height:44px}
+  /* The status line is as tall before Stop appears at 60 s as after, so nothing below it jumps (#26 follow-ups 2). */
+  .status{min-height:44px}
 }
 /* The tree root (the idea) may take two lines. */
 .tn.idea{height:auto;min-height:30px;white-space:normal;align-items:flex-start;padding-top:5px;padding-bottom:5px}

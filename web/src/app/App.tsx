@@ -60,7 +60,9 @@ export function App() {
 
   useEffect(() => {
     if (!sessionId) return setSession(null);
-    api.session(sessionId).then(setSession, (err) => {
+    // Guarded like pushes and action replies: under load this reply can land after the round's pushed events,
+    // and taking it as is would put the page back to "Still cooking…" with nothing left to push (pr26 follow-up 5).
+    api.session(sessionId).then((next) => setSession((cur) => (cur && cur.id === next.id ? newer(cur, next) : next)), (err) => {
       setNotice(err instanceof Error ? err.message : "Couldn’t open that session.");
       go(null);
     });
@@ -153,7 +155,7 @@ export function App() {
         onSwitch={onSwitch}
         onStart={async (idea, context) => {
           const s = await api.createSession(idea, context);
-          setSession(s);
+          setSession((cur) => (cur && cur.id === s.id ? newer(cur, s) : s));
           go(s.id);
         }}
         onOpen={go}

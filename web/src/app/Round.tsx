@@ -286,7 +286,7 @@ export function SkeletonCard({ wide }: { wide?: boolean }) {
 }
 
 /** One status line under the title. The ember dot is static; no elapsed timer (DECISIONS #21). */
-function StatusLine({ label, dot, onStop, note }: { label: string; dot?: boolean; onStop?: () => void; note?: string }) {
+export function StatusLine({ label, dot, onStop, note }: { label: string; dot?: boolean; onStop?: () => void; note?: string }) {
   return (
     <>
     <div className="status" role="status" aria-live="polite" data-has-note={note ? true : undefined}>
