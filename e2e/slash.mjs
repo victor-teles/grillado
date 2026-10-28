@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
+import { quiet, until } from "./wait.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-sl-"));
@@ -77,11 +78,22 @@ async function toPlan(pg, url) {
   await pg.getByRole("button", { name: /Yes, plate it/ }).click({ timeout: 15000 });
   await pg.getByTestId("plan").waitFor({ timeout: 15000 });
 }
+/** plan.md once the editor has nothing left to save (status Saved, not "saving soon" or Saving…) and `ok(md)` holds. */
+const savedMd = (pg, ok, what) =>
+  until(
+    async () => {
+      const st = await pg.getByTestId("save-status").getAttribute("data-save", { timeout: 1000 }).catch(() => null);
+      if (st !== "saved" && st !== "idle") return null;
+      const md = await planMd(pg);
+      return ok(md) && md;
+    },
+    what,
+  ).catch(() => planMd(pg));
 const planMd = (pg) => pg.evaluate(async () => (await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan.md`)).text());
 const TA = ".blk-edit:not(.blk-bd)";
 const ta = (pg) => pg.$eval(TA, (el) => ({ v: el.value, a: el.selectionStart, b: el.selectionEnd, sel: el.value.slice(el.selectionStart, el.selectionEnd) }));
 async function axe(pg, name) {
-  await pg.waitForTimeout(400); // let fades finish
+  await quiet(pg); // colors read mid-transition fail contrast: wait until every fade has finished
   const r = await new AxeBuilder({ page: pg }).analyze();
   check(`axe: ${name}`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message ?? ""} ${v.nodes[0]?.html?.slice(0, 160) ?? ""}`).join("; "));
 }
@@ -113,7 +125,7 @@ try {
     const pg = await ctx.newPage();
     const snap = async (name) => {
       if (!SHOTS) return;
-      await pg.waitForTimeout(250);
+      await quiet(pg);
       await pg.screenshot({ path: path.join(SHOTS, `${name}-d-${theme}.png`) });
     };
     await toPlan(pg, s.url);
@@ -134,8 +146,8 @@ try {
       check("popup attributes", attrs.ac === "list" && !!attrs.ad && attrs.ctl === list.id && list.label === "Blocks", JSON.stringify({ attrs, list }));
       check("preview column at 1440px", await pg.locator(".slm .sm-p").isVisible());
       check("footer key chips are Inter (§18 D)", /Inter/.test(await pg.$eval(".sm-f .kb4", (el) => getComputedStyle(el).fontFamily)));
-      await pg.waitForTimeout(400);
-      check("count announced politely", /13 blocks/.test(await pg.locator(".slm .sr-only[role=status]").textContent()));
+      const said = await until(async () => { const t = await pg.locator(".slm .sr-only[role=status]").textContent(); return /13 blocks/.test(t) && t; }, "the count to be announced").catch(() => "");
+      check("count announced politely", /13 blocks/.test(said), said);
     }
     await snap("i4-menu");
     await axe(pg, `${theme} desktop: menu open`);
@@ -172,8 +184,8 @@ try {
     await pg.keyboard.press("Escape");
     await pg.locator(TA).waitFor({ state: "detached" });
     await pg.waitForFunction(() => document.body.textContent.includes("Which browsers do we support?"));
-    await pg.waitForTimeout(800);
-    const md1 = await planMd(pg);
+    // The block is saved once plan.md holds it, not after a fixed wait.
+    const md1 = await savedMd(pg, (md) => /id: U1/.test(md), "plan.md to hold U1");
     if (one) {
       check("finished: plan.md has id U1, open", /```decision\nid: U1\nquestion: Which browsers do we support\?\nanswer:\n[\s\S]*?status: open/.test(md1) || (/id: U1/.test(md1) && /status: open/.test(md1)), md1.slice(md1.indexOf("id: U1") - 20, md1.indexOf("id: U1") + 160));
       const card = pg.locator(".dz", { hasText: "Which browsers do we support?" }).first();
@@ -191,8 +203,8 @@ try {
       await pg.keyboard.press("Escape");
       await pg.keyboard.press("Escape");
       await pg.locator(TA).waitFor({ state: "detached" });
-      await pg.waitForTimeout(800);
-      check("…and Esc twice removes it", (await planMd(pg)) === md0);
+      const md0b = await savedMd(pg, (md) => md === md0, "plan.md back as it was");
+      check("…and Esc twice removes it", md0b === md0);
     }
     await snap("i4-question");
 
@@ -229,7 +241,8 @@ try {
       const blk = pg.locator(".doc .blk[data-block=para]").first();
       await blk.hover();
       await blk.locator(".blk-add").hover();
-      await pg.waitForTimeout(500);
+      await blk.locator(".blk-add .tip4").waitFor({ state: "visible" });
+      await quiet(pg);
       const tip = await blk.locator(".blk-add").evaluate((b) => {
         const t = b.querySelector(".tip4");
         const r = t.getBoundingClientRect(), p = b.getBoundingClientRect();
@@ -247,8 +260,8 @@ try {
     await pg.keyboard.press("Escape");
     await pg.keyboard.press("Escape");
     await pg.locator(TA).waitFor({ state: "detached" });
-    await pg.waitForTimeout(800);
-    if (one) check("Esc on the empty new block removes it", (await planMd(pg)) === before);
+    const mdB = await savedMd(pg, (md) => md === before, "plan.md back as it was");
+    if (one) check("Esc on the empty new block removes it", mdB === before);
     // "+" → /state: linked first state.
     await plus(pg);
     await pg.keyboard.type("state");
@@ -315,8 +328,9 @@ try {
     if (one) check("Markdown view inserts the diff", (await cm.textContent()).includes("- Last edit wins"));
     await pg.locator(".ped-modes").click({ position: { x: 5, y: 5 } }).catch(() => {});
     await pg.getByRole("radio", { name: "Rich" }).click();
-    await pg.waitForTimeout(800);
-    if (one) check("diff saved", /```diff\n- Last edit wins\n\+ added line\n```/.test(await planMd(pg)));
+    const DIFF = /```diff\n- Last edit wins\n\+ added line\n```/;
+    const mdD = await savedMd(pg, (md) => DIFF.test(md), "plan.md to hold the diff");
+    if (one) check("diff saved", DIFF.test(mdD));
     const clip = video ? await pg.video()?.path() : null;
     await ctx.close();
     if (clip) renameSync(clip, path.join(SHOTS, "i4-desktop.webm"));
@@ -336,7 +350,7 @@ try {
     await mp.locator(".acc4 button", { hasText: "Block" }).tap();
     await mp.locator(".msm").waitFor();
     if (one) check("mobile: docked list, no preview", (await mp.locator(".msm [role=option]").count()) === 13 && (await mp.locator(".sm-p").count()) === 0);
-    await mp.waitForTimeout(400);
+    await quiet(mp);
     if (one) check("mobile: menu is opaque and on top", await mp.evaluate(() => { const m = document.querySelector(".msm"); const r = m.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + 20, r.top + r.height / 2); return getComputedStyle(m).opacity === "1" && m.contains(hit); }));
     if (SHOTS) await mp.screenshot({ path: path.join(SHOTS, `i4-menu-m-${theme}.png`) });
     await axe(mp, `${theme} mobile: menu open`);
