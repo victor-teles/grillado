@@ -187,9 +187,16 @@ button:disabled{cursor:default}
 .banner p+p,.banner .t+*{color:var(--muted-foreground);margin-top:2px}
 .banner .acts{display:flex;gap:8px;align-items:center}
 .banner .cmd{margin-top:10px;cursor:pointer}
-/* the install command's well (review-pr22 r3 #1): as wide as the command, wrapping inside the card, Copy beside its last line */
-.banner .cmd.wrap{width:fit-content;max-width:100%;height:auto;min-height:40px;padding:6px 6px 6px 12px;align-items:end;background:color-mix(in oklab,var(--foreground) 6%,transparent)}
-.banner .cmd.wrap code{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;font-family:var(--mono);font-size:12px;line-height:18px;padding:5px 0}
+/* the install command's well (review-pr22 r3 #1, r4 #1/#3): #165's command well — var(--well), mono 13/20, a visible
+   Copy → ✓ Copied. As wide as the command; it wraps only between words or after a single "/". Copy floats at the end
+   of the last line when it fits there, else under it on the right, so it never takes width from the command. */
+.light .banner{--well:var(--background)} /* the card itself is --sel (light's --well), so the well is one step out */
+.cmd.well{display:flow-root;width:fit-content;max-width:100%;height:auto;min-height:40px;padding:10px 6px 10px 12px;border-radius:10px;background:var(--well);font:400 13px/20px var(--mono)}
+.cmd.well code{display:inline;font:inherit;white-space:normal;overflow:visible;text-overflow:clip}
+.cmd code .w{white-space:nowrap}
+.cmd.well .cbtn{float:right;margin:-4px 0 -4px 8px;font-family:var(--sans)}
+.cbtn .lb [data-l]::after{content:attr(data-l)}
+@media (hover:hover){.cmd.well:hover .cbtn{background:var(--muted);color:var(--foreground)}}
 .nudge{display:flex;align-items:center;gap:8px;color:var(--muted-foreground);margin-block:20px 24px;flex-wrap:wrap}
 .nudge>span,.nudge>p{flex:1;min-width:0}
 /* Mobile: the quiet buttons' labels line up with the text edge, closer under it (#20 leftover 6). */

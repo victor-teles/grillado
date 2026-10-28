@@ -84,7 +84,7 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
       icon: <ITerm s={16} />,
       title: reasonText("not_found", name),
       body: `Grillado runs your own ${name}. Install it, then retry. Your answers are kept.`,
-      // The command gets its own row, a well that wraps, so a long one (Grok's curl) never runs off a phone (review-pr22 r3 #1).
+      // The command gets its own row, a well that wraps between words, so a long one (Grok's curl) never runs off a phone (review-pr22 r3 #1, r4 #1).
       cmd: provider?.installHint,
       retry: "Retry",
     },
@@ -100,7 +100,7 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
       <div>
         {copy.title ? <p className="t">{copy.title}</p> : null}
         <p>{copy.body}</p>
-        {"cmd" in copy && copy.cmd ? <CopyButton kind="cmd" className="wrap" text={copy.cmd} label={`Copy ${copy.cmd}`} /> : null}
+        {"cmd" in copy && copy.cmd ? <CopyButton kind="well" text={copy.cmd} label={`Copy ${copy.cmd}`} /> : null}
       </div>
       <div className="acts">
         {code === "auth" ? null : sw}

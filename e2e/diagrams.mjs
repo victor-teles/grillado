@@ -14,8 +14,8 @@ import { chromium } from "playwright-core";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-dg-"));
-// The longest install command any agent has (Grok's curl line): the not-installed card must hold it too.
-const LONGEST_HINT = [...readFileSync(path.join(ROOT, "src/core/providers/adapters.ts"), "utf8").matchAll(/installHint: "([^"]+)"/g)].map((m) => m[1]).sort((a, b) => b.length - a.length)[0];
+// Every agent's install command (review-pr22 r4 #1): each not-installed card is rendered for real, no text swapped in.
+const AGENTS = [...readFileSync(path.join(ROOT, "src/core/providers/adapters.ts"), "utf8").matchAll(/id: "([^"]+)",\s*displayName: "([^"]+)",\s*bin: "([^"]+)",\s*installHint: "([^"]+)"/g)].map((m) => ({ id: m[1], name: m[2], bin: m[3], hint: m[4] }));
 const NODE = process.execPath;
 const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -607,7 +607,7 @@ try {
         if (SHOTS) await qp.screenshot({ path: path.join(SHOTS, `card-not-found-${theme}-missing.png`) });
         throw new Error(`no problem card: ${(await qp.locator("body").innerText()).slice(0, 400).replace(/\n+/g, " ⏎ ")}`);
       }
-      const c = await card.evaluate((b) => ({ code: b.dataset.code, title: b.querySelector(".t")?.textContent, body: b.querySelector(".t + p")?.textContent, cmd: b.querySelector(".cmd.wrap code")?.textContent, btns: [...b.querySelectorAll(".acts button")].map((x) => x.textContent.trim()) }));
+      const c = await card.evaluate((b) => ({ code: b.dataset.code, title: b.querySelector(".t")?.textContent, body: b.querySelector(".t + p")?.textContent, cmd: b.querySelector(".cmd.well code")?.textContent, btns: [...b.querySelectorAll(".acts button")].map((x) => x.textContent.trim()) }));
       check(`${theme} question round, CLI gone: "Claude Code isn’t installed", how to install it, answers kept`, c.code === "not_found" && c.title === "Claude Code isn’t installed" && c.cmd === "npm i -g @anthropic-ai/claude-code" && c.body === "Grillado runs your own Claude Code. Install it, then retry. Your answers are kept.", JSON.stringify(c));
       check(`${theme} question round, CLI gone: Retry stays (and Switch agent, with another agent ready)`, c.btns.at(-1) === "Retry" && c.btns.includes("Switch agent"), JSON.stringify(c.btns));
       const cardShot = async (name) => {
@@ -618,36 +618,6 @@ try {
         await qp.screenshot({ path: path.join(SHOTS, `${name}.png`), clip: { x, y: Math.max(0, bb.y - 16), width: Math.min(vw - x, bb.width + 32), height: bb.height + 32 } });
       };
       await cardShot(`card-not-found-${theme}`);
-      // review-pr22 r3 #1: the command and its Copy stay inside the card on a phone, the longest command too.
-      const fit = () =>
-        card.evaluate((b) => {
-          const box = (e) => {
-            const r = e.getBoundingClientRect();
-            return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom) };
-          };
-          const well = b.querySelector(".cmd.wrap");
-          return { vw: innerWidth, card: box(b), well: box(well), code: box(well.querySelector("code")), copy: box(well.querySelector(".i")), text: well.querySelector("code").textContent, scroll: document.documentElement.scrollWidth - innerWidth };
-        });
-      const within = (a, o) => a.l >= o.l && a.r <= o.r && a.t >= o.t && a.b <= o.b;
-      for (const width of [390, 360, 320]) {
-        await qp.setViewportSize({ width, height: 844 });
-        await settle(qp);
-        let g = await fit();
-        check(`${theme} phone ${width} not-installed card: the command and Copy inside the card, no horizontal scroll`, within(g.well, g.card) && within(g.code, g.well) && within(g.copy, g.well) && g.card.r <= g.vw && g.scroll <= 0, JSON.stringify(g));
-        if (width !== 360) await cardShot(`card-not-found-m${width}-${theme}`);
-        // The same card with the longest install command (layout only: the text is swapped in place).
-        const was = await card.evaluate((b, t) => {
-          const code = b.querySelector(".cmd.wrap code");
-          const old = code.textContent;
-          code.textContent = t;
-          return old;
-        }, LONGEST_HINT);
-        await settle(qp);
-        g = await fit();
-        check(`${theme} phone ${width} not-installed card, longest command (${LONGEST_HINT}): wraps inside the card, Copy too`, g.text === LONGEST_HINT && within(g.well, g.card) && within(g.code, g.well) && within(g.copy, g.well) && g.card.r <= g.vw && g.scroll <= 0, JSON.stringify(g));
-        if (width === 320) await cardShot(`card-not-found-m320-longest-${theme}`);
-        await card.evaluate((b, t) => (b.querySelector(".cmd.wrap code").textContent = t), was);
-      }
       await qp.setViewportSize({ width: 1440, height: 900 });
       await settle(qp);
       await axe(qp, `${theme} desktop: not-installed card`);
@@ -667,6 +637,101 @@ try {
       }
       await qctx.close();
       await sq.stop();
+    }
+
+    // ---------------------------------------------------------------- every agent's not-installed card (review-pr22 r3 #1, r4 #1–#3)
+    for (const ag of AGENTS) {
+      const sa = await server({}, fakeBins(AGENTS.map((x) => x.bin)));
+      const actx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", permissions: ["clipboard-read", "clipboard-write"] });
+      await actx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const ap = await actx.newPage();
+      await ap.goto(sa.url);
+      await ap.locator(`[role=radio][data-id="${ag.id}"]`).click();
+      await ap.getByRole("button", { name: /Continue/ }).click();
+      await ap.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
+      await ap.keyboard.press("Enter");
+      await ap.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
+      renameSync(path.join(sa.bin, ag.bin), path.join(sa.bin, `${ag.bin}.off`));
+      await ap.getByRole("button", { name: /Send round/ }).click();
+      const card = ap.getByTestId("problem");
+      await card.waitFor({ timeout: 20000 });
+      const well = card.locator(".cmd.well");
+      const c = await card.evaluate((b) => ({ title: b.querySelector(".t")?.textContent, cmd: b.querySelector(".cmd.well code")?.textContent, name: b.querySelector(".cmd.well")?.getAttribute("aria-label"), label: getComputedStyle(b.querySelector(".cmd.well .lb .a"), "::after").content }));
+      check(`${theme} ${ag.name} not installed: "${ag.name} isn’t installed" and its own command in the well, Copy visible`, c.title === `${ag.name} isn’t installed` && c.cmd === ag.hint && c.name === `Copy ${ag.hint}` && c.label === '"Copy"', JSON.stringify(c));
+      // The lines the command is laid out on, from each character's box; a space or a word's last "/" ends a line, never a letter or a hyphen.
+      const layout = () =>
+        card.evaluate((b) => {
+          const box = (e) => {
+            const r = e.getBoundingClientRect();
+            return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom) };
+          };
+          const w = b.querySelector(".cmd.well");
+          const code = w.querySelector("code");
+          const tops = [];
+          const walk = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+          for (let n = walk.nextNode(); n; n = walk.nextNode())
+            for (let i = 0; i < n.data.length; i++) {
+              const r = document.createRange();
+              r.setStart(n, i);
+              r.setEnd(n, i + 1);
+              const rc = [...r.getClientRects()].find((x) => x.width > 0);
+              tops.push(rc ? Math.round(rc.top) : null);
+            }
+          const text = code.textContent;
+          const lines = [];
+          const breaks = [];
+          let cur = "";
+          let top = null;
+          for (let i = 0; i < text.length; i++) {
+            const t = tops[i] ?? top;
+            if (top !== null && t !== null && t > top + 4) {
+              lines.push(cur);
+              breaks.push(i);
+              cur = "";
+            }
+            if (t !== null) top = t;
+            cur += text[i];
+          }
+          lines.push(cur);
+          return { vw: innerWidth, text, lines: lines.map((x) => x.trim()), breaks, card: box(b), well: box(w), code: box(code), copy: box(w.querySelector(".cbtn")), scroll: document.documentElement.scrollWidth - innerWidth };
+        });
+      const within = (a, o) => a.l >= o.l && a.r <= o.r && a.t >= o.t && a.b <= o.b;
+      const okBreak = (t, i) => (t[i - 1] === " " && !/^[^\w@./~-]+$/.test(t.slice(0, i - 1).split(" ").at(-1))) || (t[i - 1] === "/" && t[i - 2] !== "/" && !/[/ ]/.test(t[i]) && !/^[^ ]*\//.test(t.slice(i)));
+      for (const width of [390, 360, 320]) {
+        await ap.setViewportSize({ width, height: 844 });
+        await settle(ap);
+        const g = await layout();
+        check(`${theme} phone ${width} ${ag.name}: "${ag.hint}" wraps only between words or after a word's last single "/", never mid-word or after a hyphen (${g.lines.join(" ⏎ ")})`, g.text === ag.hint && g.breaks.every((i) => okBreak(g.text, i) && g.text[i - 1] !== "-"), JSON.stringify(g.lines));
+        check(`${theme} phone ${width} ${ag.name}: the command and Copy inside the card, no horizontal scroll`, within(g.well, g.card) && within(g.code, g.well) && within(g.copy, g.well) && g.card.r <= g.vw && g.scroll <= 0, JSON.stringify(g));
+        if (ag.id === "grok" && width === 320) check(`${theme} phone 320 Grok: "curl -fsSL" / "https://x.ai/cli/" / "install.sh | bash"`, JSON.stringify(g.lines) === JSON.stringify(["curl -fsSL", "https://x.ai/cli/", "install.sh | bash"]), JSON.stringify(g.lines));
+        if (SHOTS && (width !== 360 || ag.id === "grok")) {
+          const bb = await card.boundingBox();
+          await ap.screenshot({ path: path.join(SHOTS, `card-not-found-${ag.id}-m${width}-${theme}.png`), clip: { x: 0, y: Math.max(0, bb.y - 16), width, height: bb.height + 32 } });
+        }
+      }
+      // Copy: the exact command on the clipboard, the name says Copied + the command (axe clean while it shows), then back.
+      await ap.setViewportSize({ width: 1440, height: 900 });
+      await settle(ap);
+      await ap.evaluate(() => navigator.clipboard.writeText("-"));
+      await well.click();
+      await ap.waitForFunction(() => document.querySelector(".cmd.well .cbtn.done"), null, { timeout: 2000 });
+      await settle(ap);
+      const clip = await ap.evaluate(() => navigator.clipboard.readText());
+      const d = await well.evaluate((e) => ({ name: e.getAttribute("aria-label"), shown: [...e.querySelectorAll(".cbtn .lb > *")].map((x) => [getComputedStyle(x, "::after").content, getComputedStyle(x).opacity]) }));
+      check(`${theme} ${ag.name} Copy: the clipboard holds exactly "${ag.hint}"`, clip === ag.hint, JSON.stringify(clip));
+      check(`${theme} ${ag.name} Copy: "✓ Copied" shows, and the name is "Copied ${ag.hint}"`, d.name === `Copied ${ag.hint}` && d.shown[1][0] === '"Copied"' && d.shown[1][1] === "1" && d.shown[0][1] === "0", JSON.stringify(d));
+      if (SHOTS && (ag.id === "grok" || ag.id === "claude")) {
+        const bb = await card.boundingBox();
+        await ap.screenshot({ path: path.join(SHOTS, `card-not-found-${ag.id}-copied-${theme}.png`), clip: { x: Math.max(0, bb.x - 16), y: Math.max(0, bb.y - 16), width: bb.width + 32, height: bb.height + 32 } });
+      }
+      if (ag.id === "grok") {
+        const r = await new AxeBuilder({ page: ap }).analyze(); // right away, while Copied still shows
+        check(`axe: ${theme} desktop: not-installed card in its Copied state`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target}`).join("; "));
+      }
+      await ap.waitForFunction(() => !document.querySelector(".cmd.well .cbtn.done"), null, { timeout: 3000 });
+      check(`${theme} ${ag.name} Copy: back to Copy`, (await well.getAttribute("aria-label")) === `Copy ${ag.hint}`);
+      await actx.close();
+      await sa.stop();
     }
 
     // ---------------------------------------------------------------- mobile
