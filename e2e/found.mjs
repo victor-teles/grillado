@@ -332,6 +332,10 @@ function headAudit() {
     insideProj: !r || r.right <= pr.right + 0.5,
     name: b?.textContent,
     nameW: b ? Math.round(b.getBoundingClientRect().width) : 0,
+    // review-pr23 #1: the name's text against its box (a Range, not scrollWidth, which rounds a 0.03px cut away).
+    nameCut: b ? (() => { const r = document.createRange(); r.selectNodeContents(b); return +(r.getBoundingClientRect().width - b.getBoundingClientRect().width).toFixed(3); })() : 0,
+    nameTitle: b?.getAttribute("title") ?? null,
+    scroll: document.documentElement.scrollWidth - innerWidth,
   };
 }
 const headOk = (h) => h.has && h.shown === h.icon && h.insideProj && h.nameW > 0 && (!h.truncated || (h.ellipsis && h.bnW >= 32));
@@ -349,6 +353,8 @@ function emptyAudit() {
     lh,
     clipped: f.scrollWidth > f.clientWidth + 0.5 && getComputedStyle(f).textOverflow !== "ellipsis",
     gap: Math.round((x.left - lnk.right) * 10) / 10,
+    title: f.getAttribute("title"),
+    cut: (() => { const r = document.createRange(); r.selectNodeContents(f); return r.getBoundingClientRect().width - f.getBoundingClientRect().width > 0.01; })(),
   };
 }
 
@@ -905,12 +911,30 @@ try {
       check(`${theme} phone ${width} empty: Look again and × don't overlap, taps at their edges land on them`, ea.controls === 2 && !ea.overlaps.length && !ea.misses.length, JSON.stringify({ overlaps: ea.overlaps, misses: ea.misses.slice(0, 6) }));
       if (width !== 390 && width !== 375) await shot(ep, "1-group", `m-empty-${width}-${theme}-r3`);
       const em = await ep.evaluate(emptyAudit);
-      check(`${theme} phone ${width} empty: "${em.name}" stays on one line, never split at the hyphen`, em.name === "empty-app" && em.rects === 1 && em.h <= em.lh + 1 && !em.clipped, JSON.stringify(em));
+      check(`${theme} phone ${width} empty: "${em.name}" stays on one line, never split at the hyphen`, em.name === "empty-app" && em.rects === 1 && em.h <= em.lh + 1 && !em.clipped && !em.cut && em.title === null, JSON.stringify(em));
       check(`${theme} phone ${width} empty: Look again and × keep a gap between their hit areas${width === 320 ? " (2–4px at 320)" : ""}`, width === 320 ? em.gap >= 2 && em.gap <= 4 : em.gap >= 2, JSON.stringify(em));
       if (width === 320 || width === 390) await shot(ep, "7-polish", `empty-${width}-${theme}`);
       await nctx.close();
     }
     await sne.stop();
+    // review-pr23 #2: an empty-state folder name that ends in "…" has its full name as a title.
+    {
+      const LONG = "my-very-long-project-folder-name-that-goes-on-and-on";
+      const sle = await server(world(LONG, { sources: false }));
+      for (const width of [390, 320]) {
+        const ectx = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: true, isMobile: true });
+        await ectx.addInitScript((th) => localStorage.setItem("grillado-theme", th), theme);
+        const ep = await ectx.newPage();
+        lastPage = ep;
+        await home(ep, sle.url);
+        await ep.locator(".fempty .fnm").waitFor({ timeout: 10000 });
+        await settle(ep);
+        const em = await ep.evaluate(emptyAudit);
+        check(`${theme} phone ${width} empty: a long folder name ends in "…" and its title is the full name`, em.name === LONG && em.cut && em.title === LONG && em.rects === 1, JSON.stringify(em));
+        await ectx.close();
+      }
+      await sle.stop();
+    }
     // A long branch in the header: "feature/fo…" while it fits a few letters, then gone whole with its icon.
     const wb = world("flatlist", { branch: "feature/found-polish-header" });
     const sb = await server(wb);
@@ -930,7 +954,60 @@ try {
       await bctx.close();
     }
     check(`${theme} phones: the long branch is shown ellipsized at some width (the rule is exercised)`, seenStates.has("ellipsis"), [...seenStates].join(","));
+    // review-pr23 #1/#2: every width from 300 to 480 in 1px steps. "flatlist" is never cut (its text fits its box), the
+    // branch ends in "…" (32px or more) or goes whole, and a cut name carries its full name as a title (a whole one none).
+    {
+      const sctx = await browser.newContext({ viewport: { width: 480, height: 844 }, hasTouch: true, isMobile: true });
+      await sctx.addInitScript((th) => localStorage.setItem("grillado-theme", th), theme);
+      const sp = await sctx.newPage();
+      lastPage = sp;
+      await home(sp, sb.url);
+      await sp.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
+      const bad = [];
+      const states = new Set();
+      for (let width = 300; width <= 480; width++) {
+        await sp.setViewportSize({ width, height: 844 });
+        await sp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); // the ResizeObserver's fitMeta has run
+        const h = await sp.evaluate(headAudit);
+        states.add(!h.shown ? "dropped" : h.truncated ? "ellipsis" : "full");
+        if (!(headOk(h) && h.name === "flatlist" && h.nameCut <= 0.01 && h.nameTitle === null && h.scroll <= 0 && (!h.truncated || h.bnW >= 32))) bad.push({ width, ...h });
+      }
+      check(`${theme} 300–480px in 1px steps: "flatlist" stays whole next to a long branch, the branch ends in "…" or goes whole (${[...states].join(", ")})`, !bad.length && states.has("ellipsis") && states.has("dropped"), JSON.stringify(bad.slice(0, 4)));
+      for (const width of [390, 360]) {
+        await sp.setViewportSize({ width, height: 844 });
+        await settle(sp);
+        await shot(sp, "7-polish", `header-long-branch-sweep-${width}-${theme}`);
+      }
+      await sctx.close();
+    }
     await sb.stop();
+    // A long repo name: it ends in "…" with the branch dropped on phones, and its title is the full name.
+    {
+      const LONG = "grillado-monorepo-with-a-very-long-folder-name";
+      const wl = world(LONG, { branch: "feature/found-polish-header" });
+      const sl = await server(wl);
+      const lctx = await browser.newContext({ viewport: { width: 480, height: 844 }, hasTouch: true, isMobile: true });
+      await lctx.addInitScript((th) => localStorage.setItem("grillado-theme", th), theme);
+      const lp = await lctx.newPage();
+      lastPage = lp;
+      await home(lp, sl.url);
+      await lp.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
+      const bad = [];
+      for (let width = 300; width <= 480; width++) {
+        await lp.setViewportSize({ width, height: 844 });
+        await lp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        const h = await lp.evaluate(headAudit);
+        if (!(headOk(h) && h.name === LONG && !h.shown && h.nameCut > 0 && h.nameTitle === LONG && h.scroll <= 0)) bad.push({ width, ...h });
+      }
+      check(`${theme} 300–480px in 1px steps: a long repo name ends in "…" with its full name as a title, the branch dropped`, !bad.length, JSON.stringify(bad.slice(0, 4)));
+      for (const width of [390, 320]) {
+        await lp.setViewportSize({ width, height: 844 });
+        await settle(lp);
+        await shot(lp, "7-polish", `header-long-repo-${width}-${theme}`);
+      }
+      await lctx.close();
+      await sl.stop();
+    }
     await sn.stop();
   }
 } catch (err) {

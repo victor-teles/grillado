@@ -8,8 +8,9 @@
 .fh .proj{color:var(--subtle-foreground);display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;overflow:hidden}
 .fh .proj b{font-weight:500;color:var(--muted-foreground);min-width:0;overflow:hidden;text-overflow:ellipsis}
 .fh .proj svg{width:12px;height:12px;flex:none}
-/* the branch shrinks first and ends in "…"; too narrow for a few letters, it goes whole with its icon (fitMeta) */
-.fh .br{display:inline-flex;align-items:center;gap:4px;min-width:0;flex:0 1000 auto}
+/* the branch takes only the room the name leaves (it never takes a share of the name's shrink, review-pr23 #1)
+   and ends in "…"; too narrow for a few letters, it goes whole with its icon (fitMeta) */
+.fh .br{display:inline-flex;align-items:center;gap:4px;min-width:0;flex:1 1 0;max-width:max-content}
 .fh .br .bn{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .fh .br[hidden]{display:none}
 .fh .sp{flex:1}
