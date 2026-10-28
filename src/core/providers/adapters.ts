@@ -168,6 +168,8 @@ export const grokSpec: AdapterSpec = {
   bin: "grok",
   installHint: "curl -fsSL https://x.ai/cli/install.sh | bash",
   loginHint: "Run `grok login` in a terminal",
+  // Real 1.0.70 rounds took 115–220 s on a plain idea, past the 180 s default (PR #26 verification).
+  defaultTimeoutMs: 600_000,
   buildInvocation: (req, files) => ({
     args: [
       "--prompt-file",

@@ -14,6 +14,7 @@ import {
   AgentQuestionTitle,
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
+import { COPY } from "./copy";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
 import { MobileStrip, SidePanel } from "./Tree";
@@ -289,9 +290,10 @@ export function SkeletonCard({ wide }: { wide?: boolean }) {
 }
 
 /** One status line under the title. The ember dot is static; no elapsed timer (DECISIONS #21). */
-function StatusLine({ label, dot, onStop }: { label: string; dot?: boolean; onStop?: () => void }) {
+function StatusLine({ label, dot, onStop, note }: { label: string; dot?: boolean; onStop?: () => void; note?: string }) {
   return (
-    <div className="status" role="status" aria-live="polite">
+    <>
+    <div className="status" role="status" aria-live="polite" data-has-note={note ? true : undefined}>
       {dot ? <span className="ember" aria-hidden="true" /> : null}
       <span>{label}</span>
       {onStop ? (
@@ -301,6 +303,8 @@ function StatusLine({ label, dot, onStop }: { label: string; dot?: boolean; onSt
         </button>
       ) : null}
     </div>
+    {note ? <p className="meta wait-note" data-testid="wait-note">{note}</p> : null}
+    </>
   );
 }
 
@@ -326,7 +330,7 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
               {banner}
               <div className="intro">
                 <h1>{session.idea.split("\n")[0]}</h1>
-                {busy ? <StatusLine label={label} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <StatusLine label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
               </div>
               {busy ? <SkeletonCard wide /> : null}
             </div>
@@ -370,7 +374,7 @@ export function FiringUp({ session, act, banner }: { session: SessionView; act: 
               {banner}
               <div className="intro">
                 <h1>{idea}</h1>
-                {busy ? <StatusLine dot label={label} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <StatusLine dot label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
               </div>
               {busy ? (
                 <>

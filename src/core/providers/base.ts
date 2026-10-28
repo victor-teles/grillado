@@ -12,12 +12,17 @@ export interface Invocation {
   env?: Record<string, string>;
 }
 
+/** Per-run timeout for providers that don't set their own. */
+export const DEFAULT_TIMEOUT_MS = 180_000;
+
 export interface AdapterSpec {
   id: ProviderId;
   displayName: string;
   bin: string;
   installHint: string;
   loginHint: string;
+  /** Per-run timeout for this CLI; DEFAULT_TIMEOUT_MS when unset. */
+  defaultTimeoutMs?: number;
   /** Pure: request + file paths → argv. Asserted verbatim in tests (AC4). */
   buildInvocation(req: RunRequest, files: RunFiles): Invocation;
   /** Turn a finished process into a result or a classified error. */
@@ -50,6 +55,7 @@ export function createAdapter(spec: AdapterSpec, opts: AdapterOptions = {}): Pro
     bin: spec.bin,
     installHint: spec.installHint,
     loginHint: spec.loginHint,
+    defaultTimeoutMs: spec.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
 
     async detect(): Promise<Detection> {
       const e = env();

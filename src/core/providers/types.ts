@@ -42,6 +42,8 @@ export interface ProviderAdapter {
   bin: string;
   installHint: string;
   loginHint: string;
+  /** How long one run may take before it times out, unless GRILLADO_TIMEOUT_MS overrides it. */
+  defaultTimeoutMs?: number;
   detect(): Promise<Detection>;
   run(req: RunRequest, signal: AbortSignal): AsyncIterable<ProviderEvent>;
 }
