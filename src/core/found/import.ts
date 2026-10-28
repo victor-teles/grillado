@@ -93,6 +93,8 @@ export interface ImportInput {
   fingerprint: string;
   project: string;
   provider: ProviderId;
+  /** The source's own agent when `provider` stands in for it (it isn't installed). */
+  agentFrom?: ProviderId;
   /** Source still being written (last change < 2 min ago). */
   inProgress?: boolean;
   /** Free-text sessions (§4): the decisions {agent} made from the answers, one round. */
@@ -154,6 +156,7 @@ function sourceOf(inp: ImportInput, at: string, title: string, planHash?: string
     ...(unanswered ? { unanswered } : {}),
     ...(x.compacted ? { compacted: true } : {}),
     ...(x.ideaFromSummary ? { ideaFromSummary: true } : {}),
+    ...(inp.agentFrom ? { agentFrom: inp.agentFrom } : {}),
   };
 }
 
@@ -191,6 +194,8 @@ export function updateFromSource(s: Session, inp: ImportInput, diskPlan: string 
       return { markdown: null, conflict: md };
     }
   }
+  // Still on the source's agent, which isn't installed: take the stand-in, as a new import would.
+  if (inp.agentFrom && s.provider === inp.agentFrom) s.provider = inp.provider;
   const keep = s.plan;
   const md = fill(s, x, title, at);
   s.source = sourceOf(inp, at, title, md ? textHash(md) : undefined);

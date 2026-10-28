@@ -12,7 +12,7 @@ import path from "node:path";
 import { redact } from "../core/filter.ts";
 import { type Extract, codexMeta, contentHash, exportedPlanId, isPlanCandidate, mentionedPaths, parseClaude, parseCodex, parsePlanFile } from "../core/found/extract.ts";
 import { type AgentDecision, ImportError, sessionFromSource, updateFromSource } from "../core/found/import.ts";
-import type { ProviderId } from "../core/providers/types.ts";
+import { PROVIDER_IDS, type ProviderId } from "../core/providers/types.ts";
 import type { Session } from "../core/session.ts";
 import { type Store, withLock, writeAtomic } from "./store.ts";
 
@@ -644,12 +644,12 @@ export class FoundService {
    * Import (or Update) one row. The source is read again, not taken from the cache. A source that
    * was imported before goes into the same plan: unchanged → nothing happens, changed → update.
    */
-  import(id: string, provider: ProviderId, w: Writer = storeWriter(this.o.store), agent?: AgentRun): Promise<ImportResult> {
+  import(id: string, provider: ProviderId, w: Writer = storeWriter(this.o.store), agent?: AgentRun, ready?: (id: ProviderId) => boolean): Promise<ImportResult> {
     const busy = this.importing.get(id);
     if (busy) return busy;
     const t = ++this.ticket;
     this.reading.add(t);
-    const p = this.doImport(id, provider, w, agent, t).finally(() => {
+    const p = this.doImport(id, provider, w, agent, t, ready).finally(() => {
       this.importing.delete(id);
       this.doneReading(t);
     });
@@ -657,7 +657,7 @@ export class FoundService {
     return p;
   }
 
-  private async doImport(id: string, provider: ProviderId, w: Writer, agent: AgentRun | undefined, t: number): Promise<ImportResult> {
+  private async doImport(id: string, provider: ProviderId, w: Writer, agent: AgentRun | undefined, t: number, ready?: (id: ProviderId) => boolean): Promise<ImportResult> {
     if (!this.found.has(id)) await this.scan();
     const hit = this.found.get(id);
     if (!hit || !this.project) throw new ImportError("unknown", "That source isn’t in this project’s scan any more. Look again.");
@@ -697,7 +697,7 @@ export class FoundService {
       // The plan may have changed hands while the agent worked.
       existing = prev ? w.load(prev.planId) : null;
     }
-    const inp = { extract: x, path: row.path, fingerprint: hit.fp, project: this.project.root, provider: providerFor(row.app, provider), inProgress, ...(agentDecisions ? { agentDecisions } : {}) };
+    const inp = { extract: x, path: row.path, fingerprint: hit.fp, project: this.project.root, ...agentFor(row.app, provider, ready), inProgress, ...(agentDecisions ? { agentDecisions } : {}) };
     let result: ImportResult;
     if (existing) {
       const disk = this.o.store.readPlan(existing.id);
@@ -755,7 +755,19 @@ export class FoundService {
 }
 
 /** The session's provider follows the source when Grillado has it, else the user's pick. */
-const providerFor = (app: Extract["app"], fallback: ProviderId): ProviderId => (app === "claude" ? "claude" : app === "codex" ? "codex" : fallback);
+/**
+ * The session's agent. A Claude Code or Codex source keeps its own agent when it's installed (or when
+ * nobody says what is: the MCP server). When it isn't, the agent that ran the import stands in, else
+ * the first installed one, and `agentFrom` keeps the original so the page can say so; plating never
+ * starts with "isn't installed" (demo finding MUST 2).
+ */
+export function agentFor(app: Extract["app"], runner: ProviderId, ready?: (id: ProviderId) => boolean): { provider: ProviderId; agentFrom?: ProviderId } {
+  const own: ProviderId | undefined = app === "claude" ? "claude" : app === "codex" ? "codex" : undefined;
+  if (!own) return { provider: runner };
+  if (!ready || ready(own)) return { provider: own };
+  const stand = ready(runner) ? runner : PROVIDER_IDS.find(ready);
+  return stand ? { provider: stand, agentFrom: own } : { provider: own };
+}
 
 /** Writes through the Store (the MCP server, and tests). The web app passes its own, to keep live copies in step. */
 export function storeWriter(store: Store): Writer {

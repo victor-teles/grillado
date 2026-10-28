@@ -169,6 +169,8 @@ button:disabled{cursor:default}
 .intro{display:grid;gap:6px;margin-bottom:28px}
 .intro h1{font-size:var(--t-title);line-height:30px;font-weight:600;letter-spacing:-.01em}
 .intro p{color:var(--muted-foreground)}
+/* An import running on a stand-in agent: one quiet line, no banner (demo finding MUST 2). */
+.intro p.agent-note{font-size:var(--t-meta);line-height:16px}
 .bar{padding:12px 40px 16px;background:var(--background)}
 .bar .in,.bar>div{max-width:640px;width:100%;margin:0 auto;display:flex;align-items:center;gap:12px;min-width:0}
 .bar>p[role=alert],.bar .err{max-width:640px;width:100%;margin:0 auto 10px;font-size:var(--t-meta);line-height:16px;color:var(--destructive-ink)}

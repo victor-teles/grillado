@@ -243,6 +243,8 @@ export interface SessionView {
   source?: { app: SourceApp; kind: SourceKind; importedAt: string; questions: number; compacted?: boolean; viaAgent?: boolean };
   /** §5: whether that source is still the same, changed, or gone; `row` is what Update re-imports. */
   sourceInfo?: { state: "current" | "changed" | "gone"; row: string; date?: string } | null;
+  /** "Using Grok — Claude Code isn’t installed": an import running on a stand-in agent (demo finding MUST 2). */
+  agentNote?: string;
   tree: TreeState;
   acceptStreak: number;
   nudge: boolean;

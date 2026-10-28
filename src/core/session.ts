@@ -152,6 +152,8 @@ export interface ImportedSource {
   ideaFromSummary?: boolean;
   /** Last Update landed in plan.conflict.md because the plan had been edited (v1.1 Q5). */
   conflict?: string;
+  /** The source's own agent, when it wasn't installed and the import used another (demo finding MUST 2). */
+  agentFrom?: ProviderId;
 }
 
 export function createSession(input: { idea: string; context?: string; provider: ProviderId }): Session {

@@ -335,6 +335,11 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
                 <p>
                   {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : `${plural(n, "decision")} settled, nothing open.`} Read them over before the plan gets written.
                 </p>
+                {session.agentNote ? (
+                  <p className="agent-note" data-testid="agent-note">
+                    {session.agentNote}
+                  </p>
+                ) : null}
               </div>
               <div className="dl">
                 {early ? (

@@ -29,6 +29,7 @@ export function Provenance({ session, head, edited }: { session: SessionView; he
       <span>
         Imported from {sourceWithArticle(src.app, src.kind)}, {day(info?.date ?? src.importedAt)}
       </span>
+      {session.agentNote ? <span data-testid="agent-note">{session.agentNote}</span> : null}
       {edited ? <span>edited</span> : null}
       {info?.state === "gone" ? <span>Source no longer on disk</span> : info?.state === "changed" ? null : src.compacted ? <span>Part of the session was compacted</span> : null}
       {info?.state === "changed" ? (
