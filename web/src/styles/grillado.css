@@ -638,8 +638,9 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .cmdrow .nm,.cmdrow .why{grid-column:1/-1}
   .dr{grid-template-columns:96px minmax(0,1fr) auto}
   /* The 96px key wraps to two lines so "Who can scan" and "Who can scan offline" read apart; dt.k outranks the base .dr .k
-     wherever this block sits (the span.va lesson from review-pr28). */
-  .dr dt.k{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;padding:6px 0}
+     wherever this block sits (the span.va lesson from review-pr28). Margin, not padding: a clamp clips at the padding edge,
+     so padding would show a sliver of the third line. */
+  .dr dt.k{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;margin:6px 0}
   .dr .re{opacity:1}
   /* Narrow: the answer keeps its line and "Your call" goes under it. */
   .dr .v:has(>.yc){flex-direction:column;align-items:flex-start;gap:0;padding:6px 0}

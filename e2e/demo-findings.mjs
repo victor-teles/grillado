@@ -118,7 +118,9 @@ async function shot(pg, name) {
   await quiet(pg).catch(() => {});
   await pg.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
-const rect = (loc) => loc.evaluate((e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, sw: e.scrollWidth, cw: e.clientWidth, sh: e.scrollHeight, ch: e.clientHeight, lh: parseFloat(getComputedStyle(e).lineHeight) }; });
+const rect = (loc) => loc.evaluate((e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, sw: e.scrollWidth, cw: e.clientWidth, sh: e.scrollHeight, ch: e.clientHeight, lh: parseFloat(getComputedStyle(e).lineHeight), pad: parseFloat(getComputedStyle(e).paddingTop) + parseFloat(getComputedStyle(e).paddingBottom) }; });
+/** Lines of text in a box: its content height (padding off) over its line height. */
+const lines = (r) => Math.round((r.ch - r.pad) / r.lh);
 const CODE = /\bR\d+·\d+\b/;
 
 const w = world();
@@ -185,9 +187,14 @@ try {
       for (const { name, text, title, r } of keys) {
         check(`confirm key ${tag}: "${name}" is whole, not cut`, text === name && !!r && r.sw <= r.cw + 0.5 && r.sh <= r.ch + 0.5, JSON.stringify(r));
         check(`confirm key ${tag}: "${name}" is in its title`, title === name, String(title));
-        if (vp.phone) check(`confirm key ${tag}: "${name}" stays in the 96px column, at most two lines`, !!r && r.w <= 96.5 && Math.round(r.ch / r.lh) <= 2, JSON.stringify(r));
+        if (vp.phone) check(`confirm key ${tag}: "${name}" stays in the 96px column, at most two lines`, !!r && r.w <= 96.5 && lines(r) <= 2, JSON.stringify(r));
       }
-      if (vp.phone) check(`confirm key ${tag}: "${KEYS[0]}" and "${KEYS[1]}" read apart (the longer one wraps to its second line)`, keys[0].r && keys[1].r && Math.round(keys[0].r.ch / keys[0].r.lh) === 1 && Math.round(keys[1].r.ch / keys[1].r.lh) === 2, `${keys[0].r?.ch} / ${keys[1].r?.ch}`);
+      if (vp.phone) check(`confirm key ${tag}: "${KEYS[0]}" and "${KEYS[1]}" read apart (the longer one wraps to its second line)`, keys[0].r && keys[1].r && lines(keys[0].r) === 1 && lines(keys[1].r) === 2, `${keys[0].r && lines(keys[0].r)} / ${keys[1].r && lines(keys[1].r)} lines`);
+      if (vp.phone) {
+        // The long key clamps at two lines; with no padding inside the clip, no sliver of a third line shows under the ellipsis.
+        const lk = await rect(pg.locator(".dr dt.k").filter({ hasText: /^Where the family/ }));
+        check(`confirm key ${tag}: the long key stops at two lines, no sliver of a third`, lines(lk) === 2 && lk.sh > lk.ch && lk.pad === 0, JSON.stringify(lk));
+      }
       await pg.locator(".dr dt.k").filter({ hasText: KEYS[0] }).first().scrollIntoViewIfNeeded();
       await shot(pg, `confirm-key-${tag}`);
       await ctx.close();
