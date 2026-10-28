@@ -58,7 +58,7 @@ const qs = (o: Record<string, string | undefined>) => new URLSearchParams(Object
 /** "Send to issues" (v1.3 item 2). Only `export` and `retry` write to a tracker; everything else reads. */
 export const issuesApi = {
   state: (id: string) => call<IssuesState>("GET", sid(id)),
-  split: (id: string, tracker: Tracker, fallback?: boolean) => call<Preview & { failed?: string; stopped?: boolean }>("POST", `${sid(id)}/split`, { tracker, ...(fallback ? { use: "fallback" } : {}) }),
+  split: (id: string, tracker: Tracker, fallback?: boolean) => call<Preview & { failed?: string; empty?: boolean; stopped?: boolean }>("POST", `${sid(id)}/split`, { tracker, ...(fallback ? { use: "fallback" } : {}) }),
   preview: (id: string, body: DestBody) => call<Preview>("POST", `${sid(id)}/preview`, body),
   export: (id: string, body: DestBody & { selected: string[]; overwrite: string[]; newLabels: string[] }) => call<{ run: ExportRun }>("POST", `${sid(id)}/export`, body),
   retry: (id: string) => call<{ run: ExportRun }>("POST", `${sid(id)}/retry`),
@@ -95,6 +95,8 @@ export interface Preview {
   fallback?: SplitSource;
   /** {agent}'s split was made from an older version of the plan. */
   stale?: boolean;
+  /** The plan's decision count: with none, {agent} groups the plan's work into slices (review r5, #188). */
+  decisions: number;
   dropped: number;
   items: IssueItem[];
   changes: Planned[];

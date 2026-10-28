@@ -129,6 +129,23 @@ export const SplitReplySchema = z.object({
 });
 
 export type SplitReply = z.infer<typeof SplitReplySchema>;
+
+/** Review r5: a plan with to-dos and no decisions, its to-dos grouped into slices (each to-do in exactly one). */
+export const GroupReplySchema = z.object({
+  type: z.literal("groups"),
+  slices: z
+    .array(
+      z.object({
+        key: z.string().max(60),
+        title: z.string().max(256),
+        body: z.string().max(20_000),
+        todos: z.array(z.string().max(20)).max(250),
+      }),
+    )
+    .max(250),
+});
+
+export type GroupReply = z.infer<typeof GroupReplySchema>;
 export type Option = z.infer<typeof OptionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 export type Upcoming = z.infer<typeof UpcomingSchema>;
@@ -178,3 +195,4 @@ export const diagramJsonSchema = () => toStrictJsonSchema(DiagramReplySchema);
 export const addPlanJsonSchema = () => toStrictJsonSchema(AddPlanReplySchema);
 export const importJsonSchema = () => toStrictJsonSchema(ImportReplySchema);
 export const splitJsonSchema = () => toStrictJsonSchema(SplitReplySchema);
+export const groupJsonSchema = () => toStrictJsonSchema(GroupReplySchema);

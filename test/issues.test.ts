@@ -10,7 +10,9 @@ import { linearView, readSecrets, writeSecrets } from "../src/cli/issues/secrets
 import { said, saidAfter } from "../src/cli/issues/tracker.ts";
 import { type ExportRun, countExport, runExport, takeExportLock } from "../src/cli/issues/service.ts";
 import { Store } from "../src/cli/store.ts";
-import { BODY_LIMIT, MAX_CHILDREN, PARENT_KEY, type PlanIssues, buildItems, contentHash, fallbackSlices, fitBody, marker, parentItem, planChanges, readMarker } from "../src/core/issues.ts";
+import { BODY_LIMIT, MAX_CHILDREN, PARENT_KEY, type PlanIssues, buildItems, contentHash, fallbackSlices, fitBody, groupedSlices, groupsTodos, marker, parentItem, planChanges, readMarker } from "../src/core/issues.ts";
+import { buildGroupPrompt, buildSplitPrompt } from "../src/core/engine.ts";
+import { groupSystemPrompt } from "../src/core/prompts.ts";
 import type { Session } from "../src/core/session.ts";
 import { type LinearMock, STORY_MD, fakeGh, isWrite, linearMock, storySession } from "./issues-fixture.ts";
 
@@ -72,6 +74,71 @@ describe("items", () => {
     const { source, slices } = fallbackSlices(s, s.plan!.markdown);
     expect(source).toBe("todos");
     expect(slices.map((x) => x.title)).toEqual(["Add the schema", "Write the importer"]);
+  });
+
+  describe("review r5: a plan with to-dos and no decisions groups its to-dos", () => {
+    const todoPlan = () => {
+      const s = storySession(tempStore(), "# Budget\n\n## Tasks\n\n- [ ] Import bank CSVs\n- [ ] Tag each expense\n- [ ] Show the totals\n");
+      s.source = { kind: "cursor-plan" } as any;
+      s.decisions = {};
+      return { s, todos: fallbackSlices(s, s.plan!.markdown).slices };
+    };
+    const g = (key: string, todos: string[]) => ({ key, title: `Slice ${key}`, body: "Done when it works.", todos });
+
+    test("only when there are to-dos and no decisions (plans with decisions keep the split)", () => {
+      const { s } = todoPlan();
+      expect(groupsTodos(s, fallbackSlices(s, s.plan!.markdown))).toBe(true);
+      const withDecisions = storySession(tempStore(), s.plan!.markdown);
+      withDecisions.source = { kind: "cursor-plan" } as any;
+      expect(groupsTodos(withDecisions, fallbackSlices(withDecisions, s.plan!.markdown))).toBe(false);
+      const stories = storySession(tempStore());
+      stories.decisions = {};
+      expect(groupsTodos(stories, fallbackSlices(stories, STORY_MD))).toBe(false);
+    });
+
+    test("the prompt: its own method, the to-dos by id, each in exactly one slice", () => {
+      const { s, todos } = todoPlan();
+      const p = buildGroupPrompt(s.plan!.markdown, todos);
+      expect(p).toContain('<todos>[{"id":"t1","text":"Import bank CSVs"},{"id":"t2","text":"Tag each expense"},{"id":"t3","text":"Show the totals"}]</todos>');
+      expect(p).not.toContain("<state>");
+      expect(groupSystemPrompt()).toContain("Every to-do goes into exactly one slice");
+      expect(groupSystemPrompt()).toContain('"type":"groups"');
+    });
+
+    test("the split prompt: plans with decisions are unchanged; with none it asks to group the work, covers empty", () => {
+      const withDecisions = storySession(tempStore());
+      const p = buildSplitPrompt(withDecisions, STORY_MD, []);
+      expect(p.endsWith("Split the plan into thin end-to-end slices.")).toBe(true);
+      expect(p).not.toContain("no decisions");
+      const none = storySession(tempStore());
+      none.decisions = {};
+      expect(buildSplitPrompt(none, STORY_MD, [])).toEndWith(
+        "This plan has no decisions. Group its to-dos into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty. If they’re already that small, reply with no slices.",
+      );
+    });
+
+    test("valid: every to-do in exactly one slice; the slice lists its to-dos", () => {
+      const { todos } = todoPlan();
+      const r = groupedSlices(todos, [g("a", ["t1", "t2"]), g("b", ["t3"])]);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.slices.map((x) => x.title)).toEqual(["Slice a", "Slice b"]);
+      expect(r.slices[0].body).toBe("Done when it works.\n- [ ] Import bank CSVs\n- [ ] Tag each expense");
+      expect(r.slices[1].sections).toEqual(["Tasks"]);
+    });
+
+    test("missing, duplicate or invented to-dos are rejected", () => {
+      const { todos } = todoPlan();
+      expect(groupedSlices(todos, [g("a", ["t1", "t2"])])).toEqual({ ok: false, reason: expect.stringContaining("To-dos in no slice: t3") });
+      expect(groupedSlices(todos, [g("a", ["t1", "t2"]), g("b", ["t2", "t3"])])).toEqual({ ok: false, reason: expect.stringContaining("more than one slice: t2") });
+      expect(groupedSlices(todos, [g("a", ["t1", "t2"]), g("b", ["t3", "t9"])])).toEqual({ ok: false, reason: expect.stringContaining("Unknown to-do ids: t9") });
+      expect(groupedSlices(todos, [g("a", ["t1", "t2", "t3"]), g("b", [])]).ok).toBe(false);
+    });
+
+    test("empty: no slices is valid, and leaves the to-dos as they are", () => {
+      const { todos } = todoPlan();
+      expect(groupedSlices(todos, [])).toEqual({ ok: true, slices: [] });
+    });
   });
 
   test("a plan with no stories is the parent alone", () => {

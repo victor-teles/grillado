@@ -824,6 +824,16 @@ try {
     const planMd = path.join(plans, "budget.plan.md");
     writeFileSync(planMd, `---\nname: Home budget tracker\noverview: A shared monthly view of spending.\ntodos:\n${TASKS.map((t, i) => `  - id: t${i + 1}\n    content: ${t}\n    status: pending\n`).join("")}---\n\n# Home budget tracker\n\nSpending is invisible, so the family gets a shared monthly view.\n`);
     utimesSync(planMd, ago, ago);
+    // Review r5: a story plan and a parent-only plan, also imported from Cursor with no decisions.
+    const R5_PLANS = [
+      ["reading.plan.md", "# Reading list\n\nBooks get lost between apps.\n\n## User stories\n\n- As a reader, I save a book I hear about.\n- As a reader, I mark a book as read.\n", "stories", "Group the user stories into slices", "Right now it’s one issue per user story. Grok can group them into a few slices, each one something you can ship on its own.", "Grok found nothing to group, so it’s still one issue per user story", 3],
+      ["chores.plan.md", "# Chore wheel\n\nWho does the dishes is a weekly argument.\n", "parent only", "Split the plan into slices", "Right now it’s only the parent issue. Grok can split the plan into a few slices, each one something you can ship on its own.", "Grok found nothing to group, so it’s still the parent alone", 1],
+    ];
+    for (const [file, md] of R5_PLANS) {
+      const f = path.join(plans, file);
+      writeFileSync(f, `---\nname: ${md.split("\n")[0].slice(2)}\noverview: ${md.split("\n")[2]}\n---\n\n${md}`);
+      utimesSync(f, ago, ago);
+    }
     const app3 = await server({ cwd: proj2, scan: true, pre: `${gbin}:`, config: { defaultProvider: "grok" } });
     const theme = "dark";
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: SHOTS ? 2 : 1 });
@@ -850,33 +860,128 @@ try {
     await pg.waitForTimeout(1500);
     check("r4 to-dos: opening runs no split", splits() === n0, `${n0} → ${splits()}`);
     check("r4 to-dos: the parent and one issue per to-do show right away", (await sheet(pg).locator(".ir:not(.sk)").count()) === 1 + TASKS.length, String(await sheet(pg).locator(".ir:not(.sk)").count()));
-    check("r4 to-dos: the card names the to-dos and the agent in use (Grok)", /^Right now it’s one issue per to-do\. Grok can split the plan into thinner slices that each cover their decisions\.\s*Split with Grok$/.test((await ask.textContent().catch(() => "")) ?? ""), await ask.textContent().catch(() => "(no card)"));
-    check("r4 to-dos: no “Claude Code” anywhere in the sheet", !/Claude Code/.test(await sheet(pg).textContent()));
-    await shot(pg, "r4-todos-ask-grok", theme);
+    // Review r5 (PO #188, Designer r4): no decisions, so the card offers to group the to-dos; the button stays “Split with {agent}”.
+    const tidy = async (l) => ((await l.textContent()) ?? "").replace(/\s*·\s*/g, " · ").replace(/\s+/g, " ").trim();
+    const CARD_TODOS = /^Group the to-dos into slices\s*Right now it’s one issue per to-do\. Grok can group them into a few slices, each one something you can ship on its own\.\s*Split with Grok$/;
+    check("r5 to-dos: 0 decisions, so the card reads “Group the to-dos into slices …” with the agent in use (Grok)", CARD_TODOS.test(await tidy(ask)), await tidy(ask).catch(() => "(no card)"));
+    check("r5 to-dos: the heading is its own line (Inter 500)", (await ask.locator(".iask-h").evaluate((e) => getComputedStyle(e).display === "block" && getComputedStyle(e).fontWeight === "500")) === true);
+    check("r5 to-dos: no “decisions” promise and no “Claude Code” in the sheet", !/decisions/.test(await ask.textContent()) && !/Claude Code/.test(await sheet(pg).textContent()));
+    await shot(pg, "r5-todos-card-grok", theme);
     await sheet(pg).locator(".ir:not(.sk)").nth(1).locator("textarea").fill("Bank CSV import");
     await ask.getByRole("button", { name: "Split with Grok" }).click();
     const src = sheet(pg).locator(".ipv-src").first();
     await sheet(pg).locator(".ipv-src", { hasText: /Your title edits are replaced/ }).waitFor({ timeout: 5000 });
-    const line = ((await src.textContent()) ?? "").replace(/\s*·\s*/g, " · ").trim();
-    check("r4 to-dos: the confirm names Grok: “Split with Grok? … · Split · Keep”", line === "Split with Grok? Your title edits are replaced. · Split · Keep", line);
-    check("r4 to-dos: asking runs nothing", splits() === n0, `${n0} → ${splits()}`);
-    await shot(pg, "r4-todos-confirm-grok", theme);
+    let line = await tidy(src);
+    check("r5 to-dos: the confirm is unchanged: “Split with Grok? … · Split · Keep”", line === "Split with Grok? Your title edits are replaced. · Split · Keep", line);
+    check("r5 to-dos: asking runs nothing", splits() === n0, `${n0} → ${splits()}`);
     actl({ FAKE_SPLIT_DELAY_MS: 2500 });
     await src.getByRole("button", { name: "Split", exact: true }).click();
-    await sheet(pg).getByText(/Grok is splitting the plan/).waitFor({ timeout: 8000 });
+    await sheet(pg).getByText(/Grok is splitting the plan into slices/).waitFor({ timeout: 8000 });
     const way = sheet(pg).locator(".ipv-src").first().getByRole("button").last();
-    check("r4 to-dos: while Grok splits, the way out is “Use the plan’s to-dos instead”", (await way.textContent()) === "Use the plan’s to-dos instead", await way.textContent());
-    await shot(pg, "r4-todos-splitting-grok", theme);
-    await sheet(pg).locator(".ipv-src", { hasText: /^(Split by Grok into|Couldn’t split with Grok)/ }).waitFor({ timeout: 15000 });
-    const log = existsSync(SPLIT_LOG) ? readFileSync(SPLIT_LOG, "utf8").trim().split("\n") : [];
-    check("r4 to-dos: Split ran the agent exactly once, and it was Grok", splits() === n0 + 1 && log.at(-1) === "grok", `${n0} → ${splits()} · ${log.at(-1)}`);
-    // A Cursor plan carries no decisions, so the fake Grok has nothing to slice: a failed split (not “0 slices”),
-    // and the to-dos stay, said with Grok's name. (A to-do plan with decisions splits: test/issues-server.test.ts.)
-    const end = ((await src.textContent()) ?? "").replace(/\s*·\s*/g, " · ").trim();
-    check("r4 to-dos: no slices reads as a failed split that names Grok and keeps the to-dos", end === "Couldn’t split with Grok, so it’s one issue per to-do · Try again" && (await sheet(pg).locator(".ir:not(.sk)").count()) === 1 + TASKS.length, end);
-    await shot(pg, "r4-todos-fail-grok", theme);
+    check("r5 to-dos: while Grok works, the way out is “Use the plan’s to-dos instead”", (await way.textContent()) === "Use the plan’s to-dos instead", await way.textContent());
+    await sheet(pg).locator(".ipv-src", { hasText: /^(Split by Grok into|Couldn’t split)/ }).waitFor({ timeout: 15000 });
+    let log = existsSync(SPLIT_LOG) ? readFileSync(SPLIT_LOG, "utf8").trim().split("\n") : [];
+    check("r5 to-dos: Split ran the agent exactly once, and it was Grok", splits() === n0 + 1 && log.at(-1) === "grok", `${n0} → ${splits()} · ${log.at(-1)}`);
+    line = await tidy(src);
+    const kidTitles = await sheet(pg).locator(".ir:not(.sk) textarea").evaluateAll((xs) => xs.slice(1).map((x) => x.value));
+    check("r5 to-dos: a valid grouping (each to-do in exactly one slice) gives slices: “Split by Grok into 2 slices · Split again”", line === "Split by Grok into 2 slices · Split again" && kidTitles.length === 2, `${line} · ${JSON.stringify(kidTitles)}`);
+    await shot(pg, "r5-todos-grouped-grok", theme);
+    // Split again with an empty reply: a plain no-change line, the to-dos stay, nothing looks like a failure.
+    actl({ FAKE_GROUP: "empty" });
+    await sheet(pg).locator(".ir:not(.sk)").nth(1).locator("textarea").fill("Import and tag");
+    await src.getByRole("button", { name: "Split again" }).click();
+    await sheet(pg).locator(".ipv-src", { hasText: /Your title edits are replaced/ }).waitFor({ timeout: 5000 });
+    await src.getByRole("button", { name: "Split again" }).click();
+    const noChange = async (label, want, rows) => {
+      const empty = sheet(pg).getByTestId("split-empty");
+      await empty.waitFor({ timeout: 15000 });
+      const got = await tidy(empty);
+      check(`r5 ${label}: an empty reply is a plain no-change line: “${want}”`, got === want && (await sheet(pg).locator(".ir:not(.sk)").count()) === rows, `${got} · ${await sheet(pg).locator(".ir:not(.sk)").count()} rows`);
+      const look = await empty.evaluate((e) => ({ warn: e.classList.contains("warn"), icon: !!e.querySelector("svg"), buttons: e.querySelectorAll("button").length, role: e.getAttribute("role") }));
+      check(`r5 ${label}: … no warning look, no icon, no Try again, role=status`, !look.warn && !look.icon && look.buttons === 0 && look.role === "status" && !/Couldn’t|Try again/.test(await sheet(pg).textContent()), JSON.stringify(look));
+    };
+    await noChange("to-dos", "Grok found nothing to group, so it’s still one issue per to-do", 1 + TASKS.length);
+    check("r5 to-dos: that was one more run", splits() === n0 + 2, `${splits()}`);
+    await shot(pg, "r5-todos-nochange-grok", theme);
     actl();
     await pg.keyboard.press("Escape");
+    // The zero-decision card and its button in light (Designer r4 nice 1: the soft button gets an edge on --sel).
+    {
+      const lctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: SHOTS ? 2 : 1 });
+      await lctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), "light");
+      const lp = await lctx.newPage();
+      lp.on("pageerror", (e) => errors.push(String(e)));
+      await lp.goto(app3.url);
+      await pickIfAsked(lp, /Grok/);
+      await lp.goto(pg.url());
+      await lp.getByTestId("plan").waitFor({ timeout: 15000 });
+      await openSheet(lp);
+      const lask = sheet(lp).locator(".iask");
+      await lask.waitFor({ timeout: 8000 });
+      check("r5 to-dos light: the same card", CARD_TODOS.test(await tidy(lask)), await tidy(lask));
+      const btn = lask.getByRole("button", { name: "Split with Grok" });
+      const st = await btn.evaluate((b) => {
+        const cs = getComputedStyle(b);
+        const probe = document.createElement("div");
+        probe.style.background = "var(--card)";
+        b.parentElement.appendChild(probe);
+        const card = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return { bg: cs.backgroundColor, card, shadow: cs.boxShadow };
+      });
+      check("r5 nice 1: on the card the soft button is --card with a 1px inset --subtle-foreground edge", st.bg === st.card && /inset/.test(st.shadow) && /1px/.test(st.shadow), JSON.stringify(st));
+      await shot(lp, "r5-todos-card-grok", "light");
+      if (SHOTS) await lask.screenshot({ path: path.join(SHOTS, "r5-split-button-light.png") });
+      await btn.hover();
+      await lp.waitForTimeout(400);
+      const hv = await btn.evaluate((b) => {
+        const probe = document.createElement("div");
+        probe.style.background = "var(--muted)";
+        b.parentElement.appendChild(probe);
+        const muted = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return { bg: getComputedStyle(b).backgroundColor, muted, shadow: getComputedStyle(b).boxShadow };
+      });
+      check("r5 nice 1: hover goes to --muted and keeps the edge", hv.bg === hv.muted && /inset/.test(hv.shadow), JSON.stringify(hv));
+      if (SHOTS) await lask.screenshot({ path: path.join(SHOTS, "r5-split-button-light-hover.png") });
+      await lp.mouse.move(0, 0);
+      await btn.focus();
+      await lp.keyboard.press("Shift+Tab");
+      await lp.keyboard.press("Tab");
+      const fr = await btn.evaluate((b) => ({ outline: getComputedStyle(b).outlineStyle, offset: parseFloat(getComputedStyle(b).outlineOffset) || 0, fv: b.matches(":focus-visible") }));
+      check("r5 nice 1: the focus ring sits outside the edge", fr.fv && fr.outline !== "none" && fr.offset >= 0, JSON.stringify(fr));
+      if (SHOTS) await lask.screenshot({ path: path.join(SHOTS, "r5-split-button-light-focus.png") });
+      await lctx.close();
+    }
+    // Story and parent-only plans with no decisions: their own card copy, and the same plain no-change line.
+    for (const [file, md, label, head, body, want, rows] of R5_PLANS) {
+      const title = md.split("\n")[0].slice(2);
+      let r = null;
+      for (let i = 0; i < 40 && !r; i++) {
+        const v = await pg.evaluate(() => fetch("/api/found").then((x) => x.json()));
+        r = (v.rows ?? []).find((x) => `${x.title ?? ""} ${x.idea ?? ""}`.includes(title));
+        if (!r) await pg.waitForTimeout(250);
+      }
+      check(`r5 ${label}: the scan finds the imported plan`, !!r);
+      if (!r) continue;
+      const im = await pg.evaluate((id) => fetch("/api/found/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }).then((x) => x.json()), r.id);
+      await pg.goto(`${new URL(app3.url).origin}${im.url}${new URL(app3.url).search}`);
+      await pg.getByTestId("plan").waitFor({ timeout: 15000 });
+      const k0 = splits();
+      await openSheet(pg);
+      const card = sheet(pg).locator(".iask");
+      await card.waitFor({ timeout: 8000 });
+      const want1 = `${head} ${body} Split with Grok`;
+      const got1 = (await tidy(card)).replace(/(\S)(Right now)/, "$1 $2").replace(/\.Split/, ". Split");
+      check(`r5 ${label}: 0 decisions, so the card reads “${head} …”`, got1 === want1, got1);
+      await shot(pg, `r5-${label.replace(" ", "-")}-card-grok`, theme);
+      await card.getByRole("button", { name: "Split with Grok" }).click();
+      await noChange(label, want, rows);
+      check(`r5 ${label}: one run`, splits() === k0 + 1, `${k0} → ${splits()}`);
+      await shot(pg, `r5-${label.replace(" ", "-")}-nochange-grok`, theme);
+      await pg.keyboard.press("Escape");
+    }
+    actl();
     await ctx.close();
     await app3.stop();
   }

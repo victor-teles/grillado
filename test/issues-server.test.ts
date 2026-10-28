@@ -288,19 +288,66 @@ describe("the agent split", () => {
     store.save(s);
     const fb = await call("POST", `/api/sessions/${s.id}/issues/split`, { use: "fallback" });
     expect(fb.json.source).toBe("todos");
+    // Review r5: with decisions it's still the split (slices that cover decisions), not the to-do grouping.
+    expect(fb.json.decisions).toBeGreaterThan(0);
     const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
     expect(r.json.source).toBe("agent");
     expect(r.json.failed).toBeUndefined();
+    expect(r.json.items.slice(1).every((it: any) => it.body.includes("**Covers:**"))).toBe(true);
   });
 
-  test("review r4: an agent reply with no usable slices is a failed split, not “0 slices”", async () => {
+  test("review r5: an empty agent reply keeps the stories and says so; it isn't a failure", async () => {
     const { store, call } = await start();
     const s = storySession(store);
     s.decisions = {};
     store.save(s);
     const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
     expect(r.json.source).toBe("stories");
-    expect(r.json.failed).toBe("failed");
+    expect(r.json.empty).toBe(true);
+    expect(r.json.failed).toBeUndefined();
+  });
+
+  const TODO_MD = "# Budget\n\n## Tasks\n\n- [ ] Import bank CSVs\n- [ ] Tag each expense\n- [ ] Show the totals\n";
+  const todoPlan = (store: Store) => {
+    const s = storySession(store, TODO_MD);
+    s.source = { app: "cursor", kind: "plan", path: "/nowhere/budget.plan.md", date: s.createdAt } as never;
+    s.decisions = {};
+    store.save(s);
+    return s;
+  };
+
+  test("review r5: no decisions, so the to-dos are grouped (its own prompt), each in exactly one slice", async () => {
+    const { store, call } = await start();
+    const s = todoPlan(store);
+    const pv = await call("POST", `/api/sessions/${s.id}/issues/preview`, {});
+    expect(pv.json.source).toBe("todos");
+    expect(pv.json.decisions).toBe(0);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("agent");
+    expect(r.json.failed).toBeUndefined();
+    const kids = r.json.items.slice(1);
+    expect(kids.map((it: any) => it.title)).toEqual(["Ship Import bank CSVs and Tag each expense", "Ship Show the totals"]);
+    expect(kids[0].body).toContain("- [ ] Import bank CSVs\n- [ ] Tag each expense");
+  });
+
+  for (const [mode, what] of [["missing", "a to-do left out"], ["dup", "a to-do in two slices"], ["invent", "an invented to-do"]] as const)
+    test(`review r5: ${what} is an invalid grouping, so a failure that keeps the to-dos`, async () => {
+      const { store, call } = await start({}, { FAKE_GROUP: mode });
+      const s = todoPlan(store);
+      const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+      expect(r.json.source).toBe("todos");
+      expect(r.json.failed).toBe("malformed");
+      expect(r.json.items.length).toBe(4);
+    });
+
+  test("review r5: an empty grouping keeps the to-dos, plainly", async () => {
+    const { store, call } = await start({}, { FAKE_GROUP: "empty" });
+    const s = todoPlan(store);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("todos");
+    expect(r.json.empty).toBe(true);
+    expect(r.json.failed).toBeUndefined();
+    expect(r.json.items.length).toBe(4);
   });
 
   test("FAKE_SPLIT=fail: the user stories, with the reason", async () => {

@@ -3,7 +3,7 @@
 // the marker search and the 404 check, Linear's viewer, teams, projects and labels (#180).
 import type http from "node:http";
 import { textHash } from "../../core/text-hash.ts";
-import { PARENT_KEY, type PlanIssues, type Slice, type SplitSource, type Tracker, agentSlices, buildItems, contentHash, fallbackSlices, planChanges } from "../../core/issues.ts";
+import { PARENT_KEY, type PlanIssues, type Slice, type SplitSource, type Tracker, agentSlices, buildItems, contentHash, fallbackSlices, groupsTodos, planChanges } from "../../core/issues.ts";
 import type { Session } from "../../core/session.ts";
 import type { Store } from "../store.ts";
 import { Gh, type GhOptions, GitHubTracker, projectRemotes } from "./gh.ts";
@@ -25,6 +25,8 @@ export interface IssuesHost {
   projectDir(s: Session): string | undefined;
   /** {agent} splits the plan. null: no agent is ready. */
   split(s: Session, md: string, exported: { key: string; title: string }[], signal: AbortSignal): Promise<{ ok: true; slices: Slice[] } | { ok: false; code: string } | null>;
+  /** Review r5: a decision-less plan's to-dos grouped by {agent}, already checked (each to-do in exactly one slice). */
+  group(s: Session, md: string, todos: Slice[], signal: AbortSignal): Promise<{ ok: true; slices: Slice[] } | { ok: false; code: string } | null>;
 }
 
 export interface IssuesOptions {
@@ -182,19 +184,23 @@ export class IssuesRoutes {
     const planHash = textHash(md);
     this.splits.get(s.id)?.abort();
     let failed: string | undefined;
+    // {agent} answered with no slices at all: the fallback stays, said plainly (not a failure).
+    let empty = false;
     let out: { source: SplitSource; slices: Slice[] } | null = null;
     const fb = fallbackSlices(s, md);
+    const grouping = groupsTodos(s, fb);
     // Imported to-dos can be split too, when asked (PO, review round 4).
     if (!fallback) {
       const c = new AbortController();
       this.splits.set(s.id, c);
       try {
         const exported = Object.keys(s.issues?.items ?? {}).map((key) => ({ key, title: s.issueTitles?.[key] ?? s.issueSplit?.slices.find((x) => x.key === key)?.title ?? key }));
-        const r = await this.host.split(s, md, exported, c.signal);
+        const r = grouping ? await this.host.group(s, md, fb.slices, c.signal) : await this.host.split(s, md, exported, c.signal);
         if (c.signal.aborted) return { stopped: true };
-        const slices = r?.ok ? agentSlices(s, r.slices) : [];
-        // No usable slices (e.g. a plan without decisions) reads as a failed split, not "0 slices".
+        const slices = r?.ok ? (grouping ? r.slices : agentSlices(s, r.slices)) : [];
         if (slices.length) out = { source: "agent", slices };
+        else if (r?.ok && !r.slices.length) empty = true;
+        // Slices that were all unusable (no titles) are a failed split, not "0 slices".
         else failed = r && !r.ok ? r.code : r ? "failed" : "missing";
       } finally {
         if (this.splits.get(s.id) === c) this.splits.delete(s.id);
@@ -204,7 +210,7 @@ export class IssuesRoutes {
     // Only {agent}'s split is cached: the fallback is recomputed from the plan every time (it's cheap and exact).
     s.issueSplit = out.source === "agent" ? { planHash, source: out.source, slices: out.slices, at: new Date().toISOString() } : undefined;
     this.host.changed(s);
-    return { ...this.items(s, tracker), ...(failed ? { failed } : {}) };
+    return { ...this.items(s, tracker), ...(failed ? { failed } : {}), ...(empty ? { empty } : {}) };
   }
 
   /** {agent}'s split that still applies: made from this plan text, or the one the exported issues came from. */
@@ -233,7 +239,9 @@ export class IssuesRoutes {
     const built = buildItems(s, md, tracker, named);
     const parentTitle = title(PARENT_KEY);
     if (parentTitle) built.items[0] = { ...built.items[0], title: parentTitle };
-    return { source, fallback, stale, ...built };
+    // `grouping`: no decisions, so {agent} would group the to-dos (review r5).
+    // The decision count: with none, the card offers to group the plan's work (review r5, #188).
+    return { source, fallback, stale, decisions: Object.keys(s.decisions).length, ...built };
   }
 
   /** Read-only: the items and what each would do, checked against the tracker (404s and edits, #176, #182). */
@@ -246,7 +254,7 @@ export class IssuesRoutes {
       if (!(err instanceof ExportError)) throw err;
     }
     const tracker: Tracker = dest?.tracker ?? (body?.tracker === "linear" ? "linear" : "github");
-    const { items, source, fallback, stale, dropped } = this.items(s, tracker, titlesOf(body));
+    const { items, source, fallback, stale, decisions, dropped } = this.items(s, tracker, titlesOf(body));
     const linked = dest && s.issues && s.issues.tracker === dest.tracker && s.issues.target === dest.target ? s.issues : undefined;
     const remote: Record<string, string | null> = {};
     // Titles of exported issues no longer in the plan, for the "Removed from the plan" rows (#178).
@@ -267,7 +275,7 @@ export class IssuesRoutes {
         for (const k of Object.keys(removed)) delete removed[k];
       }
     }
-    return { source, fallback, stale, dropped, items, changes: planChanges(items, linked, remote), removed };
+    return { source, fallback, stale, decisions, dropped, items, changes: planChanges(items, linked, remote), removed };
   }
 
   private destOf(body: any) {

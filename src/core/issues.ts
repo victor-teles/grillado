@@ -236,6 +236,50 @@ export function fallbackSlices(s: Session, md: string): { source: SplitSource; s
   return { source: "none", slices: [] };
 }
 
+/**
+ * Review r5 (PO): a plan with to-dos and no decisions has nothing to slice by, so {agent} groups its to-dos
+ * instead (a separate prompt), and the sheet says so.
+ */
+export function groupsTodos(s: Session, fb: { source: SplitSource }): boolean {
+  return fb.source === "todos" && Object.keys(s.decisions).length === 0;
+}
+
+/** The to-dos as {agent} sees them: short ids, so a reply can't mistype one. */
+export const todoIds = (todos: Slice[]) => todos.map((t, i) => ({ id: `t${i + 1}`, text: t.body }));
+
+export type Group = { key: string; title: string; body: string; todos: string[] };
+
+/**
+ * {agent}'s groups checked against the to-dos: each to-do in exactly one group, none missing, repeated or
+ * invented, and every group titled and non-empty. No groups at all is valid: the to-dos stay as they are.
+ */
+export function groupedSlices(todos: Slice[], groups: Group[]): { ok: true; slices: Slice[] } | { ok: false; reason: string } {
+  const ids = todoIds(todos);
+  const byId = new Map(ids.map((t, i) => [t.id, i]));
+  const seen = new Map<string, number>();
+  for (const g of groups) for (const id of g.todos) seen.set(id, (seen.get(id) ?? 0) + 1);
+  const invented = [...seen.keys()].filter((id) => !byId.has(id));
+  if (invented.length) return { ok: false, reason: `Unknown to-do ids: ${invented.join(", ")}. Use only the ids given.` };
+  if (!groups.length) return { ok: true, slices: [] };
+  const twice = [...seen].filter(([, n]) => n > 1).map(([id]) => id);
+  if (twice.length) return { ok: false, reason: `To-dos in more than one slice: ${twice.join(", ")}. Put each to-do in exactly one slice.` };
+  const missing = ids.filter((t) => !seen.has(t.id)).map((t) => t.id);
+  if (missing.length) return { ok: false, reason: `To-dos in no slice: ${missing.join(", ")}. Put each to-do in exactly one slice.` };
+  if (groups.some((g) => !g.title.trim() || !g.todos.length)) return { ok: false, reason: "Every slice needs a title and at least one to-do." };
+  return {
+    ok: true,
+    slices: uniqueKeys(
+      groups.map((g) => ({
+        key: g.key || g.title,
+        title: g.title.trim(),
+        body: [g.body.trim(), ...g.todos.map((id) => `- [ ] ${todos[byId.get(id)!].body}`)].filter(Boolean).join("\n"),
+        covers: [],
+        sections: ["Tasks"],
+      })),
+    ),
+  };
+}
+
 /** Clean {agent}'s slices: keys made unique, unknown decisions dropped, empty ones skipped. */
 export function agentSlices(s: Session, slices: Slice[]): Slice[] {
   const known = new Set(Object.keys(s.decisions));

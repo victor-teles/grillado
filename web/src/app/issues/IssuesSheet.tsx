@@ -176,6 +176,8 @@ export function IssuesSheet(p: {
   const [pv, setPv] = useState<Preview | null>(null);
   const [splitting, setSplitting] = useState(false);
   const [splitFailed, setSplitFailed] = useState(false);
+  // {agent} answered with no slices: said plainly, the plan's own items stay (review r5, not a failure).
+  const [splitEmpty, setSplitEmpty] = useState(false);
   const [askSplit, setAskSplit] = useState(false);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -229,11 +231,13 @@ export function IssuesSheet(p: {
     if (back) setRefocus(fallback ? "after" : "way");
     setAskSplit(false);
     setSplitFailed(false);
+    setSplitEmpty(false);
     setSplitting(!fallback);
     try {
       const x = await issuesApi.split(s.id, tracker, fallback);
       if (x.stopped) return;
       setSplitFailed(!!x.failed);
+      setSplitEmpty(!!x.empty);
       // The split's items, checked against the tracker again.
       adopt(await issuesApi.preview(s.id, { ...dest(), titles: undefined }));
     } catch (e) {
@@ -855,6 +859,9 @@ export function IssuesSheet(p: {
   );
   let source: ReactNode = null;
   if (!run && pv) {
+    // No decisions: {agent} groups the plan's work into slices rather than covering decisions (review r5, #188).
+    const group = pv.decisions === 0;
+    const now = pv.source === "stories" ? "one issue per user story" : pv.source === "todos" ? "one issue per to-do" : "the parent alone";
     if (splitting)
       source = (
         <p className="ipv-src" role="status">
@@ -892,15 +899,24 @@ export function IssuesSheet(p: {
             <IAlert s={14} />
             Couldn’t
           </span>{" "}
-          split with {p.agentName}, so it’s {pv.source === "stories" ? "one issue per user story" : pv.source === "todos" ? "one issue per to-do" : "the parent alone"}
+          split with {p.agentName}, so it’s {now}
           <span className="dt">·</span>
           {splitLink("Try again")}
+        </p>
+      );
+    else if (splitEmpty && pv.source !== "agent")
+      source = (
+        // No change: plain words, no icon and no Try again (it would give the same answer).
+        <p className="ipv-src" role="status" data-testid="split-empty">
+          {p.agentName} found nothing to {group ? "group" : "split"}, so it’s still {now}
         </p>
       );
     else if (pv.source === "agent")
       source = pv.stale ? (
         <>
-          <p className="ipv-src">Split by {p.agentName} into {plural(kids.length, "slice")}</p>
+          <p className="ipv-src">
+            Split by {p.agentName} into {plural(kids.length, "slice")}
+          </p>
           <p className="ipv-src stale" data-testid="split-stale">
             The plan changed since this split
             <span className="dt">·</span>
@@ -918,8 +934,13 @@ export function IssuesSheet(p: {
       source = (
         <div className="iask">
           <span>
+            {group && <strong className="iask-h">{pv.source === "none" ? "Split the plan into slices" : pv.source === "stories" ? "Group the user stories into slices" : "Group the to-dos into slices"}</strong>}
             {pv.source === "todos" ? "Right now it’s one issue per to-do." : pv.source === "stories" ? "Right now it’s one issue per user story." : "Right now it’s only the parent issue."}{" "}
-            {p.agentName} can split the plan into {pv.source === "none" ? "slices" : "thinner slices"} that each cover their decisions.
+            {!group
+              ? `${p.agentName} can split the plan into ${pv.source === "none" ? "slices" : "thinner slices"} that each cover their decisions.`
+              : pv.source === "none"
+                ? `${p.agentName} can split the plan into a few slices, each one something you can ship on its own.`
+                : `${p.agentName} can group them into a few slices, each one something you can ship on its own.`}
           </span>
           <button ref={askBtn} type="button" className="btn soft sm" onClick={trySplit}>
             Split with {p.agentName}
