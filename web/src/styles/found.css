@@ -6,8 +6,12 @@
 .fh{display:flex;align-items:center;gap:6px;margin:0 0 4px;min-height:28px;font-size:var(--t-meta);line-height:16px}
 .fh h2{font-size:var(--t-meta);font-weight:500;color:var(--muted-foreground);margin:0;white-space:nowrap}
 .fh .proj{color:var(--subtle-foreground);display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;overflow:hidden}
-.fh .proj b{font-weight:500;color:var(--muted-foreground)}
+.fh .proj b{font-weight:500;color:var(--muted-foreground);min-width:0;overflow:hidden;text-overflow:ellipsis}
 .fh .proj svg{width:12px;height:12px;flex:none}
+/* the branch shrinks first and ends in "…"; too narrow for a few letters, it goes whole with its icon (fitMeta) */
+.fh .br{display:inline-flex;align-items:center;gap:4px;min-width:0;flex:0 1000 auto}
+.fh .br .bn{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fh .br[hidden]{display:none}
 .fh .sp{flex:1}
 .fh .look{margin-right:-10px}
 .fh .busy{color:var(--muted-foreground);white-space:nowrap}
@@ -22,8 +26,7 @@
 /* the meta wraps at a separator (never inside one); the "·" sits in the gap, clipped at a line start (#83); 2 lines max */
 .frow .meta{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:flex;flex-wrap:wrap;column-gap:15px;max-height:32px;overflow:hidden}
 .frow .meta .sg{position:relative;white-space:nowrap}
-/* nothing left to drop or shorten (the narrowest phones): a third line, never a clipped count */
-/* last resort (review-pr21 r2 #1): a third line, and a count wider than the line wraps, never clipped */
+/* nothing left to drop or shorten (the narrowest phones): a third line, and a count wider than the line wraps; never clipped */
 .frow .meta[data-tall]{max-height:none}
 .frow .meta[data-tall]>.sg:last-child{white-space:normal}
 .frow .meta .sg+.sg::before{content:"·";position:absolute;left:-10px}
@@ -51,6 +54,8 @@ html[data-kbd] .imp>span{transition:none}
 @media (hover:hover){.slot .more:hover,.slot .lnk:hover,.fempty .lnk:hover{color:var(--foreground)}}
 .fempty{display:flex;align-items:center;gap:6px;min-height:28px;font-size:var(--t-meta);color:var(--muted-foreground);margin:0}
 .fempty .x{width:28px;height:28px;margin-left:auto;margin-right:-6px}
+/* the folder name moves to the next line whole (never split at a hyphen); a name wider than the line ends in "…" */
+.fempty .fnm{display:inline-block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .fempty .x svg{width:14px;height:14px}
 /* §5 provenance on an imported plan: the meta line as gap-separated parts (#144) */
 .sub.fp{display:flex;flex-wrap:wrap;column-gap:15px}
@@ -73,5 +78,7 @@ html[data-kbd] .imp>span{transition:none}
   /* the bottom line's links reach down into the space below the group, never up into the last row */
   .slot .more,.slot .lnk{padding:8px 6px 20px;margin:-8px -6px -20px}
   .slot>span:not([aria-hidden]),.fempty>span:not([aria-hidden]){min-width:0;line-height:16px}
+  /* 3px between Look again's hit area and ×'s, so they never share an edge */
+  .fempty .lnk{margin-right:-3px}
 }
 .imp6 p{overflow-wrap:anywhere}

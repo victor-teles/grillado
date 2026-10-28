@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
+import { quiet } from "./wait.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-act-"));
@@ -81,7 +82,7 @@ async function toPlan(pg, url) {
 const planMd = (pg) => pg.evaluate(async () => (await fetch(`/api/sessions/${location.pathname.split("/").pop()}/plan.md`)).text());
 const TA = ".blk-edit:not(.blk-bd)";
 async function axe(pg, name) {
-  await pg.waitForTimeout(400); // let fades finish
+  await quiet(pg); // colors read mid-transition fail contrast: wait until every fade has finished
   const r = await new AxeBuilder({ page: pg }).analyze();
   check(`axe: ${name}`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message ?? ""} ${v.nodes[0]?.html?.slice(0, 160) ?? ""}`).join("; "));
 }

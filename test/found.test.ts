@@ -15,6 +15,14 @@ import { ImportError } from "../src/core/found/import.ts";
 import { type ImportLine, fold, groupLabel, groupMeta, groups, importRows, metaParts, title } from "../src/core/activity.ts";
 
 const FIX = path.join(import.meta.dir, "fixtures", "found");
+/** Wait for a condition (each turn of the event loop), not for a fixed time. */
+async function until(ok: () => boolean, ms = 5000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error("timed out waiting for the condition");
+    await new Promise((r) => setImmediate(r));
+  }
+}
 const HOUR_AGO = (Date.now() - 3600_000) / 1000;
 
 /** A project folder plus a home folder holding Claude Code, Codex and Cursor data, all from fixtures. */
@@ -487,7 +495,8 @@ describe("found in this project: v1.3 item 1 UI paths", () => {
     };
     const pa = svc.import(a.id, "claude", undefined, agent);
     const pb = svc.import(b.id, "claude", undefined, agent);
-    await new Promise((r) => setTimeout(r, 30));
+    // Both reach the slot (no fixed sleep): whichever source read finishes first, a was clicked first.
+    await until(() => calls === 1 && svc.view().agent?.waiting.length === 1);
     expect(svc.view()).toMatchObject({ agent: { running: a.id, waiting: [b.id] } });
     expect(calls).toBe(1);
     svc.stop(b.id);

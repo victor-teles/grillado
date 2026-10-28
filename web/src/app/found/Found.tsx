@@ -111,6 +111,9 @@ function Meta({ segs }: { segs: React.ReactNode[] }) {
   );
 }
 
+/** Below this, an ellipsized branch would show a letter or two: drop it whole with its icon. */
+const BRANCH_MIN = 32;
+
 /**
  * Every row's meta fits in 2 lines, and the count always shows (#151, review-pr21 r2 #1): drop the
  * lowest-priority segments first (branch, subfolder, plan path), then shorten the source label
@@ -119,6 +122,13 @@ function Meta({ segs }: { segs: React.ReactNode[] }) {
  */
 function fitMeta(root: HTMLElement | null) {
   if (!root) return;
+  // The header's branch (#157): "main…" or nothing, never a clipped stray letter.
+  const br = root.querySelector<HTMLElement>(".fh .br");
+  const bn = br?.querySelector<HTMLElement>(".bn");
+  if (br && bn) {
+    br.hidden = false;
+    if (bn.scrollWidth > bn.clientWidth + 0.5 && bn.clientWidth < BRANCH_MIN) br.hidden = true;
+  }
   for (const m of root.querySelectorAll<HTMLElement>(".frow .meta")) {
     const drops = [...m.querySelectorAll<HTMLElement>(":scope > [data-drop]")].sort((a, b) => Number(a.dataset.drop) - Number(b.dataset.drop));
     const kindWord = m.querySelectorAll<HTMLElement>(":scope > .sg .sx");
@@ -448,7 +458,9 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
     return (
       <div className="fmount e" ref={mount} data-testid="found">
         <p className="fempty">
-          <span>No plans found in {name}</span>
+          <span>
+            No plans found in <span className="fnm">{name}</span>
+          </span>
           <span aria-hidden="true">·</span>
           <button type="button" className="lnk" onClick={() => void lookAgain()} aria-disabled={looking || undefined}>
             {looking ? "Looking…" : "Look again"}
@@ -470,10 +482,10 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
             <span className="proj">
               · <b>{on.project.name}</b>
               {branch ? (
-                <>
+                <span className="br" data-testid="found-branch">
                   <IBranch s={12} />
-                  {branch}
-                </>
+                  <span className="bn">{branch}</span>
+                </span>
               ) : null}
             </span>
           ) : null}

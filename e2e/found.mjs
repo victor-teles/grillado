@@ -47,7 +47,7 @@ const freePort = () =>
 const HOUR_AGO = (Date.now() - 3600_000) / 1000;
 
 /** A project "flatlist" (git, main) and a HOME with Claude Code, Codex and Cursor data from the fixtures. */
-function world(name = "flatlist", { sources = true } = {}) {
+function world(name = "flatlist", { sources = true, branch = "main" } = {}) {
   const tmp = mkdtempSync(path.join(WORK, "w-"));
   const home = path.join(tmp, "home");
   const root = path.join(tmp, name);
@@ -58,7 +58,7 @@ function world(name = "flatlist", { sources = true } = {}) {
     renameSync(path.join(root, "gitignore.txt"), path.join(root, ".gitignore"));
   } else mkdirSync(path.join(root, "src"), { recursive: true });
   mkdirSync(path.join(root, "pkg", "web"), { recursive: true });
-  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  spawnSync("git", ["init", "-q", "-b", branch], { cwd: root });
   const plansDir = path.join(home, ".claude", "plans");
   const claude = path.join(home, ".claude", "projects", root.replace(/[^a-zA-Z0-9]/g, "-"));
   const fill = (src, dest, sub = (s) => s) => {
@@ -310,6 +310,48 @@ async function home(pg, url) {
   await pg.waitForFunction(() => !document.querySelector("[data-testid=found] [aria-busy=true]"), null, { timeout: 10000 });
 }
 /** The View the server sends, edited, for states a real scan can't hold still (skeleton, partial, a row that couldn't be read). */
+/** The header's project · branch (#157 nice-to-have 1): the branch ends in "…" or goes whole with its icon. */
+function headAudit() {
+  const proj = document.querySelector(".fh .proj");
+  const b = proj?.querySelector("b");
+  const br = proj?.querySelector(".br");
+  const bn = br?.querySelector(".bn");
+  const shown = !!br && br.getClientRects().length > 0;
+  const icon = !!br?.querySelector("svg") && br.querySelector("svg").getClientRects().length > 0;
+  const pr = proj?.getBoundingClientRect();
+  const r = shown ? br.getBoundingClientRect() : null;
+  const truncated = shown && bn.scrollWidth > bn.clientWidth + 0.5;
+  return {
+    has: !!br,
+    shown,
+    icon,
+    text: bn?.textContent,
+    bnW: shown ? Math.round(bn.clientWidth) : 0,
+    truncated,
+    ellipsis: shown && getComputedStyle(bn).textOverflow === "ellipsis",
+    insideProj: !r || r.right <= pr.right + 0.5,
+    name: b?.textContent,
+    nameW: b ? Math.round(b.getBoundingClientRect().width) : 0,
+  };
+}
+const headOk = (h) => h.has && h.shown === h.icon && h.insideProj && h.nameW > 0 && (!h.truncated || (h.ellipsis && h.bnW >= 32));
+
+/** The empty line (#157 nice-to-haves 2, 3): the folder name on one line, a gap between the two hit areas. */
+function emptyAudit() {
+  const f = document.querySelector(".fempty .fnm");
+  const lnk = document.querySelector(".fempty .lnk").getBoundingClientRect();
+  const x = document.querySelector(".fempty .x").getBoundingClientRect();
+  const lh = parseFloat(getComputedStyle(f).lineHeight) || 16;
+  return {
+    name: f.textContent,
+    rects: f.getClientRects().length,
+    h: Math.round(f.getBoundingClientRect().height),
+    lh,
+    clipped: f.scrollWidth > f.clientWidth + 0.5 && getComputedStyle(f).textOverflow !== "ellipsis",
+    gap: Math.round((x.left - lnk.right) * 10) / 10,
+  };
+}
+
 async function fakeView(pg, edit) {
   await pg.route("**/api/found", async (route) => {
     const res = await route.fetch();
@@ -839,6 +881,9 @@ try {
       await np.reload();
       await np.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
       await shot(np, "1-group", `m-found-${width}-${theme}-r3`);
+      const ha = await np.evaluate(headAudit);
+      check(`${theme} phone ${width}: the header's branch ends in "…" or goes whole with its icon, never a clipped letter`, headOk(ha), JSON.stringify(ha));
+      if (width === 320 || width === 390) await shot(np, "7-polish", `header-${width}-${theme}`);
       await expand(np);
       await np.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length >= 9, null, { timeout: 10000 });
       await settle(np);
@@ -859,9 +904,33 @@ try {
       const ea = await ep.evaluate(phoneAudit);
       check(`${theme} phone ${width} empty: Look again and × don't overlap, taps at their edges land on them`, ea.controls === 2 && !ea.overlaps.length && !ea.misses.length, JSON.stringify({ overlaps: ea.overlaps, misses: ea.misses.slice(0, 6) }));
       if (width !== 390 && width !== 375) await shot(ep, "1-group", `m-empty-${width}-${theme}-r3`);
+      const em = await ep.evaluate(emptyAudit);
+      check(`${theme} phone ${width} empty: "${em.name}" stays on one line, never split at the hyphen`, em.name === "empty-app" && em.rects === 1 && em.h <= em.lh + 1 && !em.clipped, JSON.stringify(em));
+      check(`${theme} phone ${width} empty: Look again and × keep a gap between their hit areas${width === 320 ? " (2–4px at 320)" : ""}`, width === 320 ? em.gap >= 2 && em.gap <= 4 : em.gap >= 2, JSON.stringify(em));
+      if (width === 320 || width === 390) await shot(ep, "7-polish", `empty-${width}-${theme}`);
       await nctx.close();
     }
     await sne.stop();
+    // A long branch in the header: "feature/fo…" while it fits a few letters, then gone whole with its icon.
+    const wb = world("flatlist", { branch: "feature/found-polish-header" });
+    const sb = await server(wb);
+    const seenStates = new Set();
+    for (const width of [390, 375, 360, 320]) {
+      const bctx = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: true, isMobile: true });
+      await bctx.addInitScript((th) => localStorage.setItem("grillado-theme", th), theme);
+      const bp = await bctx.newPage();
+      lastPage = bp;
+      await home(bp, sb.url);
+      await bp.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
+      await settle(bp);
+      const hb = await bp.evaluate(headAudit);
+      seenStates.add(!hb.shown ? "dropped" : hb.truncated ? "ellipsis" : "full");
+      check(`${theme} phone ${width}: a long branch in the header ends in "…" or goes whole, never a clipped letter`, headOk(hb) && hb.text === "feature/found-polish-header", JSON.stringify(hb));
+      if (width === 320 || width === 390) await shot(bp, "7-polish", `header-long-branch-${width}-${theme}`);
+      await bctx.close();
+    }
+    check(`${theme} phones: the long branch is shown ellipsized at some width (the rule is exercised)`, seenStates.has("ellipsis"), [...seenStates].join(","));
+    await sb.stop();
     await sn.stop();
   }
 } catch (err) {
