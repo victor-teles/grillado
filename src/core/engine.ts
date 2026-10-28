@@ -9,7 +9,7 @@ import { type CommentThread, checkEdits, plainQuote, threadSection } from "./com
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
 import { checkAddPlan, citeId } from "./addplan.ts";
-import { type Slice, groupedSlices, todoIds } from "./issues.ts";
+import { type Slice, fallbackSlices, groupedSlices, todoIds } from "./issues.ts";
 import {
   type AddPlanReply,
   AddPlanReplySchema,
@@ -395,11 +395,16 @@ export function buildSplitPrompt(s: Session, md: string, exported: { key: string
     "Its decisions, and slices already exported (JSON):",
     `<state>${JSON.stringify({ decisions: Object.values(s.decisions).map((d) => ({ key: d.key, question: d.title, answer: d.answer })), exported })}</state>`,
     "",
-    // Review r5 (#188): no decisions to cover, so the slices group the plan's own work.
-    Object.keys(s.decisions).length
-      ? "Split the plan into thin end-to-end slices."
-      : "This plan has no decisions. Group its to-dos into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty. If they’re already that small, reply with no slices.",
+    splitAsk(s, md),
   ].join("\n");
+}
+
+/** The split's last line (review r6). To-do plans with no decisions use buildGroupPrompt, so only stories and parent-only plans get here without decisions. */
+function splitAsk(s: Session, md: string): string {
+  if (Object.keys(s.decisions).length) return "Split the plan into thin end-to-end slices.";
+  if (fallbackSlices(s, md).source === "stories")
+    return "This plan has no decisions. Group its user stories into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty. If they’re already that small, reply with no slices.";
+  return "This plan has no decisions. Split it into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty.";
 }
 
 /** Review r5: the prompt for grouping a decision-less plan's to-dos, by id. */

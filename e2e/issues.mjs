@@ -827,7 +827,7 @@ try {
     // Review r5: a story plan and a parent-only plan, also imported from Cursor with no decisions.
     const R5_PLANS = [
       ["reading.plan.md", "# Reading list\n\nBooks get lost between apps.\n\n## User stories\n\n- As a reader, I save a book I hear about.\n- As a reader, I mark a book as read.\n", "stories", "Group the user stories into slices", "Right now it’s one issue per user story. Grok can group them into a few slices, each one something you can ship on its own.", "Grok found nothing to group, so it’s still one issue per user story", 3],
-      ["chores.plan.md", "# Chore wheel\n\nWho does the dishes is a weekly argument.\n", "parent only", "Split the plan into slices", "Right now it’s only the parent issue. Grok can split the plan into a few slices, each one something you can ship on its own.", "Grok found nothing to group, so it’s still the parent alone", 1],
+      ["chores.plan.md", "# Chore wheel\n\nWho does the dishes is a weekly argument.\n", "parent only", "Split the plan into slices", "Right now it’s only the parent issue. Grok can split the plan into a few slices, each one something you can ship on its own.", "Grok found nothing to split, so it’s still the parent alone", 1],
     ];
     for (const [file, md] of R5_PLANS) {
       const f = path.join(plans, file);
@@ -899,6 +899,10 @@ try {
       check(`r5 ${label}: an empty reply is a plain no-change line: “${want}”`, got === want && (await sheet(pg).locator(".ir:not(.sk)").count()) === rows, `${got} · ${await sheet(pg).locator(".ir:not(.sk)").count()} rows`);
       const look = await empty.evaluate((e) => ({ warn: e.classList.contains("warn"), icon: !!e.querySelector("svg"), buttons: e.querySelectorAll("button").length, role: e.getAttribute("role") }));
       check(`r5 ${label}: … no warning look, no icon, no Try again, role=status`, !look.warn && !look.icon && look.buttons === 0 && look.role === "status" && !/Couldn’t|Try again/.test(await sheet(pg).textContent()), JSON.stringify(look));
+      // Review r6 nice 1: the button that had focus is gone, so focus lands on the line, not on the GitHub tab.
+      await pg.waitForFunction(() => document.activeElement?.dataset?.testid === "split-empty", null, { timeout: 3000 }).catch(() => {});
+      const at = await pg.evaluate(() => `${document.activeElement?.tagName}:${document.activeElement?.dataset?.testid ?? document.activeElement?.textContent?.trim()}`);
+      check(`r6 ${label}: focus moves to the no-change line`, at === "P:split-empty", at);
     };
     await noChange("to-dos", "Grok found nothing to group, so it’s still one issue per to-do", 1 + TASKS.length);
     check("r5 to-dos: that was one more run", splits() === n0 + 2, `${splits()}`);
@@ -975,8 +979,11 @@ try {
       const got1 = (await tidy(card)).replace(/(\S)(Right now)/, "$1 $2").replace(/\.Split/, ". Split");
       check(`r5 ${label}: 0 decisions, so the card reads “${head} …”`, got1 === want1, got1);
       await shot(pg, `r5-${label.replace(" ", "-")}-card-grok`, theme);
-      await card.getByRole("button", { name: "Split with Grok" }).click();
+      // By keyboard, so the focus check below is the keyboard path.
+      await card.getByRole("button", { name: "Split with Grok" }).focus();
+      await pg.keyboard.press("Enter");
       await noChange(label, want, rows);
+      if (label === "parent only") await shot(pg, "r6-parent-only-nochange-focus-grok", theme);
       check(`r5 ${label}: one run`, splits() === k0 + 1, `${k0} → ${splits()}`);
       await shot(pg, `r5-${label.replace(" ", "-")}-nochange-grok`, theme);
       await pg.keyboard.press("Escape");

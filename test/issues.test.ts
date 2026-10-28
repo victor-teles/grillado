@@ -105,16 +105,29 @@ describe("items", () => {
       expect(groupSystemPrompt()).toContain('"type":"groups"');
     });
 
-    test("the split prompt: plans with decisions are unchanged; with none it asks to group the work, covers empty", () => {
+    test("the split prompt: plans with decisions are unchanged", () => {
       const withDecisions = storySession(tempStore());
       const p = buildSplitPrompt(withDecisions, STORY_MD, []);
       expect(p.endsWith("Split the plan into thin end-to-end slices.")).toBe(true);
       expect(p).not.toContain("no decisions");
-      const none = storySession(tempStore());
-      none.decisions = {};
-      expect(buildSplitPrompt(none, STORY_MD, [])).toEndWith(
-        "This plan has no decisions. Group its to-dos into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty. If they’re already that small, reply with no slices.",
+    });
+
+    test("review r6: no decisions, a story plan: the split asks to group its user stories", () => {
+      const s = storySession(tempStore());
+      s.decisions = {};
+      expect(buildSplitPrompt(s, STORY_MD, [])).toEndWith(
+        "\nThis plan has no decisions. Group its user stories into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty. If they’re already that small, reply with no slices.",
       );
+    });
+
+    test("review r6: no decisions, a parent-only plan: the split asks to split it", () => {
+      const md = "# Chore wheel\n\nWho does the dishes is a weekly argument.\n";
+      const s = storySession(tempStore(), md);
+      s.decisions = {};
+      expect(buildSplitPrompt(s, md, [])).toEndWith(
+        "\nThis plan has no decisions. Split it into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty.",
+      );
+      expect(buildSplitPrompt(s, md, [])).not.toContain("to-dos");
     });
 
     test("valid: every to-do in exactly one slice; the slice lists its to-dos", () => {

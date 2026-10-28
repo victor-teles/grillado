@@ -317,6 +317,8 @@ html[data-kbd] :is(.ish,.ish *,.ischrim,.istrip,.istrip *,.ilks,.ilks *),html[da
 /* 320: 4px more between the checkbox and the title, so the checkbox's 44px fits on screen without covering it */
 @media (max-width:360px){.ir{gap:12px}}
 .ipv-src.stale{margin-top:-6px}
+/* review r6: the no-change line takes focus after an empty reply; its ring clears the text */
+.ipv-src[tabindex]:focus-visible{outline-offset:3px;border-radius:4px}
 .ish:focus{outline:none}
 
 /* BIG-3 B: the split is offered, not run (frame d-q-split-ask) */

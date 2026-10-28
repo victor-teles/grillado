@@ -213,6 +213,8 @@ export function IssuesSheet(p: {
   // to what replaces it (the way out while it splits, Split while it asks, then "Split with {agent}",
   // Split again or Try again, else the destination tab).
   const askBtn = useRef<HTMLButtonElement>(null);
+  // The no-change line takes focus when it replaces the button that had it (review r6).
+  const emptyLine = useRef<HTMLParagraphElement>(null);
   const wayBtn = useRef<HTMLButtonElement>(null);
   const srcBtn = useRef<HTMLButtonElement>(null);
   const yesBtn = useRef<HTMLButtonElement>(null);
@@ -223,7 +225,7 @@ export function IssuesSheet(p: {
     const a = document.activeElement;
     // (the #179 effect may have parked it on the destination tab meanwhile)
     if (a && a !== document.body && a !== sheet.current && !a.closest("[role=tablist]")) return;
-    (refocus === "way" ? wayBtn.current : refocus === "ask" ? yesBtn.current : (askBtn.current ?? srcBtn.current ?? firstFocus.current))?.focus({ preventScroll: true });
+    (refocus === "way" ? wayBtn.current : refocus === "ask" ? yesBtn.current : (askBtn.current ?? srcBtn.current ?? emptyLine.current ?? firstFocus.current))?.focus({ preventScroll: true });
   }, [refocus]);
   const split = async (fallback = false) => {
     // The way out removes the link that had focus: give it back to something visible once the list is back.
@@ -907,8 +909,8 @@ export function IssuesSheet(p: {
     else if (splitEmpty && pv.source !== "agent")
       source = (
         // No change: plain words, no icon and no Try again (it would give the same answer).
-        <p className="ipv-src" role="status" data-testid="split-empty">
-          {p.agentName} found nothing to {group ? "group" : "split"}, so it’s still {now}
+        <p ref={emptyLine} tabIndex={-1} className="ipv-src" role="status" data-testid="split-empty">
+          {p.agentName} found nothing to {group && pv.source !== "none" ? "group" : "split"}, so it’s still {now}
         </p>
       );
     else if (pv.source === "agent")
