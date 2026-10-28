@@ -320,13 +320,16 @@ function headAudit() {
   const icon = !!br?.querySelector("svg") && br.querySelector("svg").getClientRects().length > 0;
   const pr = proj?.getBoundingClientRect();
   const r = shown ? br.getBoundingClientRect() : null;
-  const truncated = shown && bn.scrollWidth > bn.clientWidth + 0.5;
+  // review-pr23 r2 N2: the branch's text against its box (a Range; scrollWidth rounds a sub-pixel cut away).
+  const cutBy = (el) => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width - el.getBoundingClientRect().width; };
+  const truncated = shown && cutBy(bn) > 0.01;
   return {
     has: !!br,
     shown,
     icon,
     text: bn?.textContent,
-    bnW: shown ? Math.round(bn.clientWidth) : 0,
+    bnW: shown ? +bn.getBoundingClientRect().width.toFixed(2) : 0,
+    bnTitle: bn?.getAttribute("title") ?? null,
     truncated,
     ellipsis: shown && getComputedStyle(bn).textOverflow === "ellipsis",
     insideProj: !r || r.right <= pr.right + 0.5,
@@ -338,7 +341,7 @@ function headAudit() {
     scroll: document.documentElement.scrollWidth - innerWidth,
   };
 }
-const headOk = (h) => h.has && h.shown === h.icon && h.insideProj && h.nameW > 0 && (!h.truncated || (h.ellipsis && h.bnW >= 32));
+const headOk = (h) => h.has && h.shown === h.icon && h.insideProj && h.nameW > 0 && (!h.truncated || (h.ellipsis && h.bnW >= 32)) && (!h.shown || h.bnTitle === (h.truncated ? h.text : null));
 
 /** The empty line (#157 nice-to-haves 2, 3): the folder name on one line, a gap between the two hit areas. */
 function emptyAudit() {
@@ -954,14 +957,15 @@ try {
       await bctx.close();
     }
     check(`${theme} phones: the long branch is shown ellipsized at some width (the rule is exercised)`, seenStates.has("ellipsis"), [...seenStates].join(","));
-    // review-pr23 #1/#2: every width from 300 to 480 in 1px steps. "flatlist" is never cut (its text fits its box), the
-    // branch ends in "…" (32px or more) or goes whole, and a cut name carries its full name as a title (a whole one none).
-    {
+    // review-pr23 #1/#2: every width from 300 to 480 in 1px steps. The name is never cut while the branch shows (its text
+    // fits its box), the branch ends in "…" (32px or more, by its real width: r2 N1) or goes whole, and a cut name or
+    // branch carries its full text as a title (a whole one none). "grillado-web" is the case that once kept "fea…" at 379px.
+    const sweep = async (name, url) => {
       const sctx = await browser.newContext({ viewport: { width: 480, height: 844 }, hasTouch: true, isMobile: true });
       await sctx.addInitScript((th) => localStorage.setItem("grillado-theme", th), theme);
       const sp = await sctx.newPage();
       lastPage = sp;
-      await home(sp, sb.url);
+      await home(sp, url);
       await sp.waitForFunction(() => document.querySelectorAll("[data-testid=found-row]").length === 3, null, { timeout: 10000 });
       const bad = [];
       const states = new Set();
@@ -970,15 +974,29 @@ try {
         await sp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); // the ResizeObserver's fitMeta has run
         const h = await sp.evaluate(headAudit);
         states.add(!h.shown ? "dropped" : h.truncated ? "ellipsis" : "full");
-        if (!(headOk(h) && h.name === "flatlist" && h.nameCut <= 0.01 && h.nameTitle === null && h.scroll <= 0 && (!h.truncated || h.bnW >= 32))) bad.push({ width, ...h });
+        const nameOk = h.shown ? h.nameCut <= 0.01 && h.nameTitle === null : h.nameCut <= 0.01 ? h.nameTitle === null : h.nameTitle === name;
+        if (!(headOk(h) && h.name === name && nameOk && h.scroll <= 0)) bad.push({ width, ...h });
       }
-      check(`${theme} 300–480px in 1px steps: "flatlist" stays whole next to a long branch, the branch ends in "…" or goes whole (${[...states].join(", ")})`, !bad.length && states.has("ellipsis") && states.has("dropped"), JSON.stringify(bad.slice(0, 4)));
+      check(`${theme} 300–480px in 1px steps: "${name}" stays whole next to a long branch, the branch ends in "…" or goes whole (${[...states].join(", ")})`, !bad.length && states.has("ellipsis") && states.has("dropped"), JSON.stringify(bad.slice(0, 4)));
+      return { sp, sctx };
+    };
+    {
+      const { sp, sctx } = await sweep("flatlist", sb.url);
       for (const width of [390, 360]) {
         await sp.setViewportSize({ width, height: 844 });
         await settle(sp);
         await shot(sp, "7-polish", `header-long-branch-sweep-${width}-${theme}`);
       }
       await sctx.close();
+    }
+    {
+      const sw = await server(world("grillado-web", { branch: "feature/found-polish-header" }));
+      const { sp, sctx } = await sweep("grillado-web", sw.url);
+      await sp.setViewportSize({ width: 379, height: 844 });
+      await settle(sp);
+      await shot(sp, "7-polish", `header-grillado-web-379-${theme}`);
+      await sctx.close();
+      await sw.stop();
     }
     await sb.stop();
     // A long repo name: it ends in "…" with the branch dropped on phones, and its title is the full name.

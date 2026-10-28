@@ -38,14 +38,16 @@ describe("items", () => {
     const p = parentItem(s, STORY_MD, "github");
     expect(p.key).toBe(PARENT_KEY);
     expect(p.title).toBe("Recipe box");
-    expect(p.body).toContain("## Problem\n\nRecipes are scattered across notes and screenshots.");
-    expect(p.body).toContain("## Out of scope");
-    expect(p.body).toContain("- **Where do recipes live?**: SQLite on the device");
+    expect(p.body).toContain("## Problem\nRecipes are scattered across notes and screenshots.");
+    // BIG-1 option A: Problem, Solution, the decisions, Out of scope, in that order.
+    expect(p.body.indexOf("## Solution")).toBeLessThan(p.body.indexOf("## Decisions"));
+    expect(p.body.indexOf("## Decisions")).toBeLessThan(p.body.indexOf("## Out of scope"));
+    expect(p.body).toContain("- **Where do recipes live?** SQLite on the device");
     expect(p.body).not.toContain("[R1");
     expect(p.body).not.toContain("```decision");
     expect(p.body).not.toContain("User stories");
     expect(readMarker(p.body)).toEqual({ plan: s.id, key: PARENT_KEY });
-    expect(p.body).toContain("From the Grillado plan “Recipe box”");
+    expect(p.body).toContain(`\n\nFrom Grillado plan 'Recipe box'\n<!-- grillado:plan=${s.id} item=plan -->\n`);
     expect(p.covers).toEqual(["storage", "sync"]);
   });
 
@@ -56,8 +58,11 @@ describe("items", () => {
     expect(slices.map((x) => x.title)).toEqual(["As a cook, I add a recipe from a photo", "As a cook, I find a recipe by ingredient", "As a cook, I see my recipes on a second phone"]);
     expect(slices.map((x) => x.covers)).toEqual([["storage"], [], ["sync"]]);
     expect(new Set(slices.map((x) => x.key)).size).toBe(3);
+    s.rounds = [{ n: 1, questions: [{ key: "storage" }] } as any, { n: 2, questions: [{ key: "other" }, { key: "sync" }] } as any];
     const { items } = buildItems(s, STORY_MD, "github", slices);
-    expect(items[1].body).toContain("- **Where do recipes live?**: SQLite on the device");
+    expect(items[1].body).toStartWith("As a cook, I add a recipe from a photo");
+    expect(items[1].body).toContain("\n\n**Covers:** R1·1 Where do recipes live? SQLite on the device\n\nFrom Grillado plan");
+    expect(items[3].body).toContain("**Covers:** R2·2 Sync between devices? Not in v1");
     expect(readMarker(items[1].body)).toEqual({ plan: s.id, key: slices[0].key });
   });
 

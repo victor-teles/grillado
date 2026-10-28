@@ -13,6 +13,12 @@ import type { ExportRun, IssueItem, Planned, SessionView, Tracker } from "../typ
 import { ICOPY, TNAME, labelsLine, plural } from "./copy";
 import { ListBox, type Opt, Select } from "./Pick";
 
+/**
+ * BIG-3, whether the split runs by itself (Victor, via the PO, 2026-10-28): only when asked, from "Split with
+ * {agent}". `true` is option A: it starts when the sheet opens, once per plan version (the server caches it).
+ */
+const SPLIT_ON_OPEN = false;
+
 const PARENT = "plan";
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 const LINEAR_KEYS = "https://linear.app/settings/account/security";
@@ -216,6 +222,13 @@ export function IssuesSheet(p: {
       setSplitting(false);
     }
   };
+
+  const autoSplit = useRef(SPLIT_ON_OPEN);
+  useEffect(() => {
+    if (!autoSplit.current || !pv || !st || run) return;
+    autoSplit.current = false;
+    if (!st.split && pv.source !== "agent" && pv.source !== "todos") void split();
+  }, [pv, st]);
 
   const items = pv?.items ?? [];
   const change = useMemo(() => new Map((pv?.changes ?? []).map((c) => [c.key, c])), [pv]);
@@ -774,7 +787,7 @@ export function IssuesSheet(p: {
       linearDest
     );
 
-  // Where the list came from (§3), and the split link (BIG-3: never runs on open; see the PR notes).
+  // Where the list came from (§3), and the split link (BIG-3: SPLIT_ON_OPEN).
   const editedTitles = items.some((it) => (titles[it.key] ?? it.title) !== it.title);
   const splitLink = (label: string) => (
     <button type="button" className="lnk" onClick={() => (editedTitles && !askSplit ? setAskSplit(true) : void split())}>

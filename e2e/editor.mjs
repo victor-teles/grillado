@@ -211,7 +211,7 @@ try {
     await pg.getByRole("button", { name: "Plan actions" }).click();
     const items = await pg.getByRole("menuitem").allTextContents();
     const at = items.indexOf("Use in your editor…");
-    check(`${theme}: ⋯ has “Use in your editor…” first in the file group`, at > 0 && items[at + 1] === "Download .md" && /Add diagrams/.test(items[at - 1]), items.join(" | "));
+    check(`${theme}: ⋯ has “Use in your editor…” first in the file group, then “Create issues…” (v1.3 item 2 §1)`, at > 0 && items[at + 1] === "Create issues…" && items[at + 2] === "Download .md" && /Add diagrams/.test(items[at - 1]), items.join(" | "));
     await shot(pg, "d-menu", theme);
     await pg.getByRole("menuitem", { name: "Use in your editor…" }).click();
     await ue(pg).waitFor();
@@ -398,7 +398,7 @@ try {
     await mp.getByRole("button", { name: "Plan actions" }).tap();
     const mitems = await mp.getByRole("menuitem").allTextContents();
     const mi = mitems.indexOf("Use in your editor…");
-    check(`${theme} phone: ⋯ sheet has the row after Comments' group`, mi > 0 && mitems[mi + 1] === "Download .md" && /Activity|Comments/.test(mitems[mi - 1]), mitems.join(" | "));
+    check(`${theme} phone: ⋯ sheet has the row after Comments' group, then “Create issues…”`, mi > 0 && mitems[mi + 1] === "Create issues…" && mitems[mi + 2] === "Download .md" && /Activity|Comments/.test(mitems[mi - 1]), mitems.join(" | "));
     const dotsH = await rowH();
     check(`${theme} phone: ⋯ menu rows are at least 44px`, dotsH.every((h) => h >= 44), dotsH.join(","));
     await shot(mp, "m-menu", theme);

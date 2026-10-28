@@ -709,6 +709,34 @@ try {
           await ap.screenshot({ path: path.join(SHOTS, `card-not-found-${ag.id}-m${width}-${theme}.png`), clip: { x: 0, y: Math.max(0, bb.y - 16), width, height: bb.height + 32 } });
         }
       }
+      // review-pr22 r4 N1: a narrow card (beside the side rail at 768–1000px) puts the actions under the text, so the
+      // well keeps the text's full width; a wide one keeps them beside it.
+      const stack = () =>
+        card.evaluate((b) => {
+          const t = b.querySelector(":scope > div:not(.acts)").getBoundingClientRect();
+          const a = b.querySelector(".acts").getBoundingClientRect();
+          return { card: Math.round(b.getBoundingClientRect().width), under: a.top >= t.bottom - 0.5, well: Math.round(b.querySelector(".cmd.well").getBoundingClientRect().width), text: Math.round(t.width) };
+        });
+      for (const width of [768, 900, 1000, 1440]) {
+        await ap.setViewportSize({ width, height: 900 });
+        await settle(ap);
+        const k = await stack();
+        check(`${theme} ${width} ${ag.name}: the actions ${k.card <= 520 ? "under" : "beside"} the text on a ${k.card}px card`, k.under === k.card <= 520 && (!k.under || k.text >= k.card - 64), JSON.stringify(k));
+        if (SHOTS && ag.id === "grok" && width === 768) {
+          const bb = await card.boundingBox();
+          await ap.screenshot({ path: path.join(SHOTS, `card-not-found-grok-768-${theme}.png`), clip: { x: Math.max(0, bb.x - 16), y: Math.max(0, bb.y - 16), width: bb.width + 32, height: bb.height + 32 } });
+        }
+      }
+      // review-pr22 r4 N2: in light the well is the card colour (white) on the --sel banner, as #165's well; in dark, --well.
+      const tone = await card.evaluate((b) => {
+        const probe = document.createElement("i");
+        probe.style.background = document.documentElement.classList.contains("light") ? "var(--card)" : "var(--well)";
+        b.append(probe);
+        const want = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return { well: getComputedStyle(b.querySelector(".cmd.well")).backgroundColor, want, banner: getComputedStyle(b).backgroundColor };
+      });
+      check(`${theme} ${ag.name}: the well is one step out from the card (${theme === "light" ? "--card" : "--well"})`, tone.well === tone.want && tone.well !== tone.banner, JSON.stringify(tone));
       // Copy: the exact command on the clipboard, the name says Copied + the command (axe clean while it shows), then back.
       await ap.setViewportSize({ width: 1440, height: 900 });
       await settle(ap);

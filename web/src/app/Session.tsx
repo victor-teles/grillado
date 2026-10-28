@@ -93,20 +93,23 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
   // v1.2: one neutral surface; the tone is only on the icon (warning-ink, muted for a rate limit).
   const tone = code === "rate_limit" ? "info" : "warn";
   return (
-    <div className="banner" data-tone={tone} role="alert" data-testid="problem" data-code={code}>
-      <span className="ic" aria-hidden="true">
-        {copy.icon}
-      </span>
-      <div>
-        {copy.title ? <p className="t">{copy.title}</p> : null}
-        <p>{copy.body}</p>
-        {"cmd" in copy && copy.cmd ? <CopyButton kind="well" text={copy.cmd} label={`Copy ${copy.cmd}`} /> : null}
-      </div>
-      <div className="acts">
-        {code === "auth" ? null : sw}
-        <button type="button" className="btn primary" onClick={retry}>
-          {copy.retry}
-        </button>
+    // The card's own width decides the layout (a container query): beside the side rail at tablet widths it's narrow too (review-pr22 r4 N1).
+    <div className="bnq">
+      <div className="banner" data-tone={tone} role="alert" data-testid="problem" data-code={code}>
+        <span className="ic" aria-hidden="true">
+          {copy.icon}
+        </span>
+        <div>
+          {copy.title ? <p className="t">{copy.title}</p> : null}
+          <p>{copy.body}</p>
+          {"cmd" in copy && copy.cmd ? <CopyButton kind="well" text={copy.cmd} label={`Copy ${copy.cmd}`} /> : null}
+        </div>
+        <div className="acts">
+          {code === "auth" ? null : sw}
+          <button type="button" className="btn primary" onClick={retry}>
+            {copy.retry}
+          </button>
+        </div>
       </div>
     </div>
   );

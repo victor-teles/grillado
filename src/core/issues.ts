@@ -138,12 +138,44 @@ export const planTitle = (s: Session) => (s.plan?.title || s.idea.split("\n")[0]
 /** Settled decisions, in round order. */
 export const resolved = (s: Session) => Object.values(s.decisions).sort((a, b) => a.round - b.round);
 
-function decisionList(s: Session, keys?: string[]): string {
-  const ds = resolved(s).filter((d) => !keys || keys.includes(d.key));
-  return ds.map((d) => `- **${d.title.trim()}**: ${d.answer.trim()}`).join("\n");
+/** "R2·2": a decision's id as the plan page shows it (round, then its place in the round). */
+export function decisionId(s: Session, key: string): string {
+  const r = s.rounds.find((x) => x.questions.some((q) => q.key === key));
+  return r ? `R${r.n}·${r.questions.findIndex((q) => q.key === key) + 1}` : "";
 }
 
-const footer = (s: Session, key: string) => `\n\n---\n\nFrom the Grillado plan “${planTitle(s)}”\n\n${marker(s.id, key)}\n`;
+// ---------------------------------------------------------------- BIG-1: what goes into the issue bodies
+// Victor's answer is option A, the spec's wording (frames d-q-body-a, d-gh-body, d-gh-parentbody). The bodies are
+// written only here: option B (A plus the full plan in a closed <details>) or C (minimal) is a swap of these three.
+
+/** The end of every body: where it came from, and the hidden marker that finds it again. */
+const footer = (s: Session, key: string) => `\n\nFrom Grillado plan '${planTitle(s)}'\n${marker(s.id, key)}\n`;
+
+/** The parent: Problem, Solution, the decisions (question, then answer), Out of scope. */
+function parentText(s: Session, md: string): { text: string; sections: string[] } {
+  const parts: string[] = [];
+  const sections: string[] = [];
+  const section = (name: string) => {
+    const t = sectionText(md, name);
+    if (!t) return;
+    parts.push(`## ${name}\n${t}`);
+    sections.push(name);
+  };
+  section("Problem");
+  section("Solution");
+  const ds = resolved(s).map((d) => `- **${d.title.trim()}** ${d.answer.trim()}`);
+  if (ds.length) parts.push(`## Decisions\n${ds.join("\n")}`);
+  section("Out of scope");
+  return { text: parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, "")), sections };
+}
+
+/** A child: its slice's first paragraph, "**Covers:** R2·2 question answer", then the rest of the slice. */
+function childText(s: Session, x: Slice, covers: string[]): string {
+  const [head, ...rest] = (cleanText(x.body) || x.title).split(/\n{2,}/);
+  const line = covers.map((k) => `${decisionId(s, k)} ${s.decisions[k].title.trim()} ${s.decisions[k].answer.trim()}`.trim()).join(" · ");
+  return [head, line ? `**Covers:** ${line}` : "", ...rest].filter(Boolean).join("\n\n");
+}
+// ---------------------------------------------------------------- end of BIG-1
 
 /**
  * Fit a body to the tracker: over the limit, the text is cut at a line and ends with a pointer back to
@@ -162,33 +194,21 @@ export function fitBody(text: string, end: string, limit: number, back: string, 
   return { body: `${head.trimEnd()}${note}${end}`, cut: true };
 }
 
-/** The parent issue: Problem, Solution, Out of scope and the resolved decisions (spec option A, BIG-1 pending). */
+/** The parent issue: the plan's title, its body (BIG-1, parentText) and where it came from. */
 export function parentItem(s: Session, md: string, tracker: Tracker): IssueItem {
-  const parts: string[] = [];
-  const sections: string[] = [];
-  for (const [name, ...alias] of [["Problem"], ["Solution"], ["Out of scope"]]) {
-    const t = sectionText(md, name, ...alias);
-    if (t) {
-      parts.push(`## ${name}\n\n${t}`);
-      sections.push(name);
-    }
-  }
-  const ds = decisionList(s);
-  if (ds) parts.push(`## Decisions\n\n${ds}`);
-  const text = parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, ""));
+  const { text, sections } = parentText(s, md);
   const { body, cut } = fitBody(text, footer(s, PARENT_KEY), BODY_LIMIT[tracker], `the Grillado plan “${planTitle(s)}” (${s.id})`, TRACKER_NAME[tracker]);
   return { key: PARENT_KEY, title: planTitle(s), body, covers: resolved(s).map((d) => d.key), sections, ...(cut ? { cut } : {}) };
 }
 
 /**
- * A child: its own text, then the decisions it covers. A cut points at the parent issue by name, not by
+ * A child: its own text with the decisions it covers (BIG-1, childText). A cut points at the parent issue by name, not by
  * link, so the body (and its hash) doesn't change when the parent is recreated; the tracker links them.
  */
 export function childItem(s: Session, x: Slice, tracker: Tracker): IssueItem {
   const known = new Set(Object.keys(s.decisions));
   const covers = [...new Set(x.covers.filter((k) => known.has(k)))];
-  const ds = covers.length ? `\n\n## Decisions\n\n${decisionList(s, covers)}` : "";
-  const text = `${cleanText(x.body) || x.title}${ds}`;
+  const text = childText(s, x, covers);
   const { body, cut } = fitBody(text, footer(s, x.key), BODY_LIMIT[tracker], `the parent issue “${planTitle(s)}”`, TRACKER_NAME[tracker]);
   return { key: x.key, title: x.title.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE), body, covers, sections: x.sections, ...(cut ? { cut } : {}) };
 }

@@ -186,11 +186,14 @@ button:disabled{cursor:default}
 .banner .t{font-weight:500}
 .banner p+p,.banner .t+*{color:var(--muted-foreground);margin-top:2px}
 .banner .acts{display:flex;gap:8px;align-items:center}
+/* a narrow card (a phone, or beside the side rail at 768–1000px) puts the actions under the text (review-pr22 r4 N1) */
+.bnq{container-type:inline-size}
+@container (max-width:520px){.banner{grid-template-columns:20px minmax(0,1fr)}.banner .acts{grid-column:1/-1;justify-content:flex-end}}
 .banner .cmd{margin-top:10px;cursor:pointer}
 /* the install command's well (review-pr22 r3 #1, r4 #1/#3): #165's command well — var(--well), mono 13/20, a visible
    Copy → ✓ Copied. As wide as the command; it wraps only between words or after a single "/". Copy floats at the end
    of the last line when it fits there, else under it on the right, so it never takes width from the command. */
-.light .banner{--well:var(--background)} /* the card itself is --sel (light's --well), so the well is one step out */
+.light .banner{--well:var(--card)} /* the card itself is --sel (light's --well), so the well is one step out: 1.18:1, as #165's (review-pr22 r4 N2) */
 .cmd.well{display:flow-root;width:fit-content;max-width:100%;height:auto;min-height:40px;padding:10px 6px 10px 12px;border-radius:10px;background:var(--well);font:400 13px/20px var(--mono)}
 .cmd.well code{display:inline;font:inherit;white-space:normal;overflow:visible;text-overflow:clip}
 .cmd code .w{white-space:nowrap}

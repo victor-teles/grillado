@@ -204,7 +204,7 @@ try {
     check("the how-line names gh and promises nothing is sent yet", /^Runs gh as @\S+ on this computer\. Nothing is sent before you click\.$/.test(await foot(pg).locator(".iac-n").last().textContent()));
     check("no public line on a private repo", (await sheet(pg).locator(".pub").count()) === 0);
 
-    // §3 the split: only on request (BIG-3 pending: no agent run on open)
+    // §3 the split: only on request (BIG-3, Victor: no agent run on open; SPLIT_ON_OPEN)
     const src = sheet(pg).locator(".ipv-src").first();
     check("opening didn’t run the agent: the list is the user stories or the parent", /^(One issue per user story|Only the parent issue)/.test(await src.textContent()), await src.textContent());
     await src.getByRole("button", { name: "Split with Claude Code" }).click();
@@ -216,12 +216,21 @@ try {
     await shot(pg, "d-sheet", theme);
     await axe(pg, `${theme} desktop: the sheet`);
 
-    // Body disclosure: what would be sent (BIG-1 pending: the server's body).
+    // Body disclosure: exactly what is sent (BIG-1, Victor: option A, the spec's wording).
     const x = rows.nth(1).locator(".ir-x");
     await x.click();
-    check("Body opens the exact body", (await x.getAttribute("aria-expanded")) === "true" && (await rows.nth(1).locator(".ir-body pre").textContent()).includes("grillado:plan="));
+    const kb = await rows.nth(1).locator(".ir-body pre").textContent();
+    check("Body opens the exact body", (await x.getAttribute("aria-expanded")) === "true" && kb.includes("grillado:plan="));
+    check("BIG-1 A: a child is its slice, “**Covers:** R1·1 question answer”, then where it came from", /\n\n\*\*Covers:\*\* R\d·\d \S/.test(kb) && /\n\nFrom Grillado plan '[^']+'\n<!-- grillado:plan=[\w-]+ item=[\w-]+ -->\s*$/.test(kb), kb);
     await shot(pg, "d-body", theme);
     await x.click();
+    const px = rows.nth(0).locator(".ir-x");
+    await px.click();
+    const pb = await rows.nth(0).locator(".ir-body pre").textContent();
+    const pos = (h) => pb.indexOf(h);
+    check("BIG-1 A: the parent is Problem, Solution, the decisions, Out of scope, then where it came from", pos("## Problem\n") === 0 && pos("## Decisions\n- **") > 0 && ["## Problem", "## Solution", "## Decisions", "## Out of scope"].map(pos).filter((i) => i >= 0).every((i, k, a) => !k || a[k - 1] < i) && !pb.includes("User stories") && /\n\nFrom Grillado plan '[^']+'\n<!-- grillado:plan=[\w-]+ item=plan -->\s*$/.test(pb), pb);
+    await shot(pg, "d-parentbody", theme);
+    await px.click();
 
     // Selection: the parent is locked while a child is on; the count follows.
     const parentCb = rows.nth(0).getByRole("checkbox");
