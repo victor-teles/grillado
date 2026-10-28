@@ -556,13 +556,13 @@ function setAnswer(s: Session, key: string, pick: Pick): string[] | null {
   if (ans) Object.assign(ans, { optionId: pick.optionId, text: next.kind === "other" ? next.answer : undefined, accepted_recommendation: next.accepted });
   const now = new Date().toISOString();
   const md = restateAnswer(s.plan!.markdown, `R${d.round}:${key}`, d.answer, next.answer);
-  // The note is the agent's one-line statement of the old answer: carry it over only when it
-  // restates the answer word for word (then swap the words), otherwise drop it rather than let
-  // the card contradict itself.
+  // The note stays (dogfood friction 20: it can be a person's, not only the agent's restatement):
+  // where it restates the old answer word for word, those words become the new answer; otherwise
+  // it's kept as written. updateDecisionBlock leaves a line that isn't in the patch byte for byte.
   const block = findDecisionBlocks(md).find((b) => blockKey(b.parsed) === key);
   const oldNote = block?.parsed.ok ? block.parsed.fields.note : undefined;
-  const note = oldNote ? swapAnswer(oldNote, d.answer, next.answer) : undefined;
-  s.plan!.markdown = updateDecisionBlock(md, key, { answer: next.answer, note: note ?? undefined, by: "you", kept_suggestion: next.accepted, at: now });
+  const swapped = oldNote ? swapAnswer(oldNote, d.answer, next.answer) : null;
+  s.plan!.markdown = updateDecisionBlock(md, key, { answer: next.answer, ...(swapped ? { note: swapped } : {}), by: "you", kept_suggestion: next.accepted, at: now });
   s.plan!.editedAt = now;
   return deps;
 }

@@ -162,6 +162,14 @@ describe("changing a decision inline (Q2)", () => {
     expect(s.plan!.markdown).toContain("answer: Just me");
   });
 
+  test("dogfood friction 20: Change keeps a note that doesn't repeat the old answer, as written", () => {
+    const s = platedSession();
+    s.plan!.markdown = updateDecisionBlock(s.plan!.markdown, "scope", { note: "Overridden by the PO: one household only, for now." });
+    expect(changeDecision(s, "scope", { optionId: OTHER_OPTION, text: "Just me" })).toEqual([]);
+    const f = findDecisionBlocks(s.plan!.markdown).find((b) => b.parsed.ok && b.parsed.fields.key === "scope")!;
+    expect(f.parsed.ok && f.parsed.fields).toMatchObject({ answer: "Just me", note: "Overridden by the PO: one household only, for now." });
+  });
+
   test("no stale restatement: cited prose and the block's note follow the new answer (recording bug 1)", () => {
     const s = createSession({ idea: "Notes", provider: "claude" });
     const qs = [question("scope"), question("platform")];
@@ -184,13 +192,13 @@ describe("changing a decision inline (Q2)", () => {
     expect(md).not.toMatch(/scope a/i);
     expect(md).toContain("- platform a [R1:platform]"); // other decisions untouched
 
-    // A paraphrased note can't be rewritten word for word: it's dropped, never left stale.
+    // A paraphrased note can't be rewritten word for word: it's kept as written (dogfood friction 20), never dropped.
     changeDecision(s, "platform", { optionId: "b" });
     const md2 = s.plan.markdown;
     expect(md2).toContain("- platform b [R1:platform]");
     expect(md2).toContain("We go with platform b for now [R1:platform].");
     expect(md2).toContain("Unrelated platform a mention."); // only sentences that cite the decision
-    expect(md2).not.toContain("Phones first");
+    expect(md2).toContain("note: Phones first, because that's where lists get used.");
     expect(decisionProblems(md2)).toEqual([]);
   });
 
