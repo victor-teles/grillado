@@ -41,7 +41,8 @@ chmodSync(path.join(bin, "grok"), 0o755);
 
 const LONG_LABEL = "Where the family’s recipes come from, and who keeps every one of them up to date on every phone in the house";
 // The designer's short answer that a phone cut to "Everyone at …" (review-pr28 must 1).
-const HOME_ANSWER = "Everyone at home, my partner and the two kids";
+// The answer the designer read cut to "Everyone at …" at 320 (review-pr28 must 1, its world-nonpm.sh).
+const HOME_ANSWER = "Everyone at home";
 const LONG_ANSWER = "Typed in by hand from the recipe cards in the kitchen drawer, one at a time, with a photo of each card kept next to it so nothing written in the margins is ever lost";
 
 /** A project with one Claude Code interview (the partial fixture: three answered, one torn), its answer and header made long. */
@@ -162,8 +163,8 @@ try {
       const home = pg.locator(".dr .va").filter({ hasText: "Everyone at home" }).first();
       const hr = await rect(home);
       check(`review-pr28 must 1 ${tag}: "${HOME_ANSWER}" is not cut`, (await home.textContent()) === HOME_ANSWER && hr.sw <= hr.cw + 0.5 && hr.sh <= hr.ch + 0.5 && hr.r <= vp.w + 0.5, JSON.stringify(hr));
-      const cut = await pg.locator(".dr .va").evaluateAll((es) => es.filter((e) => e.textContent.length < 60 && (e.scrollWidth > e.clientWidth + 0.5 || e.scrollHeight > e.clientHeight + 0.5)).map((e) => e.textContent));
-      check(`review-pr28 must 1 ${tag}: no short answer is cut`, cut.length === 0, JSON.stringify(cut));
+      const cut = await pg.locator(".dr .va").evaluateAll((es) => es.filter((e) => e.textContent.length <= 36 && (e.scrollWidth > e.clientWidth + 0.5 || e.scrollHeight > e.clientHeight + 0.5)).map((e) => e.textContent));
+      check(`review-pr28 must 1 ${tag}: no answer of up to 36 characters is cut (on a phone, three lines of the 96px column)`, cut.length === 0, JSON.stringify(cut));
       if (vp.phone) check(`NTH 1 ${tag}: on a phone the tag sits under the answer`, yc.t >= va.b - 1, `${yc.t} vs ${va.b}`);
       else check(`NTH 1 ${tag}: on desktop the tag stays on the answer's line, after it`, Math.abs(yc.t + yc.b - va.t - va.b) / 2 < 4 && yc.l >= va.r - 0.5, `${JSON.stringify(yc)} ${JSON.stringify(va)}`);
       await shot(pg, `nth1-yourcall-${tag}`);

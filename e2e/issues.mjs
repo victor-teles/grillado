@@ -453,9 +453,9 @@ try {
     await pg.waitForFunction(() => /changed since export/.test(document.querySelector("[data-testid=issues-strip]")?.textContent ?? ""), null, { timeout: 10000 }).catch(() => {});
     check("the strip says what changed, with Update issues", /\d+ changed since export·Update issues$/.test((await pg.getByTestId("issues-strip").textContent()).replace(/\s*·\s*/g, "·")), await pg.getByTestId("issues-strip").textContent());
     // review-pr28 nice 2: on a phone, "Update issues" stays on the count's line, never alone on a third one.
-    {
+    for (const th of ["light", "dark"]) {
       const mctx = await browser.newContext({ viewport: { width: 320, height: 640 }, deviceScaleFactor: SHOTS ? 2 : 1, isMobile: true, hasTouch: true });
-      await mctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      await mctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), th);
       const mp = await mctx.newPage();
       await mp.goto(planUrl(app, planId));
       await mp.getByTestId("plan").waitFor({ timeout: 15000 });
@@ -473,9 +473,9 @@ try {
         const kids = [...s.children].map((e) => Math.round(mid(e.getBoundingClientRect())));
         return { count: tn ? mid(rg.getBoundingClientRect()) : null, button: b ? mid(b.getBoundingClientRect()) : null, br: b?.getBoundingClientRect().right, sr: sr.right, lines: new Set(kids).size, lineStarts: shownDots.filter((r) => r.left < sr.left + 4).length };
       });
-      check(`${theme} 320: "Update issues" is on the count's line, inside the strip`, g.count !== null && g.button !== null && Math.abs(g.count - g.button) < 6 && g.br <= g.sr + 0.5, JSON.stringify(g));
-      check(`${theme} 320: the changed strip is two lines at most, and none starts with "·"`, g.lines <= 2 && g.lineStarts === 0, JSON.stringify(g));
-      await shot(mp, "r2-nice2-changed-m320", theme);
+      check(`${th} 320: "Update issues" is on the count's line, inside the strip`, g.count !== null && g.button !== null && Math.abs(g.count - g.button) < 6 && g.br <= g.sr + 0.5, JSON.stringify(g));
+      check(`${th} 320: the changed strip is two lines at most, and none starts with "·"`, g.lines <= 2 && g.lineStarts === 0, JSON.stringify(g));
+      await shot(mp, "r2-nice2-changed-m320", th);
       await mctx.close();
     }
     const gone = pg.locator(".ilk.gone");

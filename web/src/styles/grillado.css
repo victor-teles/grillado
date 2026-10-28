@@ -642,7 +642,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .dr .v:has(>.yc){flex-direction:column;align-items:flex-start;gap:0;padding:6px 0}
   .dr .v:has(>.yc)>.va{max-width:100%}
   /* Phones have no hover for a title: the answer wraps so it can be read over, up to three lines (review-pr28 must 1). */
-  .dr .v>.va{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3}
+  .dr .v>span.va{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3}
   .dr .v:not(:has(>.yc)){padding:6px 0}
   .scrim{place-items:end stretch;padding:0 12px 12px}
   .dialog{width:auto}
