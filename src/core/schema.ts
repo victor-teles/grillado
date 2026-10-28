@@ -111,6 +111,24 @@ export const ImportReplySchema = z.object({
 });
 
 export type ImportReply = z.infer<typeof ImportReplySchema>;
+
+/** v1.3 item 2: thin end-to-end slices of a plan, one issue each. */
+export const SplitReplySchema = z.object({
+  type: z.literal("slices"),
+  slices: z
+    .array(
+      z.object({
+        key: z.string().max(60),
+        title: z.string().max(256),
+        body: z.string().max(20_000),
+        covers: z.array(z.string().max(80)).max(60),
+        sections: z.array(z.string().max(120)).max(20),
+      }),
+    )
+    .max(250),
+});
+
+export type SplitReply = z.infer<typeof SplitReplySchema>;
 export type Option = z.infer<typeof OptionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
 export type Upcoming = z.infer<typeof UpcomingSchema>;
@@ -159,3 +177,4 @@ export const editJsonSchema = () => toStrictJsonSchema(EditReplySchema);
 export const diagramJsonSchema = () => toStrictJsonSchema(DiagramReplySchema);
 export const addPlanJsonSchema = () => toStrictJsonSchema(AddPlanReplySchema);
 export const importJsonSchema = () => toStrictJsonSchema(ImportReplySchema);
+export const splitJsonSchema = () => toStrictJsonSchema(SplitReplySchema);

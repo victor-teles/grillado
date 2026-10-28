@@ -9,6 +9,12 @@ export interface Config {
   defaultProvider?: ProviderId;
   /** Project roots where the user hid "Found in this project" (v1.3 item 1, #141). */
   foundHidden?: string[];
+  /** "Send to issues" (v1.3 item 2): the last destination, per project too (#179), and the labels last used per target (#177). */
+  issues?: {
+    last?: "github" | "linear";
+    byProject?: Record<string, "github" | "linear">;
+    labels?: Record<string, string[]>;
+  };
 }
 
 export function defaultDataDir(env = process.env): string {

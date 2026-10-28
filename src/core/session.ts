@@ -3,6 +3,7 @@ import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
 import type { CommentState } from "./comments.ts";
+import type { PlanIssues, Slice, SplitSource } from "./issues.ts";
 import { type AnswerEdit, answerEdits, blockKey, findDecisionBlocks, serializeDecision, updateDecisionBlock, userBlocks } from "./decision-block.ts";
 
 export type SessionStatus =
@@ -95,6 +96,13 @@ export interface Session extends CommentState {
   source?: ImportedSource;
   /** The project root the source was found in (v1.3 item 1). */
   project?: string;
+  /**
+   * The plan's tracker links (v1.3 item 2, the spec's "plan.issues"). Kept on the session, not inside
+   * `plan`, so a plan rewritten after a reopen keeps its links and re-exports update instead of duplicating.
+   */
+  issues?: PlanIssues;
+  /** {agent}'s last split, cached per plan text (v1.3 item 2). */
+  issueSplit?: { planHash: string; source: SplitSource; slices: Slice[]; at: string };
   plan?: {
     title: string;
     markdown: string;
