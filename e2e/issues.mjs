@@ -7,7 +7,7 @@
 //   node e2e/issues.mjs                 checks only
 //   SHOTS=dir node e2e/issues.mjs       also writes the frames to dir
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -102,14 +102,15 @@ const freePort = () =>
 /** BIG-3: option B, false (DECISIONS #186; Victor chose B on 2026-10-28). The e2e follows whichever value it has. */
 const SPLIT_ON_OPEN = /const SPLIT_ON_OPEN = (true|false);/.exec(readFileSync(path.join(ROOT, "web/src/app/issues/IssuesSheet.tsx"), "utf8"))?.[1] === "true";
 console.log(`BIG-3: SPLIT_ON_OPEN = ${SPLIT_ON_OPEN}`);
-async function server({ cwd = proj, config } = {}) {
+async function server({ cwd = proj, config, scan = false, pre = "", homeSetup } = {}) {
   const home = mkdtempSync(path.join(WORK, "home-"));
+  homeSetup?.(home);
   if (config) {
     mkdirSync(path.join(home, ".grillado"), { recursive: true });
     writeFileSync(path.join(home, ".grillado", "config.json"), JSON.stringify(config));
   }
-  const env = { PATH: `${bin}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, FAKE_GH_DIR: GHDIR, GRILLADO_LINEAR_URL: LINEAR_URL };
-  const child = spawn(NODE, [CLI, "--no-open", "--no-scan", "--port", String(await freePort())], { env, cwd, stdio: ["ignore", "pipe", "pipe"] });
+  const env = { PATH: `${pre}${bin}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, FAKE_GH_DIR: GHDIR, GRILLADO_LINEAR_URL: LINEAR_URL };
+  const child = spawn(NODE, [CLI, "--no-open", ...(scan ? [] : ["--no-scan"]), "--port", String(await freePort())], { env, cwd, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {
@@ -716,6 +717,168 @@ try {
     await pg.keyboard.press("Escape");
     await sheet(pg).waitFor({ state: "detached" });
     await ctx.close();
+  }
+
+  // ============================================================== review round 4 (PR #25)
+  // Must: with a title edited, the first split asks “Split with {agent}?” (under option B it isn’t “again”), and
+  // a re-split of the agent’s slices asks “Split again?”. Nice 1: when a split ends, focus stays on Split again
+  // or Try again. Nice 2: on phones the error line keeps its icon with “Couldn’t”.
+  if (!SPLIT_ON_OPEN) {
+    const theme = "dark";
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: SHOTS ? 2 : 1 });
+    await ctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+    const pg = await ctx.newPage();
+    pg.on("pageerror", (e) => errors.push(String(e)));
+    const id = await plate(pg, app.url, "A plant watering reminder");
+    const file = path.join(app.dir, "sessions", id, "plan.md");
+    const base = readFileSync(file, "utf8").replace(/\n## User stories\n[\s\S]*?(?=\n## |$)/, "\n").trimEnd();
+    writeFileSync(file, `${base}\n\n## User stories\n\n- As a plant owner, I get a reminder on watering day.\n- As a plant owner, I can snooze a reminder for a day.\n`);
+    actl();
+    await pg.reload();
+    await pg.getByTestId("plan").waitFor();
+    await openSheet(pg);
+    const src = sheet(pg).locator(".ipv-src").first();
+    const read = async () => ((await src.textContent()) ?? "").replace(/\s*·\s*/g, " · ").trim();
+    const focused = () => pg.evaluate(() => { const a = document.activeElement; return `${a?.tagName.toLowerCase()}:${a?.textContent?.trim()}:${a?.matches(":focus-visible")}`; });
+    const focusOn = (label) => pg.waitForFunction((l) => document.activeElement?.textContent?.trim() === l, label, { timeout: 4000 }).catch(() => {});
+    const ask = sheet(pg).locator(".iask");
+    await ask.waitFor({ timeout: 8000 });
+    await sheet(pg).locator(".ir:not(.sk)").nth(1).locator("textarea").fill("Watering-day reminder");
+    const n0 = splits();
+    await ask.getByRole("button", { name: "Split with Claude Code" }).focus();
+    await pg.keyboard.press("Enter");
+    await sheet(pg).locator(".ipv-src", { hasText: /Your title edits are replaced/ }).waitFor({ timeout: 5000 });
+    check("r4 must: a title edited, then the first split asks “Split with Claude Code? … · Split · Keep”, not “again”", (await read()) === "Split with Claude Code? Your title edits are replaced. · Split · Keep", await read());
+    check("r4 must: asking runs nothing", splits() === n0, `${n0} → ${splits()}`);
+    await focusOn("Split");
+    check("r4: by keyboard, focus moves to Split, with its ring", (await focused()) === "button:Split:true", await focused());
+    await shot(pg, "r4-ask-first", theme);
+    await pg.keyboard.press("Enter");
+    await sheet(pg).locator(".ipv-src", { hasText: /^Split by Claude Code into/ }).waitFor({ timeout: 10000 });
+    check("r4 must: Split runs the agent once", splits() === n0 + 1, `${n0} → ${splits()}`);
+    await focusOn("Split again");
+    check("r4 nice 1: when the split finishes, focus is on Split again, with its ring (not the GitHub tab)", (await focused()) === "button:Split again:true", await focused());
+    await shot(pg, "r4-done-focus", theme);
+
+    // A re-split of the agent's slices, with one of them retitled: “Split again?”; Keep keeps.
+    await sheet(pg).locator(".ir:not(.sk)").nth(1).locator("textarea").fill("Reminders first");
+    await src.getByRole("button", { name: "Split again" }).focus();
+    await pg.keyboard.press("Enter");
+    await sheet(pg).locator(".ipv-src", { hasText: /Your title edits are replaced/ }).waitFor({ timeout: 5000 });
+    check("r4 must: a retitled agent slice, then Split again asks “Split again? … · Split again · Keep”", (await read()) === "Split again? Your title edits are replaced. · Split again · Keep", await read());
+    check("r4 must: asking again runs nothing", splits() === n0 + 1, `${n0 + 1} → ${splits()}`);
+    await shot(pg, "r4-ask-again", theme);
+    await src.getByRole("button", { name: "Keep" }).focus();
+    await pg.keyboard.press("Enter");
+    await sheet(pg).locator(".ipv-src", { hasText: /^Split by Claude Code into/ }).waitFor({ timeout: 5000 });
+    await focusOn("Split again");
+    check("r4: Keep keeps the slices and the edit, focus back on Split again", (await focused()) === "button:Split again:true" && (await sheet(pg).locator(".ir:not(.sk)").nth(1).locator("textarea").inputValue()) === "Reminders first" && splits() === n0 + 1, await focused());
+
+    // A re-split that fails: focus on Try again.
+    actl({ FAKE_SPLIT: "fail" });
+    await src.getByRole("button", { name: "Split again" }).focus();
+    await pg.keyboard.press("Enter");
+    await sheet(pg).locator(".ipv-src", { hasText: /Your title edits are replaced/ }).waitFor({ timeout: 5000 });
+    await pg.keyboard.press("Enter");
+    const warn = sheet(pg).locator(".ipv-src.warn");
+    await warn.waitFor({ timeout: 10000 });
+    check("r4: the failed re-split ran the agent once", splits() === n0 + 2, `${n0 + 1} → ${splits()}`);
+    check("r4: the error line", /^Couldn’t split with Claude Code, so it’s .+ · Try again$/.test((await warn.textContent()).replace(/\s*·\s*/g, " · ").trim()), await warn.textContent());
+    await focusOn("Try again");
+    check("r4 nice 1: when the split fails, focus is on Try again, with its ring (not the GitHub tab)", (await focused()) === "button:Try again:true", await focused());
+    await shot(pg, "r4-fail-focus", theme);
+    for (const width of [390, 320]) {
+      await pg.setViewportSize({ width, height: 700 });
+      await pg.waitForTimeout(400);
+      await warn.scrollIntoViewIfNeeded();
+      const g = await warn.evaluate((p) => {
+        const nw = p.querySelector(".iw1");
+        const icon = nw.querySelector("svg").getBoundingClientRect();
+        const r = document.createRange();
+        r.selectNodeContents(nw);
+        const word = [...r.getClientRects()].filter((x) => x.width > 0 && x.left >= icon.right - 1);
+        return { lines: nw.getClientRects().length, iconTop: icon.top - p.getBoundingClientRect().top, sameLine: word.length > 0 && word.every((x) => Math.abs(x.top + x.height / 2 - (icon.top + icon.height / 2)) < 6) };
+      });
+      check(`r4 nice 2 at ${width}: the warning icon and “Couldn’t” stay on the first line together`, g.lines === 1 && g.iconTop < 6 && g.sameLine, JSON.stringify(g));
+      await shot(pg, `m${width}-r4-fail`, theme);
+    }
+    actl();
+    await pg.keyboard.press("Escape");
+    await ctx.close();
+  }
+
+  // PO: imported plans with to-dos get the same card (option B), and every label names the agent in use.
+  // An imported Cursor plan with to-dos (found by the scan) on a server whose agent is the fake Grok: Grillado
+  // has no Cursor agent, so the plan takes the user's pick, Grok.
+  if (!SPLIT_ON_OPEN) {
+    const proj2 = realpathSync(mkdtempSync(path.join(WORK, "imp-")));
+    execFileSync("git", ["init", "-q", "-b", "main", proj2]);
+    execFileSync("git", ["-C", proj2, "remote", "add", "origin", "git@github.com:victor-teles/grillado.git"]);
+    const gbin = mkdtempSync(path.join(WORK, "gbin-"));
+    writeFileSync(path.join(gbin, "grok"), `#!/bin/sh\n. "${ACTL}"\nexec "${NODE}" "${path.join(ROOT, "test/fixtures/fake-agent.mjs")}" grok "$@"\n`);
+    chmodSync(path.join(gbin, "grok"), 0o755);
+    const TASKS = ["Import bank CSVs", "Tag each expense with a category", "Show the month’s totals per category"];
+    const ago = (Date.now() - 3600_000) / 1000;
+    const plans = path.join(proj2, ".cursor", "plans");
+    mkdirSync(plans, { recursive: true });
+    const planMd = path.join(plans, "budget.plan.md");
+    writeFileSync(planMd, `---\nname: Home budget tracker\noverview: A shared monthly view of spending.\ntodos:\n${TASKS.map((t, i) => `  - id: t${i + 1}\n    content: ${t}\n    status: pending\n`).join("")}---\n\n# Home budget tracker\n\nSpending is invisible, so the family gets a shared monthly view.\n`);
+    utimesSync(planMd, ago, ago);
+    const app3 = await server({ cwd: proj2, scan: true, pre: `${gbin}:`, config: { defaultProvider: "grok" } });
+    const theme = "dark";
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: SHOTS ? 2 : 1 });
+    await ctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+    const pg = await ctx.newPage();
+    pg.on("pageerror", (e) => errors.push(String(e)));
+    await pg.goto(app3.url);
+    await pickIfAsked(pg, /Grok/);
+    let row = null;
+    for (let i = 0; i < 40 && !row; i++) {
+      const v = await pg.evaluate(() => fetch("/api/found").then((r) => r.json()));
+      row = (v.rows ?? []).find((r) => /budget/i.test(`${r.title ?? ""} ${r.idea ?? ""}`) && r.kind !== "free") ?? (v.rows ?? []).find((r) => /budget/i.test(`${r.title ?? ""} ${r.idea ?? ""}`));
+      if (!row) await pg.waitForTimeout(250);
+    }
+    check("r4 to-dos: the scan finds the imported plan", !!row, JSON.stringify(row));
+    const imp = row ? await pg.evaluate((id) => fetch("/api/found/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }).then((r) => r.json()), row.id) : {};
+    check("r4 to-dos: imported", typeof imp.url === "string", JSON.stringify(imp).slice(0, 200));
+    await pg.goto(`${new URL(app3.url).origin}${imp.url}${new URL(app3.url).search}`);
+    await pg.getByTestId("plan").waitFor({ timeout: 15000 });
+    const n0 = splits();
+    await openSheet(pg);
+    const ask = sheet(pg).locator(".iask");
+    await ask.waitFor({ timeout: 8000 }).catch(() => {});
+    await pg.waitForTimeout(1500);
+    check("r4 to-dos: opening runs no split", splits() === n0, `${n0} → ${splits()}`);
+    check("r4 to-dos: the parent and one issue per to-do show right away", (await sheet(pg).locator(".ir:not(.sk)").count()) === 1 + TASKS.length, String(await sheet(pg).locator(".ir:not(.sk)").count()));
+    check("r4 to-dos: the card names the to-dos and the agent in use (Grok)", /^Right now it’s one issue per to-do\. Grok can split the plan into thinner slices that each cover their decisions\.\s*Split with Grok$/.test((await ask.textContent().catch(() => "")) ?? ""), await ask.textContent().catch(() => "(no card)"));
+    check("r4 to-dos: no “Claude Code” anywhere in the sheet", !/Claude Code/.test(await sheet(pg).textContent()));
+    await shot(pg, "r4-todos-ask-grok", theme);
+    await sheet(pg).locator(".ir:not(.sk)").nth(1).locator("textarea").fill("Bank CSV import");
+    await ask.getByRole("button", { name: "Split with Grok" }).click();
+    const src = sheet(pg).locator(".ipv-src").first();
+    await sheet(pg).locator(".ipv-src", { hasText: /Your title edits are replaced/ }).waitFor({ timeout: 5000 });
+    const line = ((await src.textContent()) ?? "").replace(/\s*·\s*/g, " · ").trim();
+    check("r4 to-dos: the confirm names Grok: “Split with Grok? … · Split · Keep”", line === "Split with Grok? Your title edits are replaced. · Split · Keep", line);
+    check("r4 to-dos: asking runs nothing", splits() === n0, `${n0} → ${splits()}`);
+    await shot(pg, "r4-todos-confirm-grok", theme);
+    actl({ FAKE_SPLIT_DELAY_MS: 2500 });
+    await src.getByRole("button", { name: "Split", exact: true }).click();
+    await sheet(pg).getByText(/Grok is splitting the plan/).waitFor({ timeout: 8000 });
+    const way = sheet(pg).locator(".ipv-src").first().getByRole("button").last();
+    check("r4 to-dos: while Grok splits, the way out is “Use the plan’s to-dos instead”", (await way.textContent()) === "Use the plan’s to-dos instead", await way.textContent());
+    await shot(pg, "r4-todos-splitting-grok", theme);
+    await sheet(pg).locator(".ipv-src", { hasText: /^(Split by Grok into|Couldn’t split with Grok)/ }).waitFor({ timeout: 15000 });
+    const log = existsSync(SPLIT_LOG) ? readFileSync(SPLIT_LOG, "utf8").trim().split("\n") : [];
+    check("r4 to-dos: Split ran the agent exactly once, and it was Grok", splits() === n0 + 1 && log.at(-1) === "grok", `${n0} → ${splits()} · ${log.at(-1)}`);
+    // A Cursor plan carries no decisions, so the fake Grok has nothing to slice: a failed split (not “0 slices”),
+    // and the to-dos stay, said with Grok's name. (A to-do plan with decisions splits: test/issues-server.test.ts.)
+    const end = ((await src.textContent()) ?? "").replace(/\s*·\s*/g, " · ").trim();
+    check("r4 to-dos: no slices reads as a failed split that names Grok and keeps the to-dos", end === "Couldn’t split with Grok, so it’s one issue per to-do · Try again" && (await sheet(pg).locator(".ir:not(.sk)").count()) === 1 + TASKS.length, end);
+    await shot(pg, "r4-todos-fail-grok", theme);
+    actl();
+    await pg.keyboard.press("Escape");
+    await ctx.close();
+    await app3.stop();
   }
 
   // Must 4 (#179): focus lands on the saved destination's tab, which arrives after the first paint.

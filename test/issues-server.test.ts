@@ -281,6 +281,28 @@ describe("the agent split", () => {
     expect((await call("GET", `/api/sessions/${s.id}/issues`)).json.split.source).toBe("agent");
   });
 
+  test("review r4 (PO): an imported plan's to-dos are split by {agent} when asked", async () => {
+    const { store, call } = await start();
+    const s = storySession(store, "# Recipe box\n\n## Tasks\n- [ ] Save a recipe\n- [ ] Sync later\n");
+    s.source = { app: "cursor", kind: "plan", path: "/nowhere/recipe.plan.md", date: s.createdAt } as never;
+    store.save(s);
+    const fb = await call("POST", `/api/sessions/${s.id}/issues/split`, { use: "fallback" });
+    expect(fb.json.source).toBe("todos");
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("agent");
+    expect(r.json.failed).toBeUndefined();
+  });
+
+  test("review r4: an agent reply with no usable slices is a failed split, not “0 slices”", async () => {
+    const { store, call } = await start();
+    const s = storySession(store);
+    s.decisions = {};
+    store.save(s);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("stories");
+    expect(r.json.failed).toBe("failed");
+  });
+
   test("FAKE_SPLIT=fail: the user stories, with the reason", async () => {
     const { store, call } = await start({}, { FAKE_SPLIT: "fail" });
     const s = storySession(store);

@@ -184,15 +184,18 @@ export class IssuesRoutes {
     let failed: string | undefined;
     let out: { source: SplitSource; slices: Slice[] } | null = null;
     const fb = fallbackSlices(s, md);
-    if (!fallback && fb.source !== "todos") {
+    // Imported to-dos can be split too, when asked (PO, review round 4).
+    if (!fallback) {
       const c = new AbortController();
       this.splits.set(s.id, c);
       try {
         const exported = Object.keys(s.issues?.items ?? {}).map((key) => ({ key, title: s.issueTitles?.[key] ?? s.issueSplit?.slices.find((x) => x.key === key)?.title ?? key }));
         const r = await this.host.split(s, md, exported, c.signal);
         if (c.signal.aborted) return { stopped: true };
-        if (r?.ok) out = { source: "agent", slices: agentSlices(s, r.slices) };
-        else failed = r ? r.code : "missing";
+        const slices = r?.ok ? agentSlices(s, r.slices) : [];
+        // No usable slices (e.g. a plan without decisions) reads as a failed split, not "0 slices".
+        if (slices.length) out = { source: "agent", slices };
+        else failed = r && !r.ok ? r.code : r ? "failed" : "missing";
       } finally {
         if (this.splits.get(s.id) === c) this.splits.delete(s.id);
       }

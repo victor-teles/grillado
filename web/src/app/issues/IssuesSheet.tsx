@@ -207,18 +207,21 @@ export function IssuesSheet(p: {
     };
   }, [st, destKey]);
 
-  // Starting a split, or taking its way out, removes the control that had focus: hand focus on to what
-  // replaces it (the way out while it splits, then "Split with {agent}" or the destination tab).
+  // Starting a split, asking first, or taking the way out removes the control that had focus: hand focus on
+  // to what replaces it (the way out while it splits, Split while it asks, then "Split with {agent}",
+  // Split again or Try again, else the destination tab).
   const askBtn = useRef<HTMLButtonElement>(null);
   const wayBtn = useRef<HTMLButtonElement>(null);
-  const [refocus, setRefocus] = useState<"way" | "after" | null>(null);
+  const srcBtn = useRef<HTMLButtonElement>(null);
+  const yesBtn = useRef<HTMLButtonElement>(null);
+  const [refocus, setRefocus] = useState<"way" | "ask" | "after" | null>(null);
   useEffect(() => {
     if (!refocus) return;
     setRefocus(null);
     const a = document.activeElement;
     // (the #179 effect may have parked it on the destination tab meanwhile)
     if (a && a !== document.body && a !== sheet.current && !a.closest("[role=tablist]")) return;
-    (refocus === "way" ? wayBtn.current : (askBtn.current ?? firstFocus.current))?.focus({ preventScroll: true });
+    (refocus === "way" ? wayBtn.current : refocus === "ask" ? yesBtn.current : (askBtn.current ?? srcBtn.current ?? firstFocus.current))?.focus({ preventScroll: true });
   }, [refocus]);
   const split = async (fallback = false) => {
     // The way out removes the link that had focus: give it back to something visible once the list is back.
@@ -838,8 +841,15 @@ export function IssuesSheet(p: {
 
   // Where the list came from (§3), and the split link (BIG-3: SPLIT_ON_OPEN).
   const editedTitles = items.some((it) => (titles[it.key] ?? it.title) !== it.title);
+  const inSheet = () => !!sheet.current?.contains(document.activeElement) && document.activeElement !== sheet.current;
+  /** Split, but ask first when it would replace title edits. */
+  const trySplit = () => {
+    if (!editedTitles || askSplit) return void split();
+    if (inSheet()) setRefocus("ask");
+    setAskSplit(true);
+  };
   const splitLink = (label: string) => (
-    <button type="button" className="lnk" onClick={() => (editedTitles && !askSplit ? setAskSplit(true) : void split())}>
+    <button ref={srcBtn} type="button" className="lnk" onClick={trySplit}>
       {label}
     </button>
   );
@@ -857,13 +867,20 @@ export function IssuesSheet(p: {
     else if (askSplit)
       source = (
         <p className="ipv-src" role="status">
-          {ICOPY.splitAsk}
+          {ICOPY.splitAsk(p.agentName, pv.source === "agent")}
           <span className="dt">·</span>
-          <button type="button" className="lnk" onClick={() => void split()}>
-            Split again
+          <button ref={yesBtn} type="button" className="lnk" onClick={() => void split()}>
+            {pv.source === "agent" ? "Split again" : "Split"}
           </button>
           <span className="dt">·</span>
-          <button type="button" className="lnk" onClick={() => setAskSplit(false)}>
+          <button
+            type="button"
+            className="lnk"
+            onClick={() => {
+              if (inSheet()) setRefocus("after");
+              setAskSplit(false);
+            }}
+          >
             Keep
           </button>
         </p>
@@ -871,8 +888,11 @@ export function IssuesSheet(p: {
     else if (splitFailed)
       source = (
         <p className="ipv-src warn" role="status">
-          <IAlert s={14} />
-          Couldn’t split with {p.agentName}, so it’s {pv.source === "stories" ? "one issue per user story" : "the parent alone"}
+          <span className="iw1">
+            <IAlert s={14} />
+            Couldn’t
+          </span>{" "}
+          split with {p.agentName}, so it’s {pv.source === "stories" ? "one issue per user story" : pv.source === "todos" ? "one issue per to-do" : "the parent alone"}
           <span className="dt">·</span>
           {splitLink("Try again")}
         </p>
@@ -894,15 +914,14 @@ export function IssuesSheet(p: {
           {splitLink("Split again")}
         </p>
       );
-    else if (pv.source === "todos") source = <p className="ipv-src">From the plan’s {plural(kids.length, "to-do")}</p>;
     else
       source = (
         <div className="iask">
           <span>
-            {pv.source === "stories" ? "Right now it’s one issue per user story." : "Right now it’s only the parent issue."} {p.agentName} can split the
-            plan into {pv.source === "stories" ? "thinner slices" : "slices"} that each cover their decisions.
+            {pv.source === "todos" ? "Right now it’s one issue per to-do." : pv.source === "stories" ? "Right now it’s one issue per user story." : "Right now it’s only the parent issue."}{" "}
+            {p.agentName} can split the plan into {pv.source === "none" ? "slices" : "thinner slices"} that each cover their decisions.
           </span>
-          <button ref={askBtn} type="button" className="btn soft sm" onClick={() => (editedTitles && !askSplit ? setAskSplit(true) : void split())}>
+          <button ref={askBtn} type="button" className="btn soft sm" onClick={trySplit}>
             Split with {p.agentName}
           </button>
         </div>

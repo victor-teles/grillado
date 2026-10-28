@@ -99,6 +99,10 @@ html.ish-open .copy-md{background:var(--muted);color:var(--foreground)} /* the s
 .ipv-src .dt{margin:0 6px}
 .ipv-src .lnk{color:var(--foreground)}
 .ipv-src.warn svg{color:var(--warning-ink);margin-right:6px}
+/* The warning icon stays with its first word when the line wraps (a block line, not flex items). */
+.ipv-src.warn{display:block}
+.ipv-src.warn .iw1{white-space:nowrap}
+.ipv-src.warn svg{display:inline-block;vertical-align:-2px}
 .iask{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border-radius:12px;background:var(--sel);font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
 .ipl{list-style:none;margin:0;padding:0;display:grid;border-radius:12px;box-shadow:inset 0 0 0 1px var(--hair)}
 .ir{display:grid;grid-template-columns:20px minmax(0,1fr);gap:12px;padding:12px 14px 12px 12px;border-top:1px solid var(--hair);transition:opacity var(--d-quick) var(--ease-out)}

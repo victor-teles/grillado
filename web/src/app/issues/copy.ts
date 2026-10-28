@@ -46,5 +46,6 @@ export const ICOPY = {
   keyHint: "It stays on this computer and goes only to Linear.",
   badKey: "That key didn’t work.",
   disconnectAsk: "Disconnect Linear? You’ll paste a key again next time.",
-  splitAsk: "Split again? Your title edits are replaced.",
+  /** Before the first split (option B, DECISIONS #186) it isn't "again". */
+  splitAsk: (agent: string, again: boolean) => (again ? "Split again? Your title edits are replaced." : `Split with ${agent}? Your title edits are replaced.`),
 } as const;
