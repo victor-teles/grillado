@@ -566,6 +566,7 @@ export class GrilladoServer {
       activity: this.activityView(s),
       // v1.3 item 1 §6: where an imported plan came from, and whether that source changed or is gone.
       ...(s.source ? { sourceInfo: this.sourceInfo(s) } : {}),
+      agentNote: this.agentNote(s),
       acceptStreak: acceptStreak(s),
       nudge: shouldNudge(s),
       // v1.3 item 2: the export in progress (or just finished), so a re-opened sheet shows it (#174).
@@ -577,6 +578,16 @@ export class GrilladoServer {
   }
 
   // ---------------------------------------------------------------- found in this project (v1.3 item 1)
+
+  /** An import whose own agent isn't installed runs on another; one quiet line says which (demo finding MUST 2).
+   *  Only while that agent still isn't ready: once it's installed the line would be untrue (review-pr28 must 2). */
+  private agentNote(s: Session): string | undefined {
+    const from = s.source?.agentFrom;
+    if (!from || from === s.provider) return undefined;
+    if (this.providers.find((p) => p.id === from)?.detection.status === "ready") return undefined;
+    const name = (id: ProviderId) => this.opts.adapters.find((a) => a.id === id)?.displayName ?? id;
+    return `Using ${name(s.provider)} · ${name(from)} isn’t installed`;
+  }
 
   /** §5: the source's state for the plan's meta line, dated like its Activity entry (the source's date). */
   private sourceInfo(s: Session) {
@@ -625,7 +636,8 @@ export class GrilladoServer {
     if (parts[0] === "import") {
       if (typeof body?.id !== "string") return this.json(res, 400, { error: "Expected { id }" });
       try {
-        const r = await f.import(body.id, this.selected ?? this.opts.store.readConfig().defaultProvider ?? PROVIDER_IDS[0], this.foundWriter(), this.foundAgent());
+        const ready = (id: ProviderId) => this.providers.some((p) => p.id === id && p.detection.status === "ready");
+        const r = await f.import(body.id, this.selected ?? this.opts.store.readConfig().defaultProvider ?? PROVIDER_IDS[0], this.foundWriter(), this.foundAgent(), ready);
         if ((r.result === "created" || r.result === "updated") && r.source) this.logImport(r.planId, r.result, r.source);
         this.broadcast({ type: "app" });
         return this.json(res, 200, { ...r, url: `/s/${r.planId}`, row: f.last?.rows.find((x) => x.id === body.id) ?? null });

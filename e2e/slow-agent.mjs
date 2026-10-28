@@ -19,7 +19,7 @@ const NODE = process.execPath;
 const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const NOTE = "Rounds can take a few minutes.";
-const PLATE_NOTE = "This can take a few minutes.";
+const PLATE_NOTE = "Plans can take a few minutes.";
 const TITLE = "Grok is running slow";
 const BODY = "Nothing came back in time. Your answers are saved.";
 let failures = 0;

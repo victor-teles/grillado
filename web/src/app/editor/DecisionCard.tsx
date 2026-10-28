@@ -53,7 +53,10 @@ export function DecisionCard({
   startExpanded,
   onClose,
   chips,
+  short,
 }: {
+  /** The decision's short title for the meta line; the R·n code stays in its title attribute. */
+  short?: string;
   /** v1.3 item 2: the issues that cover this decision, after the answer. */
   chips?: ReactNode;
   fields: DecisionFields;
@@ -273,7 +276,11 @@ export function DecisionCard({
         </>
       ) : null}
       <div className="dz-h">
-        <span className="dz-id">{fields.id}</span>
+        {short && short !== fields.question ? (
+          <span className="dz-id" title={fields.id || undefined}>
+            {short}
+          </span>
+        ) : null}
         {who ? <span className="dz-when">{who}</span> : null}
         {orphan && addPlan && addPlan.state !== "rest" ? (
           <AddPlanLine ap={addPlan} agentName={agentName} onReview={(id) => onReview?.(id)} />

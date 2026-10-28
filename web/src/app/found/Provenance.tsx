@@ -21,7 +21,7 @@ export function Provenance({ session, head, edited }: { session: SessionView; he
       setState("failed");
     }
   };
-  return (
+  const meta = (
     <p className="sub fp" data-testid="plan-meta">
       {head.split(" · ").map((x, i) => (
         <span key={i}>{x}</span>
@@ -44,5 +44,16 @@ export function Provenance({ session, head, edited }: { session: SessionView; he
         </>
       ) : null}
     </p>
+  );
+  // The agent it runs on, when the import's own isn't installed (demo finding MUST 2): its own quiet line, never a wrapped part of the meta.
+  return session.agentNote ? (
+    <>
+      {meta}
+      <p className="sub fp-agent" data-testid="agent-note">
+        {session.agentNote}
+      </p>
+    </>
+  ) : (
+    meta
   );
 }

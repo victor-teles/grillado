@@ -18,6 +18,8 @@ export function useIssues(p: {
   /** Not plated, or decisions still open: the item reads "Finish the plan first". */
   draft: boolean;
   idOf: (key: string) => string;
+  /** The decision's short title: what chips and labels show (the R·n code stays in title attributes). */
+  nameOf: (key: string) => string;
   /** The ⋯ trigger: focus goes back there when the sheet closes. */
   moreRef: RefObject<HTMLElement | null>;
 }) {
@@ -118,6 +120,19 @@ export function useIssues(p: {
       {n}
     </span>
   );
+  /** A state and its action as one part, "3 changed since export · Update issues": on a phone they wrap together,
+   *  never leaving the action alone on a line (review-pr28 nice 2). */
+  const pair = (a: ReactNode, b: ReactNode, k: string) =>
+    sg(
+      <>
+        {a}
+        <span className="dt in" aria-hidden="true">
+          ·
+        </span>
+        {b}
+      </>,
+      k,
+    );
   const link = (gone = false) =>
     linked?.parent ? (
       gone ? (
@@ -151,34 +166,37 @@ export function useIssues(p: {
   else if (linked?.parent && !p.draft) {
     const parts: ReactNode[] = [];
     if (parentGone) {
-      parts.push(<span key="m" className="bad">Missing in {T}</span>);
+      // Right after the struck-through #1, with no "·" before it; joined to Recreate like the pairs below.
       parts.push(
-        sg(
+        <span className="sg" key="m">
+          <span className="bad">Missing in {T}</span>
+          <span className="dt in" aria-hidden="true">
+            ·
+          </span>
           <button type="button" className="lnk2" onClick={show}>
             Recreate
-          </button>,
-          "r",
-        ),
+          </button>
+        </span>,
       );
     } else if (failed.length) {
       parts.push(sg(`${kids} of ${plural(kids + failed.filter((k) => !linked.items[k]).length, "sub-issue")}`, "n"));
-      parts.push(sg(<span className="bad">{failed.length} failed</span>, "f"));
       parts.push(
-        sg(
+        pair(
+          <span className="bad">{failed.length} failed</span>,
           <button type="button" className="lnk2" onClick={show}>
             Retry failed
           </button>,
-          "r",
+          "f",
         ),
       );
     } else if (changed) {
-      parts.push(sg(`${changed} changed since export`, "c"));
       parts.push(
-        sg(
+        pair(
+          `${changed} changed since export`,
           <button type="button" className="lnk2" onClick={show}>
             Update issues
           </button>,
-          "u",
+          "c",
         ),
       );
     } else {
@@ -200,7 +218,7 @@ export function useIssues(p: {
     if (!linked || p.draft) return null;
     const hits = (check?.items ?? []).filter((it) => it.key !== PARENT && it.covers.includes(decision) && linked.items[it.key]);
     if (!hits.length) return null;
-    const id = p.idOf(decision) || decision;
+    const name = p.nameOf(decision) || decision;
     const shown = hits.slice(0, 2);
     return (
       <span className="ilks" data-testid={`issue-chips-${decision}`}>
@@ -212,7 +230,7 @@ export function useIssues(p: {
               {ref(l)} missing · Recreate
             </button>
           ) : (
-            <a key={it.key} className="ilk" href={l.url} target="_blank" rel="noreferrer" aria-label={`${id} is covered by issue ${ref(l)}`}>
+            <a key={it.key} className="ilk" href={l.url} target="_blank" rel="noreferrer" aria-label={`${name} is covered by issue ${ref(l)}`}>
               <IDot s={12} />
               {ref(l)}
             </a>
@@ -223,6 +241,6 @@ export function useIssues(p: {
     );
   };
 
-  const sheet = open ? <IssuesSheet session={s} agentName={p.agentName} phone={p.phone} idOf={p.idOf} onClose={close} /> : null;
+  const sheet = open ? <IssuesSheet session={s} agentName={p.agentName} phone={p.phone} idOf={p.idOf} nameOf={p.nameOf} onClose={close} /> : null;
   return { menuItem, strip, chipsFor, sheet, onMenuClosed, open: show };
 }

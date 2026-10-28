@@ -38,6 +38,7 @@ export function IssuesSheet(p: {
   phone: boolean;
   /** Decision key → "R1·2" (the plan's own ids). */
   idOf: (key: string) => string;
+  nameOf: (key: string) => string;
   onClose: () => void;
 }) {
   const s = p.session;
@@ -1004,7 +1005,9 @@ export function IssuesSheet(p: {
       <span className="cov">
         Covers{" "}
         {it.covers.map((k) => (
-          <b key={k}>{p.idOf(k) || k}</b>
+          <b key={k} title={p.idOf(k) || undefined}>
+            {p.nameOf(k) || k}
+          </b>
         ))}
       </span>
     ) : (

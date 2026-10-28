@@ -294,7 +294,8 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
     <div className="dr" key={d.key}>
       <dt className="k">{nameOf(d)}</dt>
       <dd className="v">
-        {d.answer}
+        {/* The answer truncates; the tag never does (demo finding nice-to-have 1). */}
+        <span className="va" title={d.answer}>{d.answer}</span>
         {!d.accepted_recommendation ? <span className="yc">Your call</span> : null}
       </dd>
       <dd className="re">
@@ -335,6 +336,11 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
                 <p>
                   {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : `${plural(n, "decision")} settled, nothing open.`} Read them over before the plan gets written.
                 </p>
+                {session.agentNote ? (
+                  <p className="agent-note" data-testid="agent-note">
+                    {session.agentNote}
+                  </p>
+                ) : null}
               </div>
               <div className="dl">
                 {early ? (

@@ -321,13 +321,20 @@ try {
     await pg.locator(`del.sg[data-sg="${A}"]`).waitFor({ timeout: 5000 });
     check(`${theme}: ⌘Z after the write restores the suggestion and plan.md`, (await planMd(pg)) === before && (await pg.locator(".okm").count()) === 0);
 
-    // ---- axe while "✓ Accepted" holds (axe needs running timers, so this one runs in real time)
+    // ---- axe while "✓ Accepted" holds (axe needs running timers, so this one runs in real time).
+    // A full axe pass can outlast the 2 s hold on a loaded machine (it did at load ~15 on 8 cores), so this
+    // step stretches the hold through the token the app reads (--d-ok-hold), then puts it back.
+    await pg.evaluate(() => document.documentElement.style.setProperty("--d-ok-hold", "12000ms"));
     await focusA();
     await pillBtn("Accept").click();
     await pg.locator(".okm").waitFor({ timeout: 2000 });
+    const axeAt = Date.now();
     await axe(pg, `${theme} desktop, holding ✓ Accepted`);
-    check(`${theme}: axe ran while the mark held`, (await pg.locator(".okm").count()) === 1);
-    await pg.locator(".okm").waitFor({ state: "detached", timeout: 4000 });
+    const axeMs = Date.now() - axeAt;
+    console.log(`  (${theme}: axe during the hold took ${axeMs} ms)`);
+    check(`${theme}: axe ran while the mark held`, (await pg.locator(".okm").count()) === 1, `axe ${axeMs} ms`);
+    await pg.evaluate(() => document.documentElement.style.removeProperty("--d-ok-hold"));
+    await pg.locator(".okm").waitFor({ state: "detached", timeout: 16000 });
     await axe(pg, `${theme} desktop, after the hold`);
     await pg.keyboard.press("Control+z");
     await pg.locator(`del.sg[data-sg="${A}"]`).waitFor({ timeout: 5000 });

@@ -169,6 +169,8 @@ button:disabled{cursor:default}
 .intro{display:grid;gap:6px;margin-bottom:28px}
 .intro h1{font-size:var(--t-title);line-height:30px;font-weight:600;letter-spacing:-.01em}
 .intro p{color:var(--muted-foreground)}
+/* An import running on a stand-in agent: one quiet line, no banner (demo finding MUST 2). */
+.intro p.agent-note{font-size:var(--t-meta);line-height:16px}
 .bar{padding:12px 40px 16px;background:var(--background)}
 .bar .in,.bar>div{max-width:640px;width:100%;margin:0 auto;display:flex;align-items:center;gap:12px;min-width:0}
 .bar>p[role=alert],.bar .err{max-width:640px;width:100%;margin:0 auto 10px;font-size:var(--t-meta);line-height:16px;color:var(--destructive-ink)}
@@ -315,6 +317,7 @@ button:disabled{cursor:default}
 .dr .k{color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dr .v{margin:0;display:flex;align-items:center;gap:8px;min-width:0}
 .dr .v>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dr .v>.yc{flex:none}
 .dr .v.open{color:var(--muted-foreground)}
 .dr .re{margin:0;opacity:0;transition:opacity var(--d-quick) var(--ease-out)}
 .dr:hover .re,.dr:focus-within .re{opacity:1}
@@ -358,7 +361,11 @@ button:disabled{cursor:default}
 .ped-mode[aria-checked=true]{background:var(--background);color:var(--foreground);font-weight:500}
 /* One blue button per surface: while a card or banner offers the primary action, Copy steps back. */
 .planv:has(.dz .btn.primary:not(:disabled),.pbanner .btn.primary:not(:disabled)) .copy-md{background:var(--muted);color:var(--foreground)}
-.pmenu-path{font:400 var(--t-meta)/16px var(--mono)!important;color:var(--muted-foreground);max-width:320px;overflow-wrap:anywhere}
+/* The save path: as wide as the menu and never wider (it adds no width of its own), one line cut in the middle (start…plan.md); mono for the path only. */
+.pmenu-path{font:400 var(--t-meta)/16px var(--sans)!important;color:var(--muted-foreground);contain:inline-size;min-width:0}
+.pmenu-path .pp{display:flex;min-width:0;white-space:nowrap;font-family:var(--mono)}
+.pmenu-path .pp-h{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pmenu-path .pp-t{flex:none}
 .pbanner{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:12px;align-items:start;margin:4px 20px 8px;padding:12px 16px;border-radius:14px;background:var(--sel)}
 .pbanner>svg{color:var(--muted-foreground);margin-top:2px}
 .pbanner[data-tone=warn]>svg{color:var(--warning-ink)}
@@ -488,6 +495,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 /* the "·" sits in the gap, so a wrapped line never starts with one (it is clipped at the edge) */
 .dz-h{column-gap:15px}
 .dz-h>*{position:relative}
+.dz-h>.dz-id{max-width:min(24em,100%);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dz-h>*+*::before{content:"·";position:absolute;left:-10px}
 .dz-lbl{display:none}
 .dz-h>.dz-lbl+*::before{content:none}
@@ -555,7 +563,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 .drow-a .yc{margin-left:8px;font-size:var(--t-meta);font-weight:500;color:var(--gr-ember-ink)}
 .drow .orph{display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:var(--t-meta);color:var(--muted-foreground);font-weight:400}
 .drow .orph svg{color:var(--warning-ink)}
-.drow-m{grid-column:2;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:none;margin-top:2px}
+.drow-m{grid-column:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:none;margin-top:2px}
 .drow-ra{grid-column:3;grid-row:1;display:flex;gap:2px;opacity:0;margin:-4px 0;transition:opacity var(--d-quick) var(--ease-out)}
 .drow:focus-within .drow-ra,.drow:focus-within .drow-m{opacity:1;display:flex}
 .drow:focus-within .drow-m{display:block}
@@ -630,6 +638,12 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .cmdrow .nm,.cmdrow .why{grid-column:1/-1}
   .dr{grid-template-columns:96px minmax(0,1fr) auto}
   .dr .re{opacity:1}
+  /* Narrow: the answer keeps its line and "Your call" goes under it. */
+  .dr .v:has(>.yc){flex-direction:column;align-items:flex-start;gap:0;padding:6px 0}
+  .dr .v:has(>.yc)>.va{max-width:100%}
+  /* Phones have no hover for a title: the answer wraps so it can be read over, up to three lines (review-pr28 must 1). */
+  .dr .v>span.va{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3}
+  .dr .v:not(:has(>.yc)){padding:6px 0}
   .scrim{place-items:end stretch;padding:0 12px 12px}
   .dialog{width:auto}
   .dtb{padding:0 8px 0 16px;gap:8px}

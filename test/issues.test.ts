@@ -63,8 +63,8 @@ describe("items", () => {
     s.rounds = [{ n: 1, questions: [{ key: "storage" }] } as any, { n: 2, questions: [{ key: "other" }, { key: "sync" }] } as any];
     const { items } = buildItems(s, STORY_MD, "github", slices);
     expect(items[1].body).toStartWith("As a cook, I add a recipe from a photo");
-    expect(items[1].body).toContain("\n\n**Covers:** R1·1 Where do recipes live? SQLite on the device\n\nFrom Grillado plan");
-    expect(items[3].body).toContain("**Covers:** R2·2 Sync between devices? Not in v1");
+    expect(items[1].body).toContain("\n\n**Covers:** Where do recipes live? SQLite on the device\n\nFrom Grillado plan");
+    expect(items[3].body).toContain("**Covers:** Sync between devices? Not in v1");
     expect(readMarker(items[1].body)).toEqual({ plan: s.id, key: slices[0].key });
   });
 
@@ -192,6 +192,28 @@ describe("items", () => {
     expect(by).toEqual({ [p.key]: "unchanged", [a.key]: "update", [b.key]: "edited", [c.key]: "missing", gone: "removed" });
   });
 
+  // review-pr28 must 3: issues sent before #28 had "**Covers:** R1·1 question answer". Losing the codes alone isn't a change.
+  test("planChanges: an issue sent with the old R·n Covers line is unchanged, until something real changes", () => {
+    const s = storySession(tempStore());
+    s.rounds = [{ n: 1, questions: [{ key: "storage" }] } as any, { n: 2, questions: [{ key: "other" }, { key: "sync" }] } as any];
+    const { items } = buildItems(s, STORY_MD, "github", fallbackSlices(s, STORY_MD).slices);
+    const [p, a, b, c] = items;
+    // The bodies exactly as 2b745d9 (main before #28) sent them.
+    const oldA = a.body.replace("**Covers:** Where do recipes live?", "**Covers:** R1·1 Where do recipes live?");
+    const oldC = c.body.replace("**Covers:** Sync between devices?", "**Covers:** R2·2 Sync between devices?");
+    expect(oldA).not.toBe(a.body);
+    expect(oldC).not.toBe(c.body);
+    expect(b.legacyHash).toBeUndefined(); // covers nothing: one format only
+    const link = (hash: string) => ({ id: "1", number: 1, url: "u", contentHash: hash });
+    const issues: PlanIssues = { tracker: "github", target: "o/r", labels: [], parent: link(contentHash(p.title, p.body)), items: { [a.key]: link(contentHash(a.title, oldA)), [b.key]: link(contentHash(b.title, b.body)), [c.key]: link(contentHash(c.title, oldC)) }, exportedAt: "" };
+    const by = (xs: ReturnType<typeof planChanges>) => Object.fromEntries(xs.map((x) => [x.key, x.change]));
+    expect(by(planChanges(items, issues, { [a.key]: contentHash(a.title, oldA), [c.key]: contentHash(c.title, oldC) }))).toEqual({ [p.key]: "unchanged", [a.key]: "unchanged", [b.key]: "unchanged", [c.key]: "unchanged" });
+    // A real change still reads as one: the answer moved on since that export.
+    s.decisions.storage = { ...s.decisions.storage, answer: "Postgres on a server" };
+    const moved = buildItems(s, STORY_MD, "github", fallbackSlices(s, STORY_MD).slices).items;
+    expect(by(planChanges(moved, issues))[a.key]).toBe("update");
+  });
+
   test("gh versions and remotes", () => {
     expect(parseVersion("gh version 2.94.0 (2026-01-01)")).toEqual([2, 94, 0]);
     expect(atLeast([2, 94, 0], [2, 94, 0])).toBe(true);
@@ -271,6 +293,20 @@ describe("gh adapter (fake gh)", () => {
     expect(s.issues!.failed).toEqual({});
     expect(gh.state().issues.length).toBe(4);
     expect(new Set(gh.state().issues.map((x) => readMarker(x.body)!.key)).size).toBe(4);
+  });
+
+  test("an export over issues sent with the old R·n Covers line leaves them as sent (review-pr28 must 3)", async () => {
+    const gh = fakeGh({});
+    const s = storySession(tempStore());
+    s.rounds = [{ n: 1, questions: [{ key: "storage" }] } as any, { n: 2, questions: [{ key: "other" }, { key: "sync" }] } as any];
+    const first = await exportAll(s, tracker(gh, "flag"), "github", "victor-teles/grillado");
+    const a = first.items[1];
+    // As if a build before #28 had sent it: the link holds the hash of the body with the code.
+    s.issues!.items[a.key].contentHash = contentHash(a.title, a.body.replace("**Covers:** Where do recipes live?", "**Covers:** R1·1 Where do recipes live?"));
+    const before = gh.calls().length;
+    const again = await exportAll(s, tracker(gh, "flag"), "github", "victor-teles/grillado");
+    expect(Object.values(status(again.run))).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+    expect(gh.calls().slice(before).every((c) => !isWrite(c.args))).toBe(true);
   });
 
   test("the parent failing skips every child", async () => {

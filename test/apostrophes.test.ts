@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { curly, scan, straightApostrophes, straightIn } from "../scripts/apostrophes.mjs";
+import { curly, offscreenTags, scan, straightApostrophes, straightIn, webShown } from "../scripts/apostrophes.mjs";
 
 describe("straightIn: which pieces of text are caught", () => {
   test("contractions, possessives after a value, plural possessives, quotes and '90s", () => {
@@ -80,7 +80,38 @@ describe("scan: on-screen strings only", () => {
     ].join("\n"));
     expect(scan([[f, false]]).map((h) => h.split(":")[1])).toEqual(["3", "4", "5"]);
   });
+  test("@offscreen hides a tagged const only, never a whole function or class", () => {
+    const f = write("tags.tsx", [
+      "/** @offscreen */",
+      "export function Shown() { return <p>We're on it</p>; }",
+      "/** @offscreen */",
+      "export class Also { t = \"Can't\"; }",
+      "/** @offscreen: kept to match old stored text. */",
+      "export const OLD = \"You're stopped\";",
+    ].join("\n"));
+    expect(scan([[f, true]]).map((h) => h.split(":")[1])).toEqual(["2", "4"]);
+  });
+  // A long scan (TypeScript parses every file); 7.6 s under load once, against the 5 s default (review-pr27 nice 2).
   test("the repo itself is clean", () => {
     expect(straightApostrophes()).toEqual([]);
-  });
+  }, 30_000);
+  // review-pr27 nice 3: the src/core modules in the web bundle get the web rule, from web's own imports.
+  // A new one fails here so someone reads it for on-screen text (and tags code-only constants @offscreen).
+  test("the core modules checked with the web rule are exactly what web imports", () => {
+    expect([...webShown()].sort()).toEqual([
+      "src/core/activity.ts",
+      "src/core/addplan.ts",
+      "src/core/comments.ts",
+      "src/core/decision-block.ts",
+      "src/core/diagrams.ts",
+      "src/core/editor.ts",
+      "src/core/reason.ts",
+      "src/core/shell.ts",
+      "src/core/text-hash.ts",
+    ]);
+  }, 30_000);
+  // review-pr27 nice 4: the @offscreen allowlist, pinned. Adding a tag means adding it here, on purpose.
+  test("only the old stored Stop message and shell quoting are @offscreen", () => {
+    expect(offscreenTags().sort()).toEqual(["src/core/reason.ts STOPPED_BEFORE_26", "src/core/shell.ts shellQuote"]);
+  }, 30_000);
 });

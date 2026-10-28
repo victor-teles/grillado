@@ -190,7 +190,8 @@ try {
       check("finished: plan.md has id U1, open", /```decision\nid: U1\nquestion: Which browsers do we support\?\nanswer:\n[\s\S]*?status: open/.test(md1) || (/id: U1/.test(md1) && /status: open/.test(md1)), md1.slice(md1.indexOf("id: U1") - 20, md1.indexOf("id: U1") + 160));
       const card = pg.locator(".dz", { hasText: "Which browsers do we support?" }).first();
       check("card says the agent asks it next round", /Claude Code asks it in the next round/.test(await card.textContent()), (await card.textContent()).slice(0, 200));
-      check("label U1 in the Decisions tab or card", /U1/.test(await card.textContent()) || /U1/.test(await pg.textContent("body")));
+      // Demo finding NTH 2: U1 is the block's id in plan.md (checked above); the card names the decision, never the code.
+      check("the U1 id stays in plan.md: the card doesn't show it", !/\bU1\b/.test(await card.innerText()), await card.innerText());
       // The meta line's "·" sits in the gap, so a wrapped line never starts with it.
       check("card meta separators sit in the gap", await card.evaluate((c) => [...c.querySelectorAll(".dz-h > * + *")].every((e) => getComputedStyle(e, "::before").position === "absolute")));
       check("decision card announces its “/” shortcut", /(^| )\/$/.test((await card.getAttribute("aria-keyshortcuts")) ?? "") && (await card.getAttribute("aria-description")) === "Slash adds a block below", await card.getAttribute("aria-keyshortcuts"));

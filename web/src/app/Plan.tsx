@@ -101,6 +101,12 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         .map((f): Decision => ({ key: f.key!, round: 0, title: f.question, answer: f.answer!, kind: "other", accepted_recommendation: false, dependsOn: [] })),
     [ownBlocks, session.decisions],
   );
+  /** What a decision is called on screen: its short title (label, else the question). The R·n code is for anchors and title attributes only. */
+  const shortOf = (key: string) => {
+    const d = session.decisions[key] ?? ownDecisions.find((x) => x.key === key) ?? session.stale?.[key];
+    if (d) return nameOf(d);
+    return questionFor(session, key)?.title ?? "";
+  };
   const label = (key: string) => {
     const mine = ownBlocks.get(key);
     if (mine) return mine.id;
@@ -184,7 +190,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
   const dg = useDiagrams({ session, draft, agentName, mobile, enabled: !readOnly && tab === "doc", moreRef, setNote });
   // v1.3 item 2: Send to issues (⋯ item, strip under the title, chips on decisions, the sheet).
   const phone = useMedia("(max-width: 640px)");
-  const iss = useIssues({ session, agentName, phone, draft: session.status !== "plated" || openCount > 0, idOf: label, moreRef });
+  const iss = useIssues({ session, agentName, phone, draft: session.status !== "plated" || openCount > 0, idOf: label, nameOf: shortOf, moreRef });
   const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, decisionInfo, onDecisionRow: showDecisionRow, agentNameOf, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
   cmRef.current = cm;
 
@@ -200,6 +206,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
       <DecisionCard
         key={`${key}-${fields.answer ?? ""}`}
         fields={fields}
+        short={shortOf(key)}
         state={stale ? "stale" : open ? "open" : "settled"}
         question={own ? ownQuestion(key, fields.question) : questionFor(session, key)}
         own={own}
@@ -357,8 +364,12 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
                 Show file location
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuLabel className="pmenu-path">
-                <span data-testid="plan-path">{plan.path}</span>
+              {/* One line, cut in the middle so "plan.md" always shows; the whole path in the title (demo finding MUST 1). */}
+              <DropdownMenuLabel className="pmenu-path" title={plan.path}>
+                <span data-testid="plan-path" className="pp">
+                  <span className="pp-h">{plan.path.slice(0, plan.path.lastIndexOf("/") + 1)}</span>
+                  <span className="pp-t">{plan.path.slice(plan.path.lastIndexOf("/") + 1)}</span>
+                </span>
               </DropdownMenuLabel>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -757,6 +768,7 @@ function DecisionsTab({
                       <li key={d.key} className="drow-chg">
                         <DecisionCard
                           fields={{ id: label(d.key), key: d.key, question: d.title, answer: d.answer }}
+                          short={nameOf(d)}
                           state="settled"
                           question={q}
                           dependents={dependentsOf(session, d.key).map((k) => nameOf(session.decisions[k]))}
@@ -821,8 +833,9 @@ function DecisionsTab({
                         ) : null}
                         {ap ? <AddPlanLine ap={ap} agentName={agentName} onReview={onReview} tabIndex={-1} /> : null}
                       </span>
-                      <span className="drow-m">
-                        {label(d.key)} · {d.accepted_recommendation ? COPY.youKept : COPY.you}
+                      <span className="drow-m" title={label(d.key) || undefined}>
+                        {nameOf(d) !== d.title ? `${nameOf(d)} · ` : ""}
+                        {d.accepted_recommendation ? COPY.youKept : COPY.you}
                       </span>
                       {mobile ? (
                         // Phones: Add to plan takes the chevron's place, and leaves no chevron while it runs (#104).

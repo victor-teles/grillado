@@ -7,7 +7,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { parseArgs } from "../src/cli/args.ts";
-import { FoundService, type Row, skipReason } from "../src/cli/found.ts";
+import { FoundService, type Row, agentFor, skipReason } from "../src/cli/found.ts";
 import { createMcpServer } from "../src/cli/mcp.ts";
 import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
@@ -437,6 +437,67 @@ describe("found in this project: HTTP API and MCP", () => {
     // The row's failed state, after a reload, reads the same code from the view.
     const failed = (await call("GET", "/api/found")).json.agent.failed[free.id];
     expect(reasonText(failed, "Claude Code")).toBe("Claude Code hit its usage limit");
+  });
+
+  // Demo finding MUST 2: a Claude Code import with only Grok installed runs on Grok, and says so once.
+  const importWith = async (bins: ("claude" | "codex" | "grok" | "pi")[], title: string, select?: string, w = world()) => {
+    const web = mkdtempSync(path.join(os.tmpdir(), "grillado-web-"));
+    writeFileSync(path.join(web, "index.html"), "<!doctype html>");
+    const server = new GrilladoServer({ adapters: createAdapters({ env: fakeEnv(fakeBinDir(bins)) }), store: w.store, webDir: web, port: 0, strictPort: true, found: w.svc() });
+    servers.push(server);
+    await server.detect();
+    await server.listen();
+    const call = (m: string, p: string, b?: unknown) => req(server.port, server.token, m, p, b);
+    if (select) expect((await call("POST", "/api/provider", { id: select })).status).toBe(200);
+    await server.scanProject();
+    const row = (await call("GET", "/api/found")).json.rows.find((x: Row) => x.title === title);
+    const imp = await call("POST", "/api/found/import", { id: row.id });
+    expect(imp.status).toBe(200);
+    return (await call("GET", `/api/sessions/${imp.json.planId}`)).json;
+  };
+
+  test("a Claude Code import with only Grok installed runs on Grok, with one quiet line saying why", async () => {
+    const s = await importWith(["grok"], "Family recipe app");
+    expect(s.provider).toBe("grok");
+    expect(s.source).toMatchObject({ app: "claude", agentFrom: "claude" });
+    expect(s.agentNote).toBe("Using Grok · Claude Code isn’t installed");
+  });
+
+  // review-pr28 must 2: the line says what's true now, so it goes once Claude Code is installed.
+  test("once Claude Code is installed, the line goes; the session stays on Grok", async () => {
+    const w = world();
+    const s = await importWith(["grok"], "Family recipe app", undefined, w);
+    expect(s.agentNote).toBe("Using Grok · Claude Code isn’t installed");
+    const web = mkdtempSync(path.join(os.tmpdir(), "grillado-web-"));
+    writeFileSync(path.join(web, "index.html"), "<!doctype html>");
+    const later = new GrilladoServer({ adapters: createAdapters({ env: fakeEnv(fakeBinDir(["claude", "grok"])) }), store: w.store, webDir: web, port: 0, strictPort: true, found: w.svc() });
+    servers.push(later);
+    await later.detect();
+    await later.listen();
+    const again = (await req(later.port, later.token, "GET", `/api/sessions/${s.id}`)).json;
+    expect(again.provider).toBe("grok");
+    expect(again.source.agentFrom).toBe("claude");
+    expect(again.agentNote).toBeUndefined();
+  });
+
+  test("a Claude Code import keeps Claude Code when it's installed, with no line", async () => {
+    const s = await importWith(["claude", "grok"], "Family recipe app", "grok");
+    expect(s.provider).toBe("claude");
+    expect(s.source.agentFrom).toBeUndefined();
+    expect(s.agentNote).toBeUndefined();
+  });
+
+  test("the stand-in is the agent that ran the import, else the first installed one", () => {
+    const ready = (ids: string[]) => (id: string) => ids.includes(id);
+    expect(agentFor("claude", "codex", ready(["codex", "grok"]))).toEqual({ provider: "codex", agentFrom: "claude" });
+    expect(agentFor("claude", "pi", ready(["grok", "pi"]))).toEqual({ provider: "pi", agentFrom: "claude" });
+    expect(agentFor("codex", "claude", ready(["grok", "pi"]))).toEqual({ provider: "grok", agentFrom: "codex" });
+    expect(agentFor("codex", "codex", ready(["codex"]))).toEqual({ provider: "codex" });
+    // Nothing installed: keep the source's agent (its card offers the install). No readiness known (MCP): keep it too.
+    expect(agentFor("claude", "grok", ready([]))).toEqual({ provider: "claude" });
+    expect(agentFor("claude", "grok")).toEqual({ provider: "claude" });
+    // A Cursor plan or a plan file has no agent of its own: the one that ran the import.
+    expect(agentFor("cursor", "grok", ready(["grok"]))).toEqual({ provider: "grok" });
   });
 
   test("the scan off: GET says why, POSTs are refused", async () => {

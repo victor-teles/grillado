@@ -308,7 +308,25 @@ try {
     const rows = sheet(pg).locator(".ir:not(.sk)");
     const n = await rows.count();
     check("split: the parent plus slices", n >= 2, String(n));
-    check("slices say which decisions they cover, with the plan’s ids", /^Covers R\d·\d/.test(await rows.nth(1).locator(".cov").textContent()), await rows.nth(1).locator(".cov").textContent());
+    {
+      // Demo finding: chips name the decision by its short title; the R·n code is only in the title attribute.
+      const cov = rows.nth(1).locator(".cov");
+      const b = cov.locator("b").first();
+      const bt = (await b.textContent()) ?? "";
+      check("slices say which decisions they cover, by title (the R·n code only in the title attribute)", /^Covers \S/.test(await cov.textContent()) && !/R\d+·\d/.test(await cov.textContent()) && /^R\d+·\d+$/.test((await b.getAttribute("title")) ?? "") && bt.length > 3, `${await cov.textContent()} | ${await b.getAttribute("title")}`);
+      const cut = await b.evaluate((e) => {
+        const st = getComputedStyle(e);
+        const row = e.closest(".ir").getBoundingClientRect();
+        // A long title: lengthen this chip's text and see it end in an ellipsis inside its row.
+        const was = e.textContent;
+        e.textContent = `${was} ${"and a much longer decision title ".repeat(4)}`;
+        const r = e.getBoundingClientRect();
+        const out = { ellipsis: st.textOverflow === "ellipsis", nowrap: st.whiteSpace === "nowrap", over: e.scrollWidth > e.clientWidth, inside: r.right <= row.right + 0.5, h: Math.round(r.height) };
+        e.textContent = was;
+        return out;
+      });
+      check("a long decision title in Covers ends in an ellipsis on one line, inside the row", cut.ellipsis && cut.nowrap && cut.over && cut.inside && cut.h <= 20, JSON.stringify(cut));
+    }
     await shot(pg, "d-sheet", theme);
     await axe(pg, `${theme} desktop: the sheet`);
 
@@ -317,7 +335,7 @@ try {
     await x.click();
     const kb = await rows.nth(1).locator(".ir-body pre").textContent();
     check("Body opens the exact body", (await x.getAttribute("aria-expanded")) === "true" && kb.includes("grillado:plan="));
-    check("BIG-1 A: a child is its slice, “**Covers:** R1·1 question answer”, then where it came from", /\n\n\*\*Covers:\*\* R\d·\d \S/.test(kb) && /\n\nFrom Grillado plan ‘[^’]+’\n<!-- grillado:plan=[\w-]+ item=[\w-]+ -->\s*$/.test(kb), kb);
+    check("BIG-1 A: a child is its slice, “**Covers:** question answer” (no R·n code), then where it came from", /\n\n\*\*Covers:\*\* \S/.test(kb) && !/R\d+·\d/.test(kb) && /\n\nFrom Grillado plan ‘[^’]+’\n<!-- grillado:plan=[\w-]+ item=[\w-]+ -->\s*$/.test(kb), kb);
     await shot(pg, "d-body", theme);
     await x.click();
     const px = rows.nth(0).locator(".ir-x");
@@ -412,7 +430,7 @@ try {
     check("the strip links the parent and counts the sub-issues", /^Issues#1·\d+sub-issues?·victor-teles\/grillado$/.test((await strip.textContent()).replace(/\s/g, "")), await strip.textContent());
     const chips = pg.locator("[data-testid^=issue-chips-] .ilk");
     await chips.first().waitFor({ timeout: 8000 }).catch(() => {});
-    check("decision cards carry their issue chips", (await chips.count()) > 0 && /^R\d·\d is covered by issue #\d+$/.test(await chips.first().getAttribute("aria-label")), String(await chips.count()));
+    check("decision cards carry their issue chips", (await chips.count()) > 0 && /^(?!R\d+·)\S.* is covered by issue #\d+$/.test(await chips.first().getAttribute("aria-label")), String(await chips.count()));
     const mi = await menuItems(pg);
     check("the item becomes “Update issues…” with where it went", mi.some((t) => t === "Update issues…#1 · victor-teles/grillado"), mi.join(" | "));
     await pg.keyboard.press("Escape");
@@ -434,6 +452,32 @@ try {
     await pg.getByTestId("plan").waitFor();
     await pg.waitForFunction(() => /changed since export/.test(document.querySelector("[data-testid=issues-strip]")?.textContent ?? ""), null, { timeout: 10000 }).catch(() => {});
     check("the strip says what changed, with Update issues", /\d+ changed since export·Update issues$/.test((await pg.getByTestId("issues-strip").textContent()).replace(/\s*·\s*/g, "·")), await pg.getByTestId("issues-strip").textContent());
+    // review-pr28 nice 2: on a phone, "Update issues" stays on the count's line, never alone on a third one.
+    for (const th of ["light", "dark"]) {
+      const mctx = await browser.newContext({ viewport: { width: 320, height: 640 }, deviceScaleFactor: SHOTS ? 2 : 1, isMobile: true, hasTouch: true });
+      await mctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), th);
+      const mp = await mctx.newPage();
+      await mp.goto(planUrl(app, planId));
+      await mp.getByTestId("plan").waitFor({ timeout: 15000 });
+      await mp.waitForFunction(() => /changed since export/.test(document.querySelector("[data-testid=issues-strip]")?.textContent ?? ""), null, { timeout: 10000 }).catch(() => {});
+      const g = await mp.getByTestId("issues-strip").evaluate((s) => {
+        const mid = (r) => r.top + r.height / 2;
+        const sr = s.getBoundingClientRect();
+        const b = [...s.querySelectorAll("button.lnk2")].find((x) => x.textContent === "Update issues");
+        const sg = b?.closest(".sg");
+        const tn = sg && [...sg.childNodes].find((n) => n.nodeType === 3 && /changed since export/.test(n.textContent));
+        const rg = document.createRange();
+        if (tn) rg.selectNode(tn);
+        // A "·" that lands at a line start sits left of the strip, where it's clipped (#83).
+        const shownDots = [...s.querySelectorAll(".dt")].map((d) => d.getBoundingClientRect()).filter((r) => r.left >= sr.left - 0.5);
+        const kids = [...s.children].map((e) => Math.round(mid(e.getBoundingClientRect())));
+        return { count: tn ? mid(rg.getBoundingClientRect()) : null, button: b ? mid(b.getBoundingClientRect()) : null, br: b?.getBoundingClientRect().right, sr: sr.right, lines: new Set(kids).size, lineStarts: shownDots.filter((r) => r.left < sr.left + 4).length };
+      });
+      check(`${th} 320: "Update issues" is on the count's line, inside the strip`, g.count !== null && g.button !== null && Math.abs(g.count - g.button) < 6 && g.br <= g.sr + 0.5, JSON.stringify(g));
+      check(`${th} 320: the changed strip is two lines at most, and none starts with "·"`, g.lines <= 2 && g.lineStarts === 0, JSON.stringify(g));
+      await shot(mp, "r2-nice2-changed-m320", th);
+      await mctx.close();
+    }
     const gone = pg.locator(".ilk.gone");
     check("a deleted sub-issue’s chip offers Recreate", (await gone.count()) === 0 || /#2 missing · Recreate/.test(await gone.first().textContent()), String(await gone.count()));
     await shot(pg, "d-changed", theme);
