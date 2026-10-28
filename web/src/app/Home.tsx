@@ -106,7 +106,7 @@ export function Picker({ state, onPick }: { state: AppState; onPick: (id: Provid
         </div>
         {missing.length ? (
           <p className="note">
-            {names(missing)} {missing.length === 1 ? "isn't" : "aren't"} installed.{" "}
+            {names(missing)} {missing.length === 1 ? "isn’t" : "aren’t"} installed.{" "}
             <a href="https://github.com/victor-teles/grillado#readme" target="_blank" rel="noreferrer">
               How to add one
             </a>
@@ -114,7 +114,7 @@ export function Picker({ state, onPick }: { state: AppState; onPick: (id: Provid
         ) : null}
         {broken.map((p) => (
           <p key={p.id} className="note">
-            {p.displayName} was found, but isn't working{p.reason ? `: ${p.reason}` : "."}
+            {p.displayName} was found, but isn’t working{p.reason ? `: ${p.reason}` : "."}
           </p>
         ))}
         <div className="foot">

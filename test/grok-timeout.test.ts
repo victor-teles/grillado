@@ -106,7 +106,7 @@ describe("a run past the timeout reads as slow, not failed", () => {
 
   test("the timeout card and the waiting note", () => {
     expect(fmt(COPY.timeoutTitle, { agent: "Grok" })).toBe("Grok is running slow");
-    expect(COPY.timeoutBody).toBe("It hasn't answered yet, so Grillado stopped waiting. Your answers are saved.");
+    expect(COPY.timeoutBody).toBe("It hasn’t answered yet, so Grillado stopped waiting. Your answers are saved.");
     expect(`${COPY.timeoutTitle} ${COPY.timeoutBody}`).not.toMatch(/didn.t come through|fail|error/i);
     expect(COPY.roundWaitNote).toBe("Rounds can take a few minutes.");
   });

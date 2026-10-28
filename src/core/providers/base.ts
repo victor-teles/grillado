@@ -220,13 +220,13 @@ export function lastJsonObject(stdout: string): Record<string, unknown> | undefi
 
 /**
  * The display name a CLI prints with its version ("2.1.3 (Claude Code)"), when it prints one. The brackets
- * after a version also carry build metadata: a commit hash ("1.0.70 (f50904eaee6c)"), a date, a build number.
- * A name is made of words of letters only, so anything with a digit in it is never taken for one, and
- * neither is a lone lowercase hex word (a hash that happens to have no digits, "deadbeef"). The caller then
- * falls back to the adapter's own display name.
+ * after a version also carry build metadata: a commit hash ("1.0.70 (f50904eaee6c)"), a date, a build number,
+ * a channel tag ("beta", "nightly"). A name is words of letters that start with a capital, so anything with a
+ * digit in it, or a lowercase tag, is never taken for one; neither is a hex word with no digits in it
+ * ("abcdef", "DEADBEEF"). The caller then falls back to the adapter's own display name.
  */
 export function agentNameFrom(out: string): string | undefined {
-  const m = /\d+\.\d+\.\d+[\w.+-]*\s*\(\s*([A-Za-z]+(?:[ .-][A-Za-z]+)*)\s*\)/.exec(out);
-  if (!m || m[1].length > 31 || /^[a-f]{7,}$/.test(m[1])) return undefined;
+  const m = /\d+\.\d+\.\d+[\w.+-]*\s*\(\s*([A-Z][A-Za-z]*(?:[ .-][A-Za-z]+)*)\s*\)/.exec(out);
+  if (!m || m[1].length > 31 || /^[A-Fa-f]{6,}$/.test(m[1])) return undefined;
   return m[1];
 }

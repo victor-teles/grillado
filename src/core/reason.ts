@@ -27,6 +27,6 @@ export function reasonText(code: string | null | undefined, agent: string): stri
     case "malformed":
       return `${agent}’s reply didn’t come through`;
     case "unknown":
-      return `${agent} stopped responding`;
+      return `${agent} couldn’t finish this`;
   }
 }

@@ -20,7 +20,7 @@ export const COPY = {
   // Long runs (Grok CLI 1.0.70 rounds take minutes). For every agent: any of them can be slow on a big session.
   roundWaitNote: "Rounds can take a few minutes.",
   timeoutTitle: "{agent} is running slow",
-  timeoutBody: "It hasn't answered yet, so Grillado stopped waiting. Your answers are saved.",
+  timeoutBody: "It hasn’t answered yet, so Grillado stopped waiting. Your answers are saved.",
 } as const;
 
 /** Fill `{name}` slots. Unknown slots are left as they are so a missing value is visible, not silent. */

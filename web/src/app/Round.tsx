@@ -23,7 +23,7 @@ import { type Answer, type DecisionNode, OTHER_OPTION, type Question, type Round
 type Act = (action: string, body?: unknown) => Promise<void>;
 /** The value Uai's AgentQuestionOther records. */
 const OTHER_VALUE = "other";
-export const SEND_FAILED = "The agent didn't get your answers. They're still here.";
+export const SEND_FAILED = "The agent didn’t get your answers. They’re still here.";
 
 /** Layout shared by every in-session screen: main column + side panel, mobile strip + sheet. */
 export function SessionBody({
@@ -247,7 +247,7 @@ function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; open
           <AgentQuestionOption key={o.id} value={o.id} label={o.label} description={o.description || undefined} recommended={o.id === q.recommendedOptionId} />
         ))}
         <AgentQuestionOther className="mini" description="" />
-        <AgentQuestionOption value={UNKNOWN_OPTION} label="I don't know" description="The agent picks one and marks it as a risk" className="mini unk" />
+        <AgentQuestionOption value={UNKNOWN_OPTION} label="I don’t know" description="The agent picks one and marks it as a risk" className="mini unk" />
       </AgentQuestionOptions>
     </AgentQuestionItem>
   );

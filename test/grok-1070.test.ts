@@ -46,6 +46,12 @@ describe("agent name from `--version`", () => {
     for (const out of ["grok 1.0.70 (f50904eaee6c)", "x 1.2.3 (deadbeef)", "x 1.2.3 (abc1234-dirty)", "x 1.2.3 (g1a2b3c)", "x 1.2.3 (2026-10-28)", "x 1.2.3 (build 4512)", "x 1.2.3 (r2)", "claude 9.9.9-fake"])
       expect(agentNameFrom(out)).toBeUndefined();
   });
+  test("channel tags and digit-free hex of any case are not names either (review-pr26 nice-to-have 1)", () => {
+    for (const out of ["x 2.0.0 (beta)", "x 2.0.0 (nightly)", "x 2.0.0 (canary build)", "x 1.2.3 (abcdef)", "x 1.2.3 (DEADBEEF)", "x 1.2.3 (Deadbeef)", "x 1.2.3 (ABCDEF)"])
+      expect(agentNameFrom(out)).toBeUndefined();
+    for (const [out, name] of [["2.1.3 (Claude Code)", "Claude Code"], ["0.50.1 (Codex)", "Codex"], ["2026.1.2 (Cursor Agent)", "Cursor Agent"], ["1.0.0 (Grok CLI)", "Grok CLI"], ["1.0.0 (Bead)", "Bead"]])
+      expect(agentNameFrom(out)).toBe(name);
+  });
   test("detection: ready, version 1.0.70, no name; the app falls back to “Grok”", async () => {
     const env = { PATH: `${replayGrok("json-small.out")}:/usr/bin:/bin`, HOME: os.tmpdir() };
     const grok = createAdapters({ env }).find((a) => a.id === "grok")!;

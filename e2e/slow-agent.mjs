@@ -20,7 +20,7 @@ const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const NOTE = "Rounds can take a few minutes.";
 const TITLE = "Grok is running slow";
-const BODY = "It hasn't answered yet, so Grillado stopped waiting. Your answers are saved.";
+const BODY = "It hasn’t answered yet, so Grillado stopped waiting. Your answers are saved.";
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail = "") {
@@ -148,6 +148,9 @@ try {
       check(`${at}: and never that the reply failed`, !/didn.t come through|Nothing came back|fail/i.test(text));
       check(`${at}: the card is the quiet kind (clock, info tone)`, (await card.getAttribute("data-tone")) === "info");
       check(`${at}: Retry is there`, await card.getByRole("button", { name: "Retry" }).isVisible());
+      const focused = () => pg.evaluate(() => `${document.activeElement?.tagName}:${document.activeElement?.textContent?.trim()}`);
+      await pg.waitForFunction(() => document.activeElement?.textContent?.trim() === "Retry", null, { timeout: 3000 }).catch(() => {});
+      check(`${at}: focus moves to Retry, not the page (review-pr26 #4)`, (await focused()) === "BUTTON:Retry", await focused());
       check(`${at}: timeout card fits`, (await fits(pg, ["[data-testid=problem]", "[data-testid=problem] button"])).length === 0, (await fits(pg, ["[data-testid=problem]", "[data-testid=problem] button"])).join("; "));
       await pg.mouse.move(0, 0);
       await shot("3-timeout");

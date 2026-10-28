@@ -73,13 +73,13 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
     auth: {
       icon: <IKey s={16} />,
       title: "",
-      body: authSentence(name, provider?.loginHint ?? "Log in with the agent's own command"),
+      body: authSentence(name, provider?.loginHint ?? "Log in with the agent’s own command"),
       retry: "I've logged in, retry",
     },
     rate_limit: { icon: <IClock s={16} />, title: `${name} needs a short break`, body: "It hit its usage limit. Try again in a few minutes, or switch agents.", retry: "Retry" },
     // Slow, not failed (Grok 1.0.70 rounds run for minutes): the clock icon and the quiet tone, like a usage limit.
     timeout: { icon: <IClock s={16} />, title: fmt(COPY.timeoutTitle, { agent: name }), body: COPY.timeoutBody, retry: "Retry" },
-    malformed: { icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
+    malformed: { icon: <IAlert s={16} />, title: "The agent’s reply didn’t come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
     // Like a missing gh (#165): say it isn't installed and how to install it (review-pr22 #3).
     not_found: {
       icon: <ITerm s={16} />,
@@ -89,8 +89,15 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
       cmd: provider?.installHint,
       retry: "Retry",
     },
-    unknown: { icon: <IAlert s={16} />, title: "Can't reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
+    unknown: { icon: <IAlert s={16} />, title: "Can’t reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
   }[code];
+  // A run that fails leaves focus on the page (its Send or Stop is gone): put it on Retry, unless the user is elsewhere (review-pr26 #4).
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const errAt = session.error ? `${code}:${session.error.message ?? ""}` : "";
+  useEffect(() => {
+    const here = document.activeElement;
+    if (errAt && (!here || here === document.body)) retryRef.current?.focus();
+  }, [errAt]);
   // v1.2: one neutral surface; the tone is only on the icon (warning-ink, muted for a rate limit).
   const tone = code === "rate_limit" || code === "timeout" ? "info" : "warn";
   return (
@@ -107,7 +114,7 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
         </div>
         <div className="acts">
           {code === "auth" ? null : sw}
-          <button type="button" className="btn primary" onClick={retry}>
+          <button type="button" className="btn primary" ref={retryRef} onClick={retry}>
             {copy.retry}
           </button>
         </div>
