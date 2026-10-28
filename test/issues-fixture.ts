@@ -36,6 +36,13 @@ export const STORY_MD = [
   "",
 ].join("\n");
 
+/** A real ```decision block (the fixture's own `storage: SQLite` block doesn't parse, so the session stands in). */
+export const block = (id: string, key: string, question: string, answer: string, note?: string) =>
+  ["```decision", `id: ${id}`, `key: ${key}`, `question: ${question}`, `answer: ${answer}`, ...(note ? [`note: ${note}`] : []), "by: you", "kept_suggestion: false", "```"].join("\n");
+
+/** STORY_MD with decision blocks at the end of its Solution, as a written plan has them. */
+export const withBlocks = (md: string, ...blocks: string[]) => md.replace("\n## User stories", `\n${blocks.join("\n\n")}\n\n## User stories`);
+
 export function storySession(store: Store, md = STORY_MD): Session {
   const s = createSession({ idea: "A recipe box app", provider: "claude" });
   s.status = "plated";

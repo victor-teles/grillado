@@ -27,15 +27,5 @@ export function restTag(f: Who, agent: string): { kind: "agent" | "yours"; text:
   return null;
 }
 
-const norm = (v: string) =>
-  v
-    .replace(/^\s*decided:\s*/i, "")
-    .replace(/[.!\s]+$/, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-
-/** A note worth showing: not just the answer said again ("Decided: Yes, one core flow."). */
-export function noteAdds(note: string | undefined, answer: string | undefined): boolean {
-  return !!note?.trim() && norm(note) !== norm(answer ?? "");
-}
+// One rule for the plan page and the issue it exports (src/core/issues.ts).
+export { noteAdds } from "../../../../src/core/decision-block.ts";

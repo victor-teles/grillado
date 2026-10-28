@@ -14,7 +14,7 @@ import { BODY_LIMIT, MAX_CHILDREN, PARENT_KEY, type PlanIssues, buildItems, cont
 import { buildGroupPrompt, buildSplitPrompt } from "../src/core/engine.ts";
 import { groupSystemPrompt } from "../src/core/prompts.ts";
 import type { Session } from "../src/core/session.ts";
-import { type LinearMock, STORY_MD, fakeGh, isWrite, linearMock, storySession } from "./issues-fixture.ts";
+import { type LinearMock, STORY_MD, block, fakeGh, isWrite, linearMock, storySession, withBlocks } from "./issues-fixture.ts";
 
 const tempStore = () => new Store(mkdtempSync(path.join(os.tmpdir(), "grillado-issues-")));
 
@@ -203,7 +203,7 @@ describe("items", () => {
     const oldC = c.body.replace("**Covers:** Sync between devices?", "**Covers:** R2·2 Sync between devices?");
     expect(oldA).not.toBe(a.body);
     expect(oldC).not.toBe(c.body);
-    expect(b.legacyHash).toBeUndefined(); // covers nothing: one format only
+    expect(b.legacyBody).toBeUndefined(); // covers nothing: one format only
     const link = (hash: string) => ({ id: "1", number: 1, url: "u", contentHash: hash });
     const issues: PlanIssues = { tracker: "github", target: "o/r", labels: [], parent: link(contentHash(p.title, p.body)), items: { [a.key]: link(contentHash(a.title, oldA)), [b.key]: link(contentHash(b.title, b.body)), [c.key]: link(contentHash(c.title, oldC)) }, exportedAt: "" };
     const by = (xs: ReturnType<typeof planChanges>) => Object.fromEntries(xs.map((x) => [x.key, x.change]));
@@ -212,6 +212,79 @@ describe("items", () => {
     s.decisions.storage = { ...s.decisions.storage, answer: "Postgres on a server" };
     const moved = buildItems(s, STORY_MD, "github", fallbackSlices(s, STORY_MD).slices).items;
     expect(by(planChanges(moved, issues))[a.key]).toBe("update");
+  });
+
+  describe("dogfood friction 18: the plan's decision blocks are the source, not the session's answers", () => {
+    const STORAGE = block("R1·1", "storage", "Where do recipes live?", "SQLite, with a weekly export");
+    const CAP = block("R1·2", "cap", "Round cap?", "3 rounds", "Overridden by the PO: default 2 rounds");
+    const withCap = (s: Session) => (s.decisions.cap = { key: "cap", round: 1, title: "Round cap?", answer: "3 rounds", kind: "option", accepted_recommendation: true, dependsOn: [] });
+    const by = (xs: ReturnType<typeof planChanges>) => Object.fromEntries(xs.map((x) => [x.key, x.change]));
+    const link = (hash: string) => ({ id: "1", number: 1, url: "u", contentHash: hash });
+
+    test("a block's answer wins in the parent, the children's Covers and the split prompt; with no block, the session's", () => {
+      const md = withBlocks(STORY_MD, STORAGE);
+      const s = storySession(tempStore(), md);
+      const [p, a] = buildItems(s, md, "github", fallbackSlices(s, md).slices).items;
+      expect(p.body).toContain("- **Where do recipes live?** SQLite, with a weekly export\n");
+      expect(p.body).toContain("- **Sync between devices?** Not in v1\n"); // no block: the session's answer
+      expect(p.body).not.toContain("SQLite on the device");
+      expect(a.body).toContain("**Covers:** Where do recipes live? SQLite, with a weekly export");
+      const prompt = buildSplitPrompt(s, md, []);
+      expect(prompt).toContain(`{"key":"storage","question":"Where do recipes live?","answer":"SQLite, with a weekly export"}`);
+      expect(prompt).not.toContain("SQLite on the device");
+    });
+
+    test("a block with a note: the parent shows the answer, then the note (a PO override)", () => {
+      const md = withBlocks(STORY_MD, CAP, block("R2·1", "sync", "Sync between devices?", "Not in v1", "Decided: Not in v1."));
+      const s = storySession(tempStore(), md);
+      withCap(s);
+      const p = parentItem(s, md, "github");
+      expect(p.body).toContain("- **Round cap?** 3 rounds\n  _Note:_ Overridden by the PO: default 2 rounds\n");
+      // A note that only says the answer again isn't repeated (the plan page's rule, noteAdds).
+      expect(p.body).toContain("- **Sync between devices?** Not in v1\n");
+      expect(p.body.match(/_Note:_/g)?.length).toBe(1);
+      expect(buildSplitPrompt(s, md, [])).toContain(`"answer":"3 rounds","note":"Overridden by the PO: default 2 rounds"`);
+    });
+
+    test("hash stability: blocks that say what the session says, with no notes, export byte for byte what the session alone did", () => {
+      const s = storySession(tempStore());
+      const before = buildItems(s, STORY_MD, "github", fallbackSlices(s, STORY_MD).slices).items;
+      const md = withBlocks(STORY_MD, block("R1·1", "storage", "Where do recipes live?", "SQLite on the device"), block("R2·1", "sync", "Sync between devices?", "Not in v1", "Decided: Not in v1."));
+      const after = buildItems(s, md, "github", fallbackSlices(s, md).slices).items;
+      expect(after.map((it) => contentHash(it.title, it.body))).toEqual(before.map((it) => contentHash(it.title, it.body)));
+      expect(after.map((it) => it.body)).toEqual(before.map((it) => it.body));
+      expect(after[0].legacyBody).toBeUndefined();
+      // Sent from the session alone, read against the plan: all unchanged.
+      const issues: PlanIssues = { tracker: "github", target: "o/r", labels: [], parent: link(contentHash(before[0].title, before[0].body)), items: Object.fromEntries(before.slice(1).map((it) => [it.key, link(contentHash(it.title, it.body))])), exportedAt: "" };
+      expect(Object.values(by(planChanges(after, issues)))).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+    });
+
+    test("a parent sent before the notes reads unchanged, as does #28's old R·n Covers; one sent with the note reads a note edit as update", () => {
+      const md = withBlocks(STORY_MD, CAP);
+      const s = storySession(tempStore(), md);
+      withCap(s);
+      s.rounds = [{ n: 1, questions: [{ key: "storage" }, { key: "cap" }] } as any, { n: 2, questions: [{ key: "other" }, { key: "sync" }] } as any];
+      const items = buildItems(s, md, "github", fallbackSlices(s, md).slices).items;
+      const [p, a, b, c] = items;
+      expect(p.legacyBody).toBe(p.body.replace("\n  _Note:_ Overridden by the PO: default 2 rounds", ""));
+      expect(a.legacyBody).toBe(a.body.replace("**Covers:** Where do recipes live?", "**Covers:** R1·1 Where do recipes live?"));
+      const old: PlanIssues = { tracker: "github", target: "o/r", labels: [], parent: link(contentHash(p.title, p.legacyBody!)), items: { [a.key]: link(contentHash(a.title, a.legacyBody!)), [b.key]: link(contentHash(b.title, b.body)), [c.key]: link(contentHash(c.title, c.legacyBody!)) }, exportedAt: "" };
+      expect(by(planChanges(items, old))).toEqual({ [p.key]: "unchanged", [a.key]: "unchanged", [b.key]: "unchanged", [c.key]: "unchanged" });
+      // A parent renamed in the sheet still matches its old body under the new title.
+      expect(by(planChanges([{ ...p, title: "Renamed" }], { ...old, parent: link(contentHash("Renamed", p.legacyBody!)) }))[p.key]).toBe("unchanged");
+      // Sent with the note, then the note is edited: update. (Sent before the notes, only the noteless body is known,
+      // so a note-only edit there reads unchanged until something else changes; the PR says so.)
+      const sent: PlanIssues = { ...old, parent: link(contentHash(p.title, p.body)) };
+      const md2 = md.replace("default 2 rounds", "default 2 rounds, 1 more on request");
+      s.plan!.markdown = md2;
+      const moved = buildItems(s, md2, "github", fallbackSlices(s, md2).slices).items;
+      expect(by(planChanges(moved, sent))[p.key]).toBe("update");
+      expect(by(planChanges(moved, old))[p.key]).toBe("unchanged");
+      // An answer edit in the plan reads update either way.
+      const md3 = md.replace("answer: 3 rounds", "answer: 2 rounds");
+      const moved3 = buildItems(s, md3, "github", fallbackSlices(s, md3).slices).items;
+      expect(by(planChanges(moved3, old))[p.key]).toBe("update");
+    });
   });
 
   test("gh versions and remotes", () => {
