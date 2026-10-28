@@ -579,12 +579,14 @@ export class GrilladoServer {
 
   // ---------------------------------------------------------------- found in this project (v1.3 item 1)
 
-  /** An import whose own agent isn't installed runs on another; one quiet line says which (demo finding MUST 2). */
+  /** An import whose own agent isn't installed runs on another; one quiet line says which (demo finding MUST 2).
+   *  Only while that agent still isn't ready: once it's installed the line would be untrue (review-pr28 must 2). */
   private agentNote(s: Session): string | undefined {
     const from = s.source?.agentFrom;
     if (!from || from === s.provider) return undefined;
+    if (this.providers.find((p) => p.id === from)?.detection.status === "ready") return undefined;
     const name = (id: ProviderId) => this.opts.adapters.find((a) => a.id === id)?.displayName ?? id;
-    return `Using ${name(s.provider)} — ${name(from)} isn’t installed`;
+    return `Using ${name(s.provider)} · ${name(from)} isn’t installed`;
   }
 
   /** §5: the source's state for the plan's meta line, dated like its Activity entry (the source's date). */

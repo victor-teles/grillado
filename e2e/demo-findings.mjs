@@ -143,7 +143,7 @@ try {
       await pg.getByRole("button", { name: /Yes, plate it/ }).waitFor({ timeout: 10000 });
       const note = pg.getByTestId("agent-note").first();
       await note.waitFor({ timeout: 5000 }).catch(() => {});
-      check(`MUST 2 ${tag}: the quiet line "Using Grok — Claude Code isn’t installed"`, (await note.count()) === 1 && (await note.textContent()) === "Using Grok — Claude Code isn’t installed" && (await note.isVisible()), (await note.count()) ? await note.textContent() : "none");
+      check(`MUST 2 ${tag}: the quiet line "Using Grok · Claude Code isn’t installed"`, (await note.count()) === 1 && (await note.textContent()) === "Using Grok · Claude Code isn’t installed" && (await note.isVisible()), (await note.count()) ? await note.textContent() : "none");
       check(`MUST 2 ${tag}: no failure card first`, (await pg.getByText("Install it, then retry").count()) === 0 && (await pg.locator("[role=alert]").filter({ hasText: /isn’t installed/ }).count()) === 0);
       await shot(pg, `must2-agent-note-${tag}`);
 
@@ -187,7 +187,7 @@ try {
     const bad = await pg.evaluate(() => window.__bad);
     check("MUST 2: plating runs on Grok straight away: no picker, no “isn’t installed” card", bad.length === 0, bad.slice(0, 2).join(" | "));
     const meta = pg.getByTestId("agent-note");
-    check("MUST 2: the plan's provenance line keeps the quiet note", (await meta.count()) >= 1 && (await meta.first().textContent()) === "Using Grok — Claude Code isn’t installed", (await meta.count()) ? await meta.first().textContent() : "none");
+    check("MUST 2: the plan's provenance line keeps the quiet note", (await meta.count()) >= 1 && (await meta.first().textContent()) === "Using Grok · Claude Code isn’t installed", (await meta.count()) ? await meta.first().textContent() : "none");
     await ctx.close();
   }
 

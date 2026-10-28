@@ -440,8 +440,7 @@ describe("found in this project: HTTP API and MCP", () => {
   });
 
   // Demo finding MUST 2: a Claude Code import with only Grok installed runs on Grok, and says so once.
-  const importWith = async (bins: ("claude" | "codex" | "grok" | "pi")[], title: string, select?: string) => {
-    const w = world();
+  const importWith = async (bins: ("claude" | "codex" | "grok" | "pi")[], title: string, select?: string, w = world()) => {
     const web = mkdtempSync(path.join(os.tmpdir(), "grillado-web-"));
     writeFileSync(path.join(web, "index.html"), "<!doctype html>");
     const server = new GrilladoServer({ adapters: createAdapters({ env: fakeEnv(fakeBinDir(bins)) }), store: w.store, webDir: web, port: 0, strictPort: true, found: w.svc() });
@@ -461,7 +460,24 @@ describe("found in this project: HTTP API and MCP", () => {
     const s = await importWith(["grok"], "Family recipe app");
     expect(s.provider).toBe("grok");
     expect(s.source).toMatchObject({ app: "claude", agentFrom: "claude" });
-    expect(s.agentNote).toBe("Using Grok — Claude Code isn’t installed");
+    expect(s.agentNote).toBe("Using Grok · Claude Code isn’t installed");
+  });
+
+  // review-pr28 must 2: the line says what's true now, so it goes once Claude Code is installed.
+  test("once Claude Code is installed, the line goes; the session stays on Grok", async () => {
+    const w = world();
+    const s = await importWith(["grok"], "Family recipe app", undefined, w);
+    expect(s.agentNote).toBe("Using Grok · Claude Code isn’t installed");
+    const web = mkdtempSync(path.join(os.tmpdir(), "grillado-web-"));
+    writeFileSync(path.join(web, "index.html"), "<!doctype html>");
+    const later = new GrilladoServer({ adapters: createAdapters({ env: fakeEnv(fakeBinDir(["claude", "grok"])) }), store: w.store, webDir: web, port: 0, strictPort: true, found: w.svc() });
+    servers.push(later);
+    await later.detect();
+    await later.listen();
+    const again = (await req(later.port, later.token, "GET", `/api/sessions/${s.id}`)).json;
+    expect(again.provider).toBe("grok");
+    expect(again.source.agentFrom).toBe("claude");
+    expect(again.agentNote).toBeUndefined();
   });
 
   test("a Claude Code import keeps Claude Code when it's installed, with no line", async () => {
