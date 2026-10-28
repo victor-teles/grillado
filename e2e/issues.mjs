@@ -306,7 +306,13 @@ try {
     const rows = sheet(pg).locator(".ir:not(.sk)");
     const n = await rows.count();
     check("split: the parent plus slices", n >= 2, String(n));
-    check("slices say which decisions they cover, with the plan’s ids", /^Covers R\d·\d/.test(await rows.nth(1).locator(".cov").textContent()), await rows.nth(1).locator(".cov").textContent());
+    {
+      // Demo finding: chips name the decision by its short title; the R·n code is only in the title attribute.
+      const cov = rows.nth(1).locator(".cov");
+      const b = cov.locator("b").first();
+      const bt = (await b.textContent()) ?? "";
+      check("slices say which decisions they cover, by title (the R·n code only in the title attribute)", /^Covers \S/.test(await cov.textContent()) && !/R\d+·\d/.test(await cov.textContent()) && /^R\d+·\d+$/.test((await b.getAttribute("title")) ?? "") && bt.length > 3, `${await cov.textContent()} | ${await b.getAttribute("title")}`);
+    }
     await shot(pg, "d-sheet", theme);
     await axe(pg, `${theme} desktop: the sheet`);
 
@@ -315,7 +321,7 @@ try {
     await x.click();
     const kb = await rows.nth(1).locator(".ir-body pre").textContent();
     check("Body opens the exact body", (await x.getAttribute("aria-expanded")) === "true" && kb.includes("grillado:plan="));
-    check("BIG-1 A: a child is its slice, “**Covers:** R1·1 question answer”, then where it came from", /\n\n\*\*Covers:\*\* R\d·\d \S/.test(kb) && /\n\nFrom Grillado plan ‘[^’]+’\n<!-- grillado:plan=[\w-]+ item=[\w-]+ -->\s*$/.test(kb), kb);
+    check("BIG-1 A: a child is its slice, “**Covers:** question answer” (no R·n code), then where it came from", /\n\n\*\*Covers:\*\* \S/.test(kb) && !/R\d+·\d/.test(kb) && /\n\nFrom Grillado plan ‘[^’]+’\n<!-- grillado:plan=[\w-]+ item=[\w-]+ -->\s*$/.test(kb), kb);
     await shot(pg, "d-body", theme);
     await x.click();
     const px = rows.nth(0).locator(".ir-x");
@@ -410,7 +416,7 @@ try {
     check("the strip links the parent and counts the sub-issues", /^Issues#1·\d+sub-issues?·victor-teles\/grillado$/.test((await strip.textContent()).replace(/\s/g, "")), await strip.textContent());
     const chips = pg.locator("[data-testid^=issue-chips-] .ilk");
     await chips.first().waitFor({ timeout: 8000 }).catch(() => {});
-    check("decision cards carry their issue chips", (await chips.count()) > 0 && /^R\d·\d is covered by issue #\d+$/.test(await chips.first().getAttribute("aria-label")), String(await chips.count()));
+    check("decision cards carry their issue chips", (await chips.count()) > 0 && /^(?!R\d+·)\S.* is covered by issue #\d+$/.test(await chips.first().getAttribute("aria-label")), String(await chips.count()));
     const mi = await menuItems(pg);
     check("the item becomes “Update issues…” with where it went", mi.some((t) => t === "Update issues…#1 · victor-teles/grillado"), mi.join(" | "));
     await pg.keyboard.press("Escape");

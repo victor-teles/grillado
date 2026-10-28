@@ -495,6 +495,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 /* the "·" sits in the gap, so a wrapped line never starts with one (it is clipped at the edge) */
 .dz-h{column-gap:15px}
 .dz-h>*{position:relative}
+.dz-h>.dz-id{max-width:min(24em,100%);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dz-h>*+*::before{content:"·";position:absolute;left:-10px}
 .dz-lbl{display:none}
 .dz-h>.dz-lbl+*::before{content:none}
@@ -562,7 +563,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 .drow-a .yc{margin-left:8px;font-size:var(--t-meta);font-weight:500;color:var(--gr-ember-ink)}
 .drow .orph{display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:var(--t-meta);color:var(--muted-foreground);font-weight:400}
 .drow .orph svg{color:var(--warning-ink)}
-.drow-m{grid-column:2;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:none;margin-top:2px}
+.drow-m{grid-column:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:none;margin-top:2px}
 .drow-ra{grid-column:3;grid-row:1;display:flex;gap:2px;opacity:0;margin:-4px 0;transition:opacity var(--d-quick) var(--ease-out)}
 .drow:focus-within .drow-ra,.drow:focus-within .drow-m{opacity:1;display:flex}
 .drow:focus-within .drow-m{display:block}

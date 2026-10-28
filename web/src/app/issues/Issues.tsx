@@ -18,6 +18,8 @@ export function useIssues(p: {
   /** Not plated, or decisions still open: the item reads "Finish the plan first". */
   draft: boolean;
   idOf: (key: string) => string;
+  /** The decision's short title: what chips and labels show (the R·n code stays in title attributes). */
+  nameOf: (key: string) => string;
   /** The ⋯ trigger: focus goes back there when the sheet closes. */
   moreRef: RefObject<HTMLElement | null>;
 }) {
@@ -200,7 +202,7 @@ export function useIssues(p: {
     if (!linked || p.draft) return null;
     const hits = (check?.items ?? []).filter((it) => it.key !== PARENT && it.covers.includes(decision) && linked.items[it.key]);
     if (!hits.length) return null;
-    const id = p.idOf(decision) || decision;
+    const name = p.nameOf(decision) || decision;
     const shown = hits.slice(0, 2);
     return (
       <span className="ilks" data-testid={`issue-chips-${decision}`}>
@@ -212,7 +214,7 @@ export function useIssues(p: {
               {ref(l)} missing · Recreate
             </button>
           ) : (
-            <a key={it.key} className="ilk" href={l.url} target="_blank" rel="noreferrer" aria-label={`${id} is covered by issue ${ref(l)}`}>
+            <a key={it.key} className="ilk" href={l.url} target="_blank" rel="noreferrer" aria-label={`${name} is covered by issue ${ref(l)}`}>
               <IDot s={12} />
               {ref(l)}
             </a>
@@ -223,6 +225,6 @@ export function useIssues(p: {
     );
   };
 
-  const sheet = open ? <IssuesSheet session={s} agentName={p.agentName} phone={p.phone} idOf={p.idOf} onClose={close} /> : null;
+  const sheet = open ? <IssuesSheet session={s} agentName={p.agentName} phone={p.phone} idOf={p.idOf} nameOf={p.nameOf} onClose={close} /> : null;
   return { menuItem, strip, chipsFor, sheet, onMenuClosed, open: show };
 }

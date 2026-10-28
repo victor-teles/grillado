@@ -63,8 +63,8 @@ describe("items", () => {
     s.rounds = [{ n: 1, questions: [{ key: "storage" }] } as any, { n: 2, questions: [{ key: "other" }, { key: "sync" }] } as any];
     const { items } = buildItems(s, STORY_MD, "github", slices);
     expect(items[1].body).toStartWith("As a cook, I add a recipe from a photo");
-    expect(items[1].body).toContain("\n\n**Covers:** R1·1 Where do recipes live? SQLite on the device\n\nFrom Grillado plan");
-    expect(items[3].body).toContain("**Covers:** R2·2 Sync between devices? Not in v1");
+    expect(items[1].body).toContain("\n\n**Covers:** Where do recipes live? SQLite on the device\n\nFrom Grillado plan");
+    expect(items[3].body).toContain("**Covers:** Sync between devices? Not in v1");
     expect(readMarker(items[1].body)).toEqual({ plan: s.id, key: slices[0].key });
   });
 

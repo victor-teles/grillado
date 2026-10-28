@@ -138,12 +138,6 @@ export const planTitle = (s: Session) => (s.plan?.title || s.idea.split("\n")[0]
 /** Settled decisions, in round order. */
 export const resolved = (s: Session) => Object.values(s.decisions).sort((a, b) => a.round - b.round);
 
-/** "R2·2": a decision's id as the plan page shows it (round, then its place in the round). */
-export function decisionId(s: Session, key: string): string {
-  const r = s.rounds.find((x) => x.questions.some((q) => q.key === key));
-  return r ? `R${r.n}·${r.questions.findIndex((q) => q.key === key) + 1}` : "";
-}
-
 // ---------------------------------------------------------------- BIG-1: what goes into the issue bodies
 // Victor's answer is option A, the spec's wording (frames d-q-body-a, d-gh-body, d-gh-parentbody). The bodies are
 // written only here: option B (A plus the full plan in a closed <details>) or C (minimal) is a swap of these three.
@@ -169,10 +163,10 @@ function parentText(s: Session, md: string): { text: string; sections: string[] 
   return { text: parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, "")), sections };
 }
 
-/** A child: its slice's first paragraph, "**Covers:** R2·2 question answer", then the rest of the slice. */
+/** A child: its slice's first paragraph, "**Covers:** question answer" (no internal R·n code), then the rest of the slice. */
 function childText(s: Session, x: Slice, covers: string[]): string {
   const [head, ...rest] = (cleanText(x.body) || x.title).split(/\n{2,}/);
-  const line = covers.map((k) => `${decisionId(s, k)} ${s.decisions[k].title.trim()} ${s.decisions[k].answer.trim()}`.trim()).join(" · ");
+  const line = covers.map((k) => `${s.decisions[k].title.trim()} ${s.decisions[k].answer.trim()}`.trim()).join(" · ");
   return [head, line ? `**Covers:** ${line}` : "", ...rest].filter(Boolean).join("\n\n");
 }
 // ---------------------------------------------------------------- end of BIG-1
