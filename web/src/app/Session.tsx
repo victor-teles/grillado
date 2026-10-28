@@ -5,9 +5,9 @@ import { useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { COPY, fmt } from "./copy";
 import { confirmCounts, countText, plural, stillOpen } from "./counts";
-import { IAlert, IClock, IKey, ISq, ITerm } from "./icons";
+import { IAlert, IClock, IKey, ITerm } from "./icons";
 import { PlanView } from "./Plan";
-import { FiringUp, RoundView, SessionBody, Strip, WaitingView } from "./Round";
+import { FiringUp, RoundView, SessionBody, StatusLine, Strip, WaitingView } from "./Round";
 import type { AppState, Decision, DecisionNode, SessionView, TreeState } from "./types";
 
 export type Act = (action: string, body?: unknown) => Promise<void>;
@@ -383,7 +383,7 @@ function Plating({ session, act, banner }: { session: SessionView; act: Act; ban
   const groups = groupDecisions(session);
   const n = Object.keys(session.decisions).length;
   const base = `Plating your plan from ${n} ${n === 1 ? "decision" : "decisions"}…`;
-  const label = elapsed >= 60 ? "Still writing the plan. This one is taking a while" : elapsed >= 15 ? "Still writing the plan" : base;
+  const label = elapsed >= 15 ? "Still writing the plan…" : base;
   return (
     <SessionBody
       session={session}
@@ -396,17 +396,7 @@ function Plating({ session, act, banner }: { session: SessionView; act: Act; ban
             <Strip session={session} />
             <div className="col">
               {banner}
-              {busy ? (
-                <div className="status" role="status" aria-live="polite">
-                  <span>{label}</span>
-                  {elapsed >= 60 ? (
-                    <button type="button" className="btn quiet sm" onClick={() => quiet(act("stop"))}>
-                      <ISq s={12} />
-                      Stop
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+              {busy ? <StatusLine label={label} note={COPY.platingWaitNote} onStop={elapsed >= 60 ? () => quiet(act("stop")) : undefined} /> : null}
               <article className="plate" aria-label="Plan draft">
                 <h1>{session.idea.split("\n")[0]}</h1>
                 {groups.map((g) => (

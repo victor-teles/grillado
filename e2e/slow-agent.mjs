@@ -19,6 +19,7 @@ const NODE = process.execPath;
 const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const NOTE = "Rounds can take a few minutes.";
+const PLATE_NOTE = "This can take a few minutes.";
 const TITLE = "Grok is running slow";
 const BODY = "Nothing came back in time. Your answers are saved.";
 let failures = 0;
@@ -194,9 +195,18 @@ try {
       await p2.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
       await p2.keyboard.press("Enter");
       await p2.getByTestId("wait-note").waitFor({ timeout: 10000 });
-      await p2.clock.fastForward("01:05");
+      // #26 follow-ups 2: before Stop appears (20 s) and after (65 s), the status line is the same height on a phone.
+      const statusH = async (sel) => Math.round(((await p2.locator(sel).first().boundingBox())?.height ?? 0) * 10) / 10;
+      await p2.clock.fastForward("00:20");
+      await p2.locator(".intro .status").getByText("Still cooking…").waitFor({ timeout: 5000 });
+      const h20 = await statusH(".intro .status");
+      await p2.mouse.move(0, 0);
+      await shot2("7-twenty-seconds");
+      await p2.clock.fastForward("00:45");
       const stop = p2.locator(".intro .status").getByRole("button", { name: "Stop" });
       await stop.waitFor({ timeout: 5000 });
+      const h65 = await statusH(".intro .status");
+      if (phone) check(`${at}: on a phone the status line keeps its height when Stop appears at 60 s`, h20 === h65 && h65 >= 44, `${h20} → ${h65}`);
       const label = (await p2.locator(".intro .status > span:not(.ember)").first().innerText()).trim();
       check(`${at}: at 60 s the status says just “Still cooking…”`, label === "Still cooking…", label);
       check(`${at}: at 60 s the note stays, and nothing says “taking a while”`, (await p2.getByTestId("wait-note").innerText()) === NOTE && !/taking a while/i.test(await p2.locator("main, body").first().innerText()));
@@ -229,6 +239,44 @@ try {
       await sc.getByRole("button", { name: "Retry" }).click();
       await p2.getByRole("button", { name: /Send round/ }).waitFor({ timeout: 15000 });
       check(`${at}: Retry after Stop gets the round`, (await p2.locator("[data-testid=problem]").count()) === 0);
+
+      // #26 follow-ups 3: plating says "Still writing the plan…" from 15 s with the same quiet note as rounds,
+      // never "taking a while"; Stop comes at 60 s without moving anything on a phone.
+      const plate = p2.getByRole("button", { name: /Yes, plate it/ });
+      for (let i = 0; i < 6 && !(await plate.isVisible().catch(() => false)); i++) {
+        await p2.getByRole("button", { name: /Send round|Yes, plate it/ }).first().waitFor({ timeout: 15000 });
+        if (await plate.isVisible().catch(() => false)) break;
+        await p2.getByRole("button", { name: /Send round/ }).click();
+        await p2.getByRole("button", { name: /Send round|Yes, plate it/ }).first().waitFor({ timeout: 15000 });
+      }
+      s2.mode({ FAKE_DELAY_MS: "110000" });
+      // The page clock is still 65 s ahead from the round above; plating counts from its own start.
+      await p2.clock.setSystemTime(Date.now());
+      await plate.click();
+      const pst = p2.locator(".status[role=status]").first();
+      await pst.getByText(/Plating your plan from/).waitFor({ timeout: 10000 });
+      check(`${at}: plating starts with “Plating your plan from …”, the note under it`, (await p2.getByTestId("wait-note").innerText()) === PLATE_NOTE);
+      await p2.clock.fastForward("00:20");
+      await pst.getByText("Still writing the plan…").waitFor({ timeout: 5000 });
+      const ph20 = await statusH(".status[role=status]");
+      check(`${at}: at 15 s plating says just “Still writing the plan…”, with “${PLATE_NOTE}”`, (await pst.innerText()).trim() === "Still writing the plan…" && (await p2.getByTestId("wait-note").innerText()) === PLATE_NOTE, (await pst.innerText()).trim());
+      check(`${at}: plating at 20 s fits`, (await fits(p2, [".status", "[data-testid=wait-note]"])).length === 0, (await fits(p2, [".status", "[data-testid=wait-note]"])).join("; "));
+      await p2.mouse.move(0, 0);
+      await shot2("8-plating-twenty-seconds");
+      await p2.clock.fastForward("00:45");
+      const pstop = pst.getByRole("button", { name: "Stop" });
+      await pstop.waitFor({ timeout: 5000 });
+      const plabel = (await pst.locator("> span").first().innerText()).trim();
+      check(`${at}: at 60 s plating still says “Still writing the plan…”, never “taking a while”`, plabel === "Still writing the plan…" && !/taking a while/i.test(await p2.locator("body").innerText()), plabel);
+      const ph65 = await statusH(".status[role=status]");
+      if (phone) check(`${at}: on a phone the plating status keeps its height when Stop appears`, ph20 === ph65 && ph65 >= 44, `${ph20} → ${ph65}`);
+      check(`${at}: plating at 60 s fits`, (await fits(p2, [".status", "[data-testid=wait-note]"])).length === 0, (await fits(p2, [".status", "[data-testid=wait-note]"])).join("; "));
+      await p2.mouse.move(0, 0);
+      await shot2("9-plating-sixty-seconds");
+      if (theme === "dark") await axe(p2, `${at}: plating at 60 s`);
+      s2.mode({});
+      await pstop.click();
+      await p2.locator("[data-testid=problem][data-stopped]").waitFor({ timeout: 10000 });
       await ctx2.close();
       await s2.stop();
     }

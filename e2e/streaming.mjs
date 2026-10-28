@@ -62,6 +62,7 @@ async function server(extra = {}) {
   });
   return {
     url,
+    home,
     /** Switch the fake agent's mode for the next run. */
     mode: (env) => writeFileSync(ctl, JSON.stringify(env)),
     stop: () =>
@@ -241,7 +242,10 @@ try {
       return c;
     });
 
-    // 1 · a reply that streams to the end.
+    // 1 · a reply that streams to the end. It waits for the gate, so "before the first delta" lasts as long as its
+    // checks take (under load the whole reply streamed by during the axe run).
+    const gate = path.join(s.home, "gate");
+    s.mode({ FAKE_GATE: gate });
     await watch(pg);
     await selectText(pg, "Shared shopping list");
     await pg.getByRole("toolbar", { name: "Selection" }).waitFor();
@@ -256,6 +260,7 @@ try {
     check(`${theme}: before the first delta the row is unchanged: “Claude Code replying” · Stop, no text, caret, dots or skeleton`, w0.who === "Claude Code replying" && w0.muted && !w0.p && !w0.caret && w0.stop && !w0.dots, JSON.stringify(w0));
     await snap("d-stream-wait");
     if (theme === "dark") await axe(pg, `${theme} desktop: replying, before the first delta`);
+    writeFileSync(gate, "");
 
     await streamingMsg(pg).waitFor({ timeout: 10000 });
     await pg.waitForFunction(() => (document.querySelector(".th .msg[data-streaming] p > span:first-child")?.textContent.length ?? 0) >= 8);

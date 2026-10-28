@@ -473,6 +473,9 @@ try {
     await mp.getByRole("menuitem", { name: /Comments/ }).click();
     const msheet = mp.getByRole("dialog", { name: "Comments" });
     await msheet.getByText(/^Good catch\./).waitFor({ timeout: 10000 });
+    // The text streams in before the reply ends; the reply field and Apply come with its end (flaked under load).
+    await msheet.locator(".th .reply").first().waitFor({ timeout: 10000 });
+    await msheet.locator(".th .acts .apply").first().waitFor({ timeout: 10000 });
     await msnap("i3-thread");
     if (one) {
       // Fix-up of #4, MF4: 44px targets, a 16px reply field and a full-width Apply feedback in the thread sheet.

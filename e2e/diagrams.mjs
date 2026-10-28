@@ -586,21 +586,47 @@ try {
     }
 
     // ---------------------------------------------------------------- question round, the CLI gone (review-pr22 #3)
-    {
+    // Under load it flaked twice (review-pr26 r3): the page's opening GET /api/sessions/:id replied after the round's
+    // pushed events and put the page back to "Still cooking…" with nothing left to push, so Send round never came.
+    // That reply is now held here until the round is on screen, so the race runs every time instead of under load.
+    let qpDiag;
+    const qpErrors = [];
+    try {
       const qctl = path.join(mkdtempSync(path.join(WORK, "ctl-")), "ctl.json");
       writeFileSync(qctl, "{}");
       const sq = await server({ FAKE_CTL: qctl });
       const qctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
       await qctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
       const qp = await qctx.newPage();
+      qpDiag = qp;
+      qp.on("console", (m) => m.type() === "error" && qpErrors.push(m.text()));
+      qp.on("pageerror", (e) => qpErrors.push(e.message));
+      let release;
+      const roundShown = new Promise((r) => (release = r));
+      let held = false;
+      await qp.route(/\/api\/sessions\/[^/?]+$/, async (r) => {
+        if (r.request().method() !== "GET" || held) return r.continue();
+        held = true;
+        const resp = await r.fetch(); // answered now, delivered late: a stale view
+        await roundShown;
+        await r.fulfill({ response: resp });
+      });
       await qp.goto(sq.url);
       await qp.getByRole("radio", { name: /Claude Code/ }).click();
       await qp.getByRole("button", { name: /Continue/ }).click();
       await qp.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
       await qp.keyboard.press("Enter");
       await qp.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
+      release();
+      await qp.waitForResponse((r) => r.request().method() === "GET" && /\/api\/sessions\/[^/?]+$/.test(r.url()));
+      await qp.unroute(/\/api\/sessions\/[^/?]+$/);
+      const send = qp.getByRole("button", { name: /Send round/ });
+      const kept = await send.waitFor({ timeout: 5000 }).then(() => true, () => false);
+      check(`${theme} the opening GET replying after the round's pushes keeps the round on screen`, kept, kept ? "" : (await qp.locator("body").innerText()).slice(0, 200).replace(/\n+/g, " ⏎ "));
+      if (!kept) throw new Error("the round went away");
+      // The run that asked the round has ended (Send round only shows once the page has its final, idle view).
       renameSync(path.join(sq.bin, "claude"), path.join(sq.bin, "claude.off"));
-      await qp.getByRole("button", { name: /Send round/ }).click();
+      await send.click();
       const sentAt = Date.now();
       const card = qp.getByTestId("problem");
       if (!(await card.waitFor({ timeout: 20000 }).then(() => true, () => false))) {
@@ -627,7 +653,10 @@ try {
         if (left > 0) await qp.waitForTimeout(left); // a wall-clock wait on purpose: the timer under test is 15 s
         renameSync(path.join(sq.bin, "claude.off"), path.join(sq.bin, "claude"));
         writeFileSync(qctl, JSON.stringify({ FAKE_DELAY_MS: "3000" }));
-        await card.getByRole("button", { name: "Retry" }).click();
+        const retry = card.getByRole("button", { name: "Retry" });
+        await retry.waitFor();
+        await qp.waitForFunction(() => !document.querySelector(".intro .status")); // no run in flight: Retry would be a no-op
+        await retry.click();
         const st = qp.locator(".intro .status");
         await st.waitFor({ timeout: 5000 });
         const label = (await st.textContent()).trim();
@@ -637,6 +666,10 @@ try {
       }
       await qctx.close();
       await sq.stop();
+    } catch (e) {
+      // What the page showed when it failed, or FROZEN if it didn't answer: the two flakes looked alike from outside.
+      if (qpDiag) console.log("cli-gone failed; page:", JSON.stringify(await Promise.race([qpDiag.evaluate(() => ({ buttons: [...document.querySelectorAll("button")].map((b) => `${b.textContent.trim().slice(0, 30)}${b.disabled ? "[dis]" : ""}`), text: document.body.innerText.slice(0, 400) })), new Promise((r) => setTimeout(() => r("FROZEN"), 3000))])), "errors:", JSON.stringify(qpErrors));
+      throw e;
     }
 
     // ---------------------------------------------------------------- every agent's not-installed card (review-pr22 r3 #1, r4 #1–#3)
@@ -756,7 +789,8 @@ try {
         const r = await new AxeBuilder({ page: ap }).analyze(); // right away, while Copied still shows
         check(`axe: ${theme} desktop: not-installed card in its Copied state`, r.violations.length === 0, r.violations.map((v) => `${v.id} ${v.nodes[0]?.target}`).join("; "));
       }
-      await ap.waitForFunction(() => !document.querySelector(".cmd.well .cbtn.done"), null, { timeout: 3000 });
+      // Copied lasts COPIED_MS (1.5 s) from the click; the cap only allows for a starved machine (it ran out at 3 s under load).
+      await ap.waitForFunction(() => !document.querySelector(".cmd.well .cbtn.done"), null, { timeout: 10000 });
       check(`${theme} ${ag.name} Copy: back to Copy`, (await well.getAttribute("aria-label")) === `Copy ${ag.hint}`);
       await actx.close();
       await sa.stop();

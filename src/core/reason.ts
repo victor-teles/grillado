@@ -2,10 +2,12 @@ import type { FailureCode } from "./classify.ts";
 
 /** The message a session carries after the user pressed Stop; the UI keys its own card on it, never on wording it re-types. */
 export const STOPPED = "Stopped. Retry when you’re ready.";
+/** What builds before #26 stored on Stop (straight '); sessions stopped there still reopen as stopped. @offscreen: only matched, never shown. */
+export const STOPPED_BEFORE_26 = "Stopped. Retry when you're ready.";
 
 /** True when this error is the user's own Stop, not the agent failing. */
 export function isStopped(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
-  return !!error && failureCode(error.code) === "unknown" && error.message === STOPPED;
+  return !!error && failureCode(error.code) === "unknown" && (error.message === STOPPED || error.message === STOPPED_BEFORE_26);
 }
 
 const CODES: readonly FailureCode[] = ["auth", "rate_limit", "timeout", "not_found", "malformed", "unknown"];

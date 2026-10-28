@@ -128,6 +128,7 @@ async function server({ cwd = proj, config, scan = false, pre = "", homeSetup } 
 }
 
 // ---------------------------------------------------------------- helpers
+// isVisible() doesn't wait (its timeout is ignored): wait for whichever comes up, the picker or the idea box.
 const pickIfAsked = async (pg, name) => {
   const r = pg.getByRole("radio", { name });
   await r.or(pg.getByRole("textbox", { name: "What are you planning?" })).first().waitFor({ timeout: 15000 });
