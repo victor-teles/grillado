@@ -295,7 +295,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
       <dt className="k">{nameOf(d)}</dt>
       <dd className="v">
         {/* The answer truncates; the tag never does (demo finding nice-to-have 1). */}
-        <span className="va">{d.answer}</span>
+        <span className="va" title={d.answer}>{d.answer}</span>
         {!d.accepted_recommendation ? <span className="yc">Your call</span> : null}
       </dd>
       <dd className="re">
