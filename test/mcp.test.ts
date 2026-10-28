@@ -28,6 +28,8 @@ describe("grillado mcp tools", () => {
     const { tools } = await c.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(["add_comment", "get_decisions", "get_plan", "import_source", "list_plans", "list_project_sources", "start_plan"]);
     for (const t of tools) expect(JSON.stringify(t).toLowerCase()).not.toMatch(/grill-me|grilling|pocock/);
+    // v1.3 item 2: issues are only created from the browser, after its preview and confirm.
+    expect(tools.some((t) => /issue/.test(t.name))).toBe(false);
   });
 
   test("list_plans: empty, then newest first with draft flags", async () => {
@@ -56,6 +58,32 @@ describe("grillado mcp tools", () => {
       ["storage", "SQLite on the device"],
       ["sync", "Not in v1"],
     ]);
+  });
+
+  test("get_plan: issues is null until the plan is sent, then the links", async () => {
+    const store = tempStore();
+    const s = platedSession(store);
+    const c = await connect(store);
+    expect((await call(c, "get_plan", { plan: s.id })).structuredContent.issues).toBeNull();
+    store.update(s.id, (x) => {
+      x.issues = {
+        tracker: "github",
+        target: "victor-teles/grillado",
+        labels: ["grillado"],
+        parent: { id: "9001", number: 1, url: "https://github.com/victor-teles/grillado/issues/1", contentHash: "h" },
+        items: { "add-recipes": { id: "9002", number: 2, url: "https://github.com/victor-teles/grillado/issues/2", contentHash: "h", unattached: true } },
+        exportedAt: "2026-10-27T00:00:00.000Z",
+      };
+    });
+    const r = await call(c, "get_plan", { plan: s.id });
+    expect(r.structuredContent.issues).toEqual({
+      tracker: "github",
+      target: "victor-teles/grillado",
+      parent: { number: 1, url: "https://github.com/victor-teles/grillado/issues/1" },
+      items: { "add-recipes": { number: 2, url: "https://github.com/victor-teles/grillado/issues/2" } },
+      exportedAt: "2026-10-27T00:00:00.000Z",
+    });
+    expect(JSON.parse(r.content[1].text).issues.parent.number).toBe(1);
   });
 
   test("get_plan: an unconfirmed plan comes back as a draft", async () => {

@@ -94,7 +94,10 @@ Commands:
 
 Security:
   The server listens on 127.0.0.1 only, checks Host/Origin, and requires the per-run token in
-  the printed URL. Grillado runs no tools or shell commands itself: it starts your agent CLI with
-  a fixed argv in an empty temp folder, with tools off (Claude, Grok, pi) or a read-only sandbox
-  (Codex). Your prompts go only to the provider your CLI is set up for.
+  the printed URL. Grillado runs no tools or shell commands for your agent: it starts your agent
+  CLI with a fixed argv in an empty temp folder, with tools off (Claude, Grok, pi) or a read-only
+  sandbox (Codex). Your prompts go only to the provider your CLI is set up for.
+  Send to issues is the only time Grillado talks to a service itself: Linear over HTTPS, or GitHub
+  through your own gh. It creates or changes issues only when you click the confirm button, and
+  only in the destination it names. A Linear key stays in secrets.json (0600) in the data dir.
 `;

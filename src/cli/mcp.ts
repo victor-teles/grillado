@@ -121,7 +121,7 @@ export function createMcpServer(
     {
       title: "Get a plan",
       description:
-        "Get one plan's Markdown and its resolved decisions with their answers. A plan whose interview isn't finished comes back as a draft (draft: true) built from the decisions so far.",
+        "Get one plan's Markdown and its resolved decisions with their answers. A plan whose interview isn't finished comes back as a draft (draft: true) built from the decisions so far. Once the plan has been sent to GitHub or Linear from the browser, issues holds the links (null before).",
       inputSchema: { plan: planId.describe("The plan id from list_plans") },
     },
     async ({ plan }) =>
@@ -129,9 +129,10 @@ export function createMcpServer(
         const s = load(store, plan);
         const markdown = markdownOf(store, s);
         const d = decisionsOf(s);
+        const issues = issuesOf(s);
         return {
-          content: [text(markdown), json({ id: s.id, title: titleOf(s), status: s.status, draft: d.draft, decisions: d.decisions, open: d.open })],
-          structuredContent: { ...summary(s), markdown, decisions: d.decisions, open: d.open },
+          content: [text(markdown), json({ id: s.id, title: titleOf(s), status: s.status, draft: d.draft, decisions: d.decisions, open: d.open, issues })],
+          structuredContent: { ...summary(s), markdown, decisions: d.decisions, open: d.open, issues },
         };
       }),
   );
@@ -287,4 +288,21 @@ export async function runMcp(store: Store, version: string, appLine?: string): P
   const mcp = createMcpServer(store, version, appLine);
   await mcp.connect(new StdioServerTransport());
   console.error(`grillado mcp: serving ${store.dir} over stdio`);
+}
+
+/**
+ * v1.3 item 2: the plan's tracker links, read-only. There's no create_issues tool: issues are only
+ * created from the browser, after its preview and confirm.
+ */
+export function issuesOf(s: Session) {
+  const i = s.issues;
+  if (!i || (!i.parent && !Object.keys(i.items).length)) return null;
+  const link = (l: { number?: number; identifier?: string; url: string }) => ({ ...(l.number !== undefined ? { number: l.number } : {}), ...(l.identifier ? { identifier: l.identifier } : {}), url: l.url });
+  return {
+    tracker: i.tracker,
+    target: i.tracker === "linear" ? (i.targetName ?? i.target) : i.target,
+    parent: i.parent ? link(i.parent) : null,
+    items: Object.fromEntries(Object.entries(i.items).map(([k, l]) => [k, link(l)])),
+    exportedAt: i.exportedAt,
+  };
 }

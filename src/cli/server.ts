@@ -3,7 +3,7 @@ import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, stat
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { decisionsFromAnswers, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import { decisionsFromAnswers, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
@@ -44,6 +44,7 @@ import { type AgentRun, type FoundService, type ImportResult, type Writer, store
 import { stripInvocation } from "../core/found/extract.ts";
 import { ImportError } from "../core/found/import.ts";
 import type { Store } from "./store.ts";
+import { IssuesRoutes, type IssuesOptions } from "./issues/routes.ts";
 
 export const LOOPBACK = "127.0.0.1";
 
@@ -62,6 +63,10 @@ export interface ServerOptions {
   mcpLaunch?: McpLaunch;
   /** "Found in this project" (v1.3 item 1): the launch folder's scan. None: the feature is off. */
   found?: FoundService;
+  /** The folder `npx grillado` ran in: the default repository for "Send to issues" (v1.3 item 2). */
+  launchDir?: string;
+  /** "Send to issues": gh and Linear settings (tests point them at fakes). */
+  issues?: IssuesOptions;
 }
 
 export interface ProviderInfo {
@@ -111,10 +116,31 @@ export class GrilladoServer {
   private recorders = new Map<string, Set<RunRecorder>>();
   /** The last run per thread, per "Add diagrams" and per interview, so Try again can say what it retries. */
   private lastRun = new Map<string, string>();
+  private issues: IssuesRoutes;
   port = 0;
 
   constructor(private opts: ServerOptions) {
     if (opts.found) opts.found.onChange = () => this.broadcast({ type: "found" });
+    this.issues = new IssuesRoutes(
+      {
+        store: opts.store,
+        session: (id) => this.getSession(id),
+        changed: (s) => this.changed(s),
+        push: (s) => this.broadcast({ type: "session", session: this.view(s) }),
+        projectDir: (s) => s.project ?? this.opts.launchDir,
+        split: async (s, md, exported, signal) => {
+          const ready = (id: string) => this.providers.some((p) => p.id === id && p.detection.status === "ready");
+          const id = ready(s.provider) ? s.provider : this.selected && ready(this.selected) ? this.selected : null;
+          const adapter = id ? this.opts.adapters.find((a) => a.id === id) : undefined;
+          if (!adapter) return null;
+          const c = new AbortController();
+          signal.addEventListener("abort", () => c.abort(), { once: true });
+          const r = await splitPlan(s, md, exported, adapter, { ...this.runOptions(s, c), onProgress: undefined });
+          return r.ok ? { ok: true, slices: r.value.slices } : { ok: false, code: r.code };
+        },
+      },
+      opts.issues,
+    );
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => {
         if (!res.headersSent) this.json(res, 500, { error: "Internal error" });
@@ -273,6 +299,7 @@ export class GrilladoServer {
       }
       if (parts[0] === "sessions") return await this.sessionRoutes(req, res, parts.slice(1), body);
       if (parts[0] === "found") return await this.foundRoutes(req, res, parts.slice(1), body);
+      if (parts[0] === "github" || parts[0] === "linear") return await this.issues.appRoutes(req, res, parts, body, url.searchParams, (r, st, d) => this.json(r, st, d));
       return this.json(res, 404, { error: "Not found" });
     } catch (err: any) {
       return this.json(res, 400, { error: err?.message ?? "Bad request" });
@@ -520,6 +547,10 @@ export class GrilladoServer {
       ...(s.source ? { sourceInfo: this.sourceInfo(s) } : {}),
       acceptStreak: acceptStreak(s),
       nudge: shouldNudge(s),
+      // v1.3 item 2: the export in progress (or just finished), so a re-opened sheet shows it (#174).
+      issuesRun: this.issues?.runView(s.id),
+      // Grillado's own cache, not the browser's business.
+      issueSplit: undefined,
     };
   }
 
@@ -1185,6 +1216,7 @@ export class GrilladoServer {
       });
       return res.end(md);
     }
+    if (action === "issues") return this.issues.sessionRoutes(req, res, s, parts[2], body, (r, st, d) => this.json(r, st, d));
     if (req.method !== "POST") return this.json(res, 404, { error: "Not found" });
     const busy = this.inflight.has(s.id);
     if (action === "comments" || action === "suggestions" || action === "diagrams" || action === "addplan") {

@@ -35,7 +35,8 @@ that isn't finished comes back marked as a draft), `get_decisions`, `start_plan`
 Grillado and returns the link to answer its questions in the browser) and `add_comment` (shows in
 the plan's Comments rail as from the coding agent), plus `list_project_sources` and
 `import_source` (the planning sessions and plan files found in a project, and importing one as a
-plan). Each plan is also a resource,
+plan). Once a plan has been sent to GitHub or Linear, `get_plan` includes its `issues` links. There
+is no tool to create issues: that only happens in the browser, after its preview and confirm. Each plan is also a resource,
 `grillado://plans/<id>`.
 
 Set it up once, for every project (`npx -y` skips npx's install prompt). If you use a custom
@@ -76,8 +77,14 @@ Then ask your agent to "build the Grillado plan for …".
 
 - The server listens on `127.0.0.1` only, checks `Host` and `Origin`, and requires the per-run
   token from the printed URL (exchanged for an HttpOnly cookie).
-- Grillado runs no tools itself. It starts your agent CLI with a fixed argv, in an empty
+- Grillado runs no tools for your agent. It starts your agent CLI with a fixed argv, in an empty
   temporary folder, with tools off (Claude Code, Grok, pi) or in Codex's read-only sandbox.
+- Send to issues is the only time Grillado talks to a service itself, and only to the destination
+  you picked: Linear over HTTPS, or GitHub through your own `gh` (Grillado stores no GitHub token).
+  Opening the sheet reads what it needs (your `gh` version and sign-in, repositories and labels;
+  Linear teams, projects and labels). Nothing is created or changed until you click the confirm
+  button, which names the destination. A Linear API key is kept in `secrets.json` (mode 0600) in the
+  data dir, never sent to the browser, and removed by Disconnect.
 - While the web app runs it writes `server.json` (port and token, mode 0600) in the data dir, so
   `grillado mcp` can link `start_plan` straight to the new session. It is removed on exit.
 - No telemetry.

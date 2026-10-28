@@ -6,7 +6,7 @@
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
 // FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
-// FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS.
+// FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -109,6 +109,7 @@ const isEdit = /"type":"edits"/.test(system);
 const isDiagram = /"type":"diagram"/.test(system);
 const isAddPlan = /"type":"addplan"/.test(system);
 const isImport = /"type":"decisions"/.test(system);
+const isSplit = /"type":"slices"/.test(system);
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -297,12 +298,28 @@ function importReply() {
   };
 }
 
+// v1.3 item 2: the plan split into slices, two decisions each. FAKE_SPLIT=fail (usage limit), FAKE_SPLIT=many (120 slices, past GitHub's 100), FAKE_SPLIT_DELAY_MS.
+function splitReply() {
+  const m = process.env.FAKE_SPLIT ?? "";
+  if (m === "fail") fail("rate");
+  const st = JSON.parse(/<state>([\s\S]*?)<\/state>/.exec(prompt)?.[1] ?? "{}");
+  const ds = st.decisions ?? [];
+  if (m === "many") return { type: "slices", slices: Array.from({ length: 120 }, (_, i) => ({ key: `slice-${i + 1}`, title: `Slice ${i + 1}`, body: `Do part ${i + 1}.`, covers: [], sections: [] })) };
+  const slices = [];
+  for (let i = 0; i < ds.length; i += 2) {
+    const two = ds.slice(i, i + 2);
+    slices.push({ key: "", title: `Build ${two.map((d) => String(d.answer).split(/\s+/).slice(0, 3).join(" ")).join(" and ")}`.slice(0, 120), body: two.map((d) => `- ${d.question}: ${d.answer}`).join("\n"), covers: two.map((d) => d.key), sections: ["Solution"] });
+  }
+  return { type: "slices", slices };
+}
+
+if (isSplit && process.env.FAKE_SPLIT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_SPLIT_DELAY_MS)));
 if (isImport && process.env.FAKE_IMPORT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_IMPORT_DELAY_MS)));
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
 if (isDiagram && process.env.FAKE_DIAGRAM_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DIAGRAM_DELAY_MS)));
 if (isAddPlan && process.env.FAKE_ADDPLAN_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ADDPLAN_DELAY_MS)));
-const reply = isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
+const reply = isSplit ? splitReply() : isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude" && flag("--output-format") === "stream-json") {

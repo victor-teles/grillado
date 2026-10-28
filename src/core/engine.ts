@@ -4,7 +4,7 @@ import { extractCandidate } from "./extract.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { StreamGuard } from "./stream-guard.ts";
-import { addPlanSystemPrompt, importSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { addPlanSystemPrompt, importSystemPrompt, splitSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
@@ -25,6 +25,9 @@ import {
   importJsonSchema,
   type PlanReply,
   PlanReplySchema,
+  type SplitReply,
+  SplitReplySchema,
+  splitJsonSchema,
   type RoundReply,
   RoundReplySchema,
   commentJsonSchema,
@@ -374,6 +377,31 @@ export async function suggestAddPlan(s: Session, md: string, d: Decision, adapte
     { kind: "addplan", systemPrompt: addPlanSystemPrompt(), userPrompt: buildAddPlanPrompt(s, md, d), jsonSchema: addPlanJsonSchema() },
     AddPlanReplySchema,
     (reply) => (reply.place ? checkAddPlan(md, reply, cite) : null),
+    opts,
+    [userText(s), md].join("\n"),
+  );
+}
+
+/** v1.3 item 2: the prompt for the split, the plan, its decisions and the slices already exported (keys reused). */
+export function buildSplitPrompt(s: Session, md: string, exported: { key: string; title: string }[]): string {
+  return [
+    "The plan (Markdown):",
+    `<plan>${md}</plan>`,
+    "",
+    "Its decisions, and slices already exported (JSON):",
+    `<state>${JSON.stringify({ decisions: Object.values(s.decisions).map((d) => ({ key: d.key, question: d.title, answer: d.answer })), exported })}</state>`,
+    "",
+    "Split the plan into thin end-to-end slices.",
+  ].join("\n");
+}
+
+/** v1.3 item 2: {agent} proposes the slices. A slice needs a title; at most 100. */
+export async function splitPlan(s: Session, md: string, exported: { key: string; title: string }[], adapter: ProviderAdapter, opts: RunOptions): Promise<Validated<SplitReply>> {
+  return runValidated<SplitReply>(
+    adapter,
+    { kind: "split", systemPrompt: splitSystemPrompt(), userPrompt: buildSplitPrompt(s, md, exported), jsonSchema: splitJsonSchema() },
+    SplitReplySchema,
+    (r) => (r.slices.some((x) => !x.title.trim()) ? "Every slice needs a title." : null),
     opts,
     [userText(s), md].join("\n"),
   );
