@@ -4,12 +4,14 @@
 // - The server: only strings that reach the screen as a message: the argument of `new …Error(…)`,
 //   `setError(…)`, or a `message` / `error` / `answer` / `loginHint` / `installHint` property.
 //   Prompts, MCP text for agents and the terminal usage are not on screen and are left alone.
-// - The src/core modules the web bundle imports for its labels (reasonText, the Activity labels, STOPPED):
-//   every string, like web/src.
+// - The src/core modules the web bundle imports (directly or through another core module; `import type`
+//   brings no strings): every string, like web/src. The list is derived from the imports, never kept by hand.
 // CSS attribute values in selectors and class names ([tabindex='0'], [class*='size-']) are code, not text.
-// A statement whose comment says `@offscreen` is never shown (e.g. an old stored message kept only to match it).
+// A variable statement (`const X = …`) whose comment says `@offscreen` is never shown (e.g. an old stored
+// message kept only to match it, or a shell quoting constant). Only variable statements: a tag on a function
+// or a class would hide every string in it, so it does nothing there.
 // `node scripts/apostrophes.mjs` lists them; `--fix` rewrites them to ’ in place.
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
@@ -18,7 +20,6 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 // right after a value, so a leading ' there counts as touching it ("${agent}'s").
 const TOUCHES = /[\p{L}\p{N}}]'|'[\p{L}\p{N}]/u;
 const CSS_ATTR = /\[[\w-]+[~|^$*]?='[^'\]]*'\]/g;
-const WEB_SHOWN = new Set(["src/core/reason.ts", "src/core/activity.ts"]);
 const SERVER = ["src/cli", "src/core"];
 // What `grillado mcp` returns is read by a coding agent, not shown on screen.
 const NOT_SHOWN = new Set(["src/cli/mcp.ts"]);
@@ -28,6 +29,41 @@ const walk = (d) => readdirSync(d).flatMap((f) => {
   const p = path.join(d, f);
   return statSync(p).isDirectory() ? walk(p) : /\.tsx?$/.test(p) && !p.endsWith(".d.ts") ? [p] : [];
 });
+
+/** A relative import from `from`, resolved to its .ts/.tsx file (null for packages). */
+function resolveImport(from, spec) {
+  if (!spec.startsWith(".")) return null;
+  const base = path.resolve(path.dirname(from), spec.replace(/\.js$/, ""));
+  for (const c of [base + ".ts", base + ".tsx", path.join(base, "index.ts"), base]) if (existsSync(c) && statSync(c).isFile()) return c;
+  return null;
+}
+
+/** The value imports and re-exports of one file (`import type` / `export type` bring no strings). */
+function valueImports(file) {
+  const src = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const out = [];
+  for (const st of src.statements) {
+    const spec = ts.isImportDeclaration(st) && !st.importClause?.isTypeOnly ? st.moduleSpecifier
+      : ts.isExportDeclaration(st) && !st.isTypeOnly ? st.moduleSpecifier : undefined;
+    const r = spec && ts.isStringLiteral(spec) ? resolveImport(file, spec.text) : null;
+    if (r) out.push(r);
+  }
+  return out;
+}
+
+/** The src/core modules in the web bundle: what web/src imports from src/core, and what those import in turn. */
+export function webShown() {
+  const core = path.join(ROOT, "src/core") + path.sep;
+  const seen = new Set();
+  const todo = walk(path.join(ROOT, "web/src")).flatMap(valueImports).filter((f) => f.startsWith(core));
+  while (todo.length) {
+    const f = todo.pop();
+    if (seen.has(f)) continue;
+    seen.add(f);
+    todo.push(...valueImports(f).filter((d) => d.startsWith(core)));
+  }
+  return new Set([...seen].map((f) => path.relative(ROOT, f)));
+}
 
 /** The server string is shown when its closest message-carrying parent says so. */
 function shownOnServer(node) {
@@ -45,6 +81,7 @@ function shownOnServer(node) {
 
 export function straightApostrophes({ fix = false } = {}) {
   const hits = [];
+  const WEB_SHOWN = webShown();
   const files = [
     ...walk(path.join(ROOT, "web/src")).map((f) => [f, true]),
     ...SERVER.flatMap((d) => walk(path.join(ROOT, d)).filter((f) => !NOT_SHOWN.has(path.relative(ROOT, f))).map((f) => [f, WEB_SHOWN.has(path.relative(ROOT, f))])),
@@ -70,6 +107,28 @@ export function curly(text, afterValue = false) {
   });
 }
 
+/** A `const`/`let` statement tagged `@offscreen` in its leading comment. */
+const offscreen = (text, n) => ts.isVariableStatement(n) && (ts.getLeadingCommentRanges(text, n.getFullStart()) ?? []).some((c) => text.slice(c.pos, c.end).includes("@offscreen"));
+
+/** Every `@offscreen` tag in the scanned files, as `file:line name`, so a test can pin the allowlist. */
+export function offscreenTags() {
+  const tags = [];
+  for (const f of [...walk(path.join(ROOT, "web/src")), ...SERVER.flatMap((d) => walk(path.join(ROOT, d)))]) {
+    const text = readFileSync(f, "utf8");
+    if (!text.includes("@offscreen")) continue;
+    const src = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true, f.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const visit = (n) => {
+      if (ts.isStatement(n) && (ts.getLeadingCommentRanges(text, n.getFullStart()) ?? []).some((c) => text.slice(c.pos, c.end).includes("@offscreen"))) {
+        const name = ts.isVariableStatement(n) ? n.declarationList.declarations.map((d) => d.name.getText()).join(",") : `(${ts.SyntaxKind[n.kind]}, ignored)`;
+        tags.push(`${path.relative(ROOT, f)} ${name}`);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(src);
+  }
+  return tags;
+}
+
 const isPiece = (n) => ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n) || ts.isJsxText(n);
 const afterValue = (n) => ts.isTemplateMiddle(n) || ts.isTemplateTail(n);
 
@@ -80,7 +139,7 @@ export function scan(files, { fix = false, rel = (f) => f, hits = [] } = {}) {
     const src = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
     const ranges = [];
     const visit = (n) => {
-      if (ts.isStatement(n) && (ts.getLeadingCommentRanges(text, n.getFullStart()) ?? []).some((c) => text.slice(c.pos, c.end).includes("@offscreen"))) return;
+      if (offscreen(text, n)) return;
       if (isPiece(n) && straightIn(n.text, afterValue(n)) && (web || shownOnServer(n))) {
         ranges.push([n, n.getStart(src), n.getEnd()]);
         hits.push(`${rel(file)}:${src.getLineAndCharacterOfPosition(n.getStart(src)).line + 1}: ${n.text.trim().replace(/\s+/g, " ").slice(0, 80)}`);
