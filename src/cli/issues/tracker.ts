@@ -66,5 +66,5 @@ export function said(text: string): string {
       .map((l) => l.trim())
       .find((l) => l && !/^\s*$/.test(l)) ?? "";
   const t = line.replace(/^(error|gh|graphql):\s*/i, "");
-  return t.length > 200 ? `${t.slice(0, 197)}…` : t || "Something went wrong";
+  return t.length > 200 ? `${t.slice(0, 197)}…` : t || "No reason given.";
 }

@@ -72,6 +72,8 @@ export const BODY_LIMIT: Record<Tracker, number> = { github: 65_536, linear: 65_
 export const MAX_CHILDREN: Record<Tracker, number> = { github: 100, linear: 250 };
 export const MAX_TITLE = 256;
 
+export const TRACKER_NAME: Record<Tracker, string> = { github: "GitHub", linear: "Linear" };
+
 export const marker = (planId: string, key: string) => `<!-- grillado:plan=${planId} item=${key} -->`;
 export const markerSearch = (planId: string) => `grillado:plan=${planId}`;
 const MARKER_RE = /<!-- grillado:plan=([\w-]+) item=([\w-]+) -->/;
@@ -141,16 +143,16 @@ function decisionList(s: Session, keys?: string[]): string {
   return ds.map((d) => `- **${d.title.trim()}**: ${d.answer.trim()}`).join("\n");
 }
 
-const footer = (s: Session, key: string) => `\n\n---\n\nFrom Grillado plan '${planTitle(s)}'\n\n${marker(s.id, key)}\n`;
+const footer = (s: Session, key: string) => `\n\n---\n\nFrom the Grillado plan “${planTitle(s)}”\n\n${marker(s.id, key)}\n`;
 
 /**
  * Fit a body to the tracker: over the limit, the text is cut at a line and ends with a pointer back to
  * the plan (the parent issue for children, the Grillado plan id for the parent). The footer always survives.
  */
-export function fitBody(text: string, end: string, limit: number, back: string): { body: string; cut: boolean } {
+export function fitBody(text: string, end: string, limit: number, back: string, where: string): { body: string; cut: boolean } {
   const whole = `${text}${end}`;
   if (whole.length <= limit) return { body: whole, cut: false };
-  const note = `\n\n…\n\n_Cut to fit. The rest is in ${back}._`;
+  const note = `\n\n…\n\n_Cut to fit ${where}. The rest is in ${back}._`;
   let room = Math.max(0, limit - end.length - note.length);
   let head = text.slice(0, room);
   const nl = head.lastIndexOf("\n");
@@ -174,7 +176,7 @@ export function parentItem(s: Session, md: string, tracker: Tracker): IssueItem 
   const ds = decisionList(s);
   if (ds) parts.push(`## Decisions\n\n${ds}`);
   const text = parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, ""));
-  const { body, cut } = fitBody(text, footer(s, PARENT_KEY), BODY_LIMIT[tracker], `the Grillado plan '${planTitle(s)}' (${s.id})`);
+  const { body, cut } = fitBody(text, footer(s, PARENT_KEY), BODY_LIMIT[tracker], `the Grillado plan “${planTitle(s)}” (${s.id})`, TRACKER_NAME[tracker]);
   return { key: PARENT_KEY, title: planTitle(s), body, covers: resolved(s).map((d) => d.key), sections, ...(cut ? { cut } : {}) };
 }
 
@@ -187,7 +189,7 @@ export function childItem(s: Session, x: Slice, tracker: Tracker): IssueItem {
   const covers = [...new Set(x.covers.filter((k) => known.has(k)))];
   const ds = covers.length ? `\n\n## Decisions\n\n${decisionList(s, covers)}` : "";
   const text = `${cleanText(x.body) || x.title}${ds}`;
-  const { body, cut } = fitBody(text, footer(s, x.key), BODY_LIMIT[tracker], `the parent issue '${planTitle(s)}'`);
+  const { body, cut } = fitBody(text, footer(s, x.key), BODY_LIMIT[tracker], `the parent issue “${planTitle(s)}”`, TRACKER_NAME[tracker]);
   return { key: x.key, title: x.title.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE), body, covers, sections: x.sections, ...(cut ? { cut } : {}) };
 }
 

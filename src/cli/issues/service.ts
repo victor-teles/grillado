@@ -108,7 +108,7 @@ const remoteHash = (x: RemoteIssue) => contentHash(x.title, x.body);
 /** Every issue's title and body pass the banned-words check before anything is sent (spec acceptance). */
 export function checkItems(s: Session, items: IssueItem[]) {
   const exempt = userText(s);
-  for (const it of items) if (findBanned(`${it.title}\n${it.body}`, exempt)) throw new ExportError("filtered", `“${it.title.slice(0, 60)}” can't be sent as it is.`);
+  for (const it of items) if (findBanned(`${it.title}\n${it.body}`, exempt)) throw new ExportError("filtered", `“${it.title.slice(0, 60)}” can’t be sent as it is.`);
 }
 
 /**
@@ -177,6 +177,7 @@ export async function runExport(s: Session, req: ExportRequest, hooks: { save: (
   }
 
   const labels = dest.labels;
+  const where = dest.tracker === "linear" ? "Linear" : "GitHub";
   /** Create, update, skip or recreate one item. Returns false when it failed. */
   const one = async (it: IssueItem, parent?: IssueLink): Promise<boolean> => {
     const have = link(it.key);
@@ -195,7 +196,7 @@ export async function runExport(s: Session, req: ExportRequest, hooks: { save: (
             return true;
           }
           if (remoteHash(now) !== have.contentHash && remoteHash(now) !== mine && !req.overwrite.includes(it.key)) {
-            row(it.key, { status: "edited", ...shown(have), message: "Changed in the tracker after the export, so it's left as is." });
+            row(it.key, { status: "edited", ...shown(have), message: `Changed in ${where} after the export, so it’s left as is.` });
             return true;
           }
           row(it.key, { status: "updating" });
@@ -210,7 +211,7 @@ export async function runExport(s: Session, req: ExportRequest, hooks: { save: (
       const made = await tracker.create(sent, parent);
       setLink(it.key, { ...linkOf(made.issue, sent), ...(parent && !made.attached ? { unattached: true } : {}) });
       if (parent && !made.attached) {
-        fail(it.key, new Error(`Created, but couldn't make it a sub-issue: ${made.attachError ?? "unknown error"}`));
+        fail(it.key, new Error(`Created, but couldn’t make it a sub-issue: ${made.attachError ?? "no reason given"}`));
         return false;
       }
       row(it.key, { status: "created", ...shown(link(it.key)!) });
@@ -251,7 +252,7 @@ export async function runExport(s: Session, req: ExportRequest, hooks: { save: (
   }
   const parent = issues.parent;
   if (!parent && kids.length) {
-    for (const k of kids) row(k.key, { status: "skipped", message: "Not created: there's no parent issue." });
+    for (const k of kids) row(k.key, { status: "skipped", message: "Not created: there’s no parent issue." });
     return done();
   }
   for (const k of kids) await one(k, parent);

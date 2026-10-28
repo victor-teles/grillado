@@ -52,8 +52,8 @@ export class Gh {
     try {
       const env = { ...(this.o.env ?? process.env), GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", NO_COLOR: "1", GH_PAGER: "", PAGER: "cat", ...extra };
       const r = await runProcess(this.o.bin ?? "gh", args, { cwd, env, timeoutMs: this.o.timeoutMs ?? 60_000 });
-      if (r.spawnError) throw new TrackerError("missing", "gh isn't installed");
-      if (r.timedOut) throw new TrackerError("failed", "gh took too long");
+      if (r.spawnError) throw new TrackerError("missing", "gh isn’t installed.");
+      if (r.timedOut) throw new TrackerError("failed", "No answer after a minute.");
       return { code: r.exitCode, out: r.stdout, err: r.stderr };
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -175,7 +175,7 @@ export class GitHubTracker implements IssueTracker {
       const r = await this.gh.run(args);
       const url = r.out.match(/https?:\/\/\S+\/issues\/(\d+)/);
       if (r.code !== 0 && !url) throw this.gh.fail(r.err);
-      if (!url) throw new TrackerError("failed", "gh didn't print the new issue's link");
+      if (!url) throw new TrackerError("failed", "No link came back for the new issue.");
       const made = (await this.issue(Number(url[1]))) ?? { id: "", number: Number(url[1]), url: url[0], title: issue.title, body: issue.body };
       // With --parent, a create that worked but couldn't attach prints the link and fails.
       if (parent && this.subIssues === "flag") return r.code === 0 ? { issue: made, attached: true } : { issue: made, attached: false, attachError: said(r.err) };

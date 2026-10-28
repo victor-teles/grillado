@@ -34,19 +34,19 @@ export class Linear {
           signal: AbortSignal.timeout(30_000),
         });
       } catch (err) {
-        throw new TrackerError("failed", `Couldn't reach Linear: ${said(String((err as Error)?.message ?? err))}`);
+        throw new TrackerError("failed", `Couldn’t connect: ${said(String((err as Error)?.message ?? err))}`);
       }
       const j: any = await res.json().catch(() => ({}));
       const errs: any[] = j?.errors ?? [];
       const code = (e: any) => String(e?.extensions?.code ?? e?.extensions?.type ?? "").toUpperCase();
       const limited = res.status === 429 || errs.some((e) => code(e) === "RATELIMITED");
       if (limited) {
-        if (attempt >= 2) throw new TrackerError("rate", "Linear's rate limit: try again in a minute");
+        if (attempt >= 2) throw new TrackerError("rate", "Rate limited. Try again in a minute.");
         const after = Number(res.headers.get("retry-after"));
         await new Promise((r) => setTimeout(r, after > 0 ? Math.min(after, 60) * 1000 : (this.o.retryMs ?? 2000)));
         continue;
       }
-      if (res.status === 401 || errs.some((e) => code(e) === "AUTHENTICATION_ERROR")) throw new TrackerError("bad_key", "That key didn't work");
+      if (res.status === 401 || errs.some((e) => code(e) === "AUTHENTICATION_ERROR")) throw new TrackerError("bad_key", "That key didn’t work.");
       if (errs.length) {
         const e = errs[0];
         if (code(e) === "FORBIDDEN") throw new TrackerError("access", said(e.message ?? ""));
@@ -54,7 +54,7 @@ export class Linear {
         (err as any).notFound = /not found|could not find/i.test(String(e.message ?? ""));
         throw err;
       }
-      if (!res.ok) throw new TrackerError("failed", `Linear answered ${res.status}`);
+      if (!res.ok) throw new TrackerError("failed", `Error ${res.status}.`);
       return j.data as T;
     }
   }
@@ -124,18 +124,18 @@ export class LinearTracker implements IssueTracker {
       ...(parent ? { parentId: parent.id } : {}),
     };
     const r = (await this.api.gql(`mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { ${ISSUE} } } }`, { input })).issueCreate;
-    if (!r?.success || !r.issue) throw new TrackerError("failed", "Linear didn't create the issue");
+    if (!r?.success || !r.issue) throw new TrackerError("failed", "The issue wasn’t created.");
     return { issue: toRemote(r.issue), attached: !!parent };
   }
 
   async update(link: IssueLink, issue: NewIssue) {
     const r = (await this.api.gql(`mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { ${ISSUE} } } }`, { id: link.id, input: { title: issue.title, description: issue.body } })).issueUpdate;
-    if (!r?.success || !r.issue) throw new TrackerError("failed", "Linear didn't update the issue");
+    if (!r?.success || !r.issue) throw new TrackerError("failed", "The issue wasn’t updated.");
     return toRemote(r.issue);
   }
 
   async attach(child: IssueLink, parent: IssueLink) {
     const r = (await this.api.gql(`mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`, { id: child.id, input: { parentId: parent.id } })).issueUpdate;
-    if (!r?.success) throw new TrackerError("failed", "Linear didn't link the sub-issue");
+    if (!r?.success) throw new TrackerError("failed", "The sub-issue wasn’t linked.");
   }
 }

@@ -78,6 +78,7 @@ describe("before the confirm, nothing is written", () => {
     expect((await call("GET", "/api/github/status")).json).toMatchObject({ state: "ready", subIssues: "flag" });
     expect((await call("GET", "/api/github/repo?repo=victor-teles/grillado")).json).toMatchObject({ access: true, visibility: "private" });
     expect((await call("GET", "/api/github/repo?repo=bad")).status).toBe(400);
+    expect((await call("GET", "/api/github/status?host=bad%20host")).json).toEqual({ error: "That isn’t a GitHub host." });
     expect((await call("GET", "/api/github/labels?repo=victor-teles/grillado")).json.labels[0].name).toBe("bug");
     const split = await call("POST", `/api/sessions/${s.id}/issues/split`, { use: "fallback" });
     expect(split.json.source).toBe("stories");
@@ -113,6 +114,7 @@ describe("before the confirm, nothing is written", () => {
     const r = await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: ["plan"] });
     expect(r.status).toBe(424);
     expect(r.json.code).toBe("auth");
+    expect(r.json.error).toBe("gh isn’t signed in to github.com.");
   });
 });
 
@@ -177,7 +179,7 @@ describe("export", () => {
     await done(s.id);
     const bodies = gh.state().issues.map((x) => x.body);
     expect(Math.max(...bodies.map((b) => b.length))).toBeLessThanOrEqual(65_536);
-    expect(bodies.some((b) => b.includes("_Cut to fit."))).toBe(true);
+    expect(bodies.some((b) => b.includes("_Cut to fit GitHub. The rest is in the parent issue “Recipe box”._"))).toBe(true);
   });
 });
 

@@ -68,7 +68,7 @@ export class IssuesRoutes {
 
   private linear(): Linear {
     const key = readSecrets(this.host.store.dir).linear?.key;
-    if (!key) throw new TrackerError("bad_key", "Connect Linear first");
+    if (!key) throw new TrackerError("bad_key", "Connect Linear first.");
     return new Linear(key, this.o.linear);
   }
 
@@ -84,7 +84,7 @@ export class IssuesRoutes {
 
   async appRoutes(req: http.IncomingMessage, res: http.ServerResponse, parts: string[], body: any, q: URLSearchParams, json: Json) {
     const host = q.get("host") || "github.com";
-    if (!HOST.test(host)) return json(res, 400, { error: "Bad host" });
+    if (!HOST.test(host)) return json(res, 400, { error: "That isn’t a GitHub host." });
     try {
       const [what, sub] = parts;
       if (what === "github" && req.method === "GET") {
@@ -127,7 +127,7 @@ export class IssuesRoutes {
     try {
       if (req.method === "GET" && !op) return json(res, 200, await this.state(s));
       if (req.method !== "POST") return json(res, 404, { error: "Not found" });
-      if (isDraft(s)) throw new ExportError("draft", "Finish the plan first");
+      if (isDraft(s)) throw new ExportError("draft", "Finish the plan first.");
       if (op === "split") return json(res, 200, await this.split(s, body?.use === "fallback", body?.tracker === "linear" ? "linear" : "github"));
       if (op === "preview") return json(res, 200, await this.preview(s, body));
       if (op === "export") return json(res, 202, await this.export(s, body));
@@ -238,12 +238,12 @@ export class IssuesRoutes {
     if (tracker === "github") {
       const target = str(body?.repo);
       const host = str(body?.host) || "github.com";
-      if (!REPO.test(target)) throw new ExportError("empty", "Pick a repository to continue");
-      if (!HOST.test(host)) throw new ExportError("empty", "Bad host");
+      if (!REPO.test(target)) throw new ExportError("empty", "Pick a repository.");
+      if (!HOST.test(host)) throw new ExportError("empty", "That isn’t a GitHub host.");
       return { tracker, target, host, labels, targetName: undefined as string | undefined, projectId: undefined as string | undefined };
     }
     const target = str(body?.team);
-    if (!ID.test(target)) throw new ExportError("empty", "Pick a team to continue");
+    if (!ID.test(target)) throw new ExportError("empty", "Pick a team.");
     const projectId = str(body?.project);
     return { tracker, target, host: undefined as string | undefined, labels, targetName: str(body?.teamName) || target, projectId: ID.test(projectId) ? projectId : undefined };
   }
@@ -263,14 +263,14 @@ export class IssuesRoutes {
     let chosen = items.filter((it) => selected.has(it.key));
     // The parent stays while any child is selected.
     if (chosen.some((it) => it.key !== PARENT_KEY) && !chosen.some((it) => it.key === PARENT_KEY)) chosen = [items[0], ...chosen];
-    if (!chosen.length) throw new ExportError("empty", "Select at least one issue");
+    if (!chosen.length) throw new ExportError("empty", "Select at least one issue.");
     checkItems(s, chosen);
     // gh is checked before anything starts, so a missing or signed-out gh is a fix-it, not a failed run.
     let tracker: IssueTracker;
     if (dest.tracker === "github") {
       const st = await this.gh.status(dest.host!);
-      if (st.state === "missing") throw new TrackerError("missing", "gh isn't installed");
-      if (st.state === "auth") throw new TrackerError("auth", `gh isn't signed in to ${dest.host}`);
+      if (st.state === "missing") throw new TrackerError("missing", "gh isn’t installed.");
+      if (st.state === "auth") throw new TrackerError("auth", `gh isn’t signed in to ${dest.host}.`);
       tracker = new GitHubTracker(this.gh, dest.target, dest.host!, st.subIssues);
     } else tracker = this.tracker(dest);
     if (this.running(s.id)) throw new ExportError("busy", "Issues are already being created for this plan.");

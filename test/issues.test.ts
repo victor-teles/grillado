@@ -44,6 +44,7 @@ describe("items", () => {
     expect(p.body).not.toContain("```decision");
     expect(p.body).not.toContain("User stories");
     expect(readMarker(p.body)).toEqual({ plan: s.id, key: PARENT_KEY });
+    expect(p.body).toContain("From the Grillado plan “Recipe box”");
     expect(p.covers).toEqual(["storage", "sync"]);
   });
 
@@ -83,14 +84,14 @@ describe("items", () => {
   test("the 65,536-character cut: at a line, with a pointer back, the marker kept", () => {
     const end = `\n\n${marker("p1", "k")}\n`;
     const text = Array.from({ length: 5000 }, (_, i) => `Line ${i} of a very long plan section.`).join("\n");
-    const { body, cut } = fitBody(text, end, BODY_LIMIT.github, "the parent issue 'Recipe box'");
+    const { body, cut } = fitBody(text, end, BODY_LIMIT.github, "the parent issue “Recipe box”", "GitHub");
     expect(cut).toBe(true);
     expect(body.length).toBeLessThanOrEqual(65_536);
-    expect(body).toContain("_Cut to fit. The rest is in the parent issue 'Recipe box'._");
+    expect(body).toContain("_Cut to fit GitHub. The rest is in the parent issue “Recipe box”._");
     expect(body.endsWith(end)).toBe(true);
     expect(body.split("\n…")[0].trimEnd()).toMatch(/plan section\.$/);
     // A cut never splits an emoji.
-    const emoji = fitBody("😀".repeat(40_000), end, BODY_LIMIT.github, "x").body;
+    const emoji = fitBody("😀".repeat(40_000), end, BODY_LIMIT.github, "x", "GitHub").body;
     expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(emoji)).toBe(false);
   });
 
@@ -200,7 +201,7 @@ describe("gh adapter (fake gh)", () => {
     const first = await exportAll(s, tracker(gh, "api"), "github", "victor-teles/grillado");
     const k = first.items[1].key;
     expect(first.run.rows[1]).toMatchObject({ status: "failed" });
-    expect(first.run.rows[1].message).toContain("couldn't make it a sub-issue");
+    expect(first.run.rows[1].message).toContain("Created, but couldn’t make it a sub-issue: ");
     expect(s.issues!.items[k]).toMatchObject({ number: 2, unattached: true });
     const retry = await exportAll(s, tracker(gh, "api"), "github", "victor-teles/grillado", { keys: [PARENT_KEY, k] });
     expect(status(retry.run)[k]).toBe("unchanged");
@@ -248,6 +249,7 @@ describe("gh adapter (fake gh)", () => {
     const skip = await exportAll(s, tracker(gh, "flag"), "github", "victor-teles/grillado");
     // The story's key is stable (its first words), so the plan change meets the team's edit: left as is.
     expect(status(skip.run)[k]).toBe("edited");
+    expect(skip.run.rows.find((r) => r.key === k)!.message).toBe("Changed in GitHub after the export, so it’s left as is.");
     expect(gh.state().issues[1].body).not.toContain("or a link");
     gh.edit((st) => (st.issues[0].title = "Recipe box (team edit)"));
     s.plan!.markdown = STORY_MD.replace("One app", "One small app");
@@ -327,7 +329,7 @@ describe("Linear (mock server)", () => {
 
   test("a bad key is bad_key", async () => {
     mock = await linearMock();
-    expect(api("lin_api_nope").viewer()).rejects.toMatchObject({ code: "bad_key", message: "That key didn't work" });
+    expect(api("lin_api_nope").viewer()).rejects.toMatchObject({ code: "bad_key", message: "That key didn’t work." });
   });
 
   test("a rate limit backs off and retries once, then fails", async () => {
@@ -351,6 +353,12 @@ describe("Linear (mock server)", () => {
     s.plan!.markdown = STORY_MD.replace("One app", "One small app");
     const second = await exportAll(s, t, "linear", "team-1");
     expect(status(second.run)[PARENT_KEY]).toBe("updated");
+    mock.issues[0].title = "Recipe box (team edit)";
+    s.plan!.markdown = STORY_MD.replace("One app", "One tiny app");
+    const edited = await exportAll(s, t, "linear", "team-1");
+    expect(edited.run.rows[0]).toMatchObject({ status: "edited", message: "Changed in Linear after the export, so it’s left as is." });
+    mock.issues[0].title = "Recipe box";
+    s.plan!.markdown = STORY_MD.replace("One app", "One small app");
     s.issues = undefined;
     const third = await exportAll(s, t, "linear", "team-1");
     expect(third.run.rows.every((r) => r.status === "unchanged")).toBe(true);
