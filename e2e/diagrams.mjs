@@ -6,7 +6,7 @@
 //   node e2e/diagrams.mjs            checks only
 //   SHOTS=dir VIDEO=1 node e2e/diagrams.mjs   also writes screenshots (and a desktop clip) to dir
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
@@ -14,6 +14,8 @@ import { chromium } from "playwright-core";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-dg-"));
+// The longest install command any agent has (Grok's curl line): the not-installed card must hold it too.
+const LONGEST_HINT = [...readFileSync(path.join(ROOT, "src/core/providers/adapters.ts"), "utf8").matchAll(/installHint: "([^"]+)"/g)].map((m) => m[1]).sort((a, b) => b.length - a.length)[0];
 const NODE = process.execPath;
 const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -585,7 +587,9 @@ try {
 
     // ---------------------------------------------------------------- question round, the CLI gone (review-pr22 #3)
     {
-      const sq = await server();
+      const qctl = path.join(mkdtempSync(path.join(WORK, "ctl-")), "ctl.json");
+      writeFileSync(qctl, "{}");
+      const sq = await server({ FAKE_CTL: qctl });
       const qctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
       await qctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
       const qp = await qctx.newPage();
@@ -597,19 +601,70 @@ try {
       await qp.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15000 });
       renameSync(path.join(sq.bin, "claude"), path.join(sq.bin, "claude.off"));
       await qp.getByRole("button", { name: /Send round/ }).click();
+      const sentAt = Date.now();
       const card = qp.getByTestId("problem");
       if (!(await card.waitFor({ timeout: 20000 }).then(() => true, () => false))) {
         if (SHOTS) await qp.screenshot({ path: path.join(SHOTS, `card-not-found-${theme}-missing.png`) });
         throw new Error(`no problem card: ${(await qp.locator("body").innerText()).slice(0, 400).replace(/\n+/g, " ⏎ ")}`);
       }
-      const c = await card.evaluate((b) => ({ code: b.dataset.code, title: b.querySelector(".t")?.textContent, body: b.querySelector(".t + p, p:not(.t)")?.textContent, cmd: b.querySelector("code")?.textContent, btns: [...b.querySelectorAll(".acts button")].map((x) => x.textContent.trim()) }));
-      check(`${theme} question round, CLI gone: "Claude Code isn’t installed", how to install it, answers kept`, c.code === "not_found" && c.title === "Claude Code isn’t installed" && c.cmd === "npm i -g @anthropic-ai/claude-code" && /Install it with .*then retry\. Your answers are kept\./.test(c.body ?? ""), JSON.stringify(c));
+      const c = await card.evaluate((b) => ({ code: b.dataset.code, title: b.querySelector(".t")?.textContent, body: b.querySelector(".t + p")?.textContent, cmd: b.querySelector(".cmd.wrap code")?.textContent, btns: [...b.querySelectorAll(".acts button")].map((x) => x.textContent.trim()) }));
+      check(`${theme} question round, CLI gone: "Claude Code isn’t installed", how to install it, answers kept`, c.code === "not_found" && c.title === "Claude Code isn’t installed" && c.cmd === "npm i -g @anthropic-ai/claude-code" && c.body === "Grillado runs your own Claude Code. Install it, then retry. Your answers are kept.", JSON.stringify(c));
       check(`${theme} question round, CLI gone: Retry stays (and Switch agent, with another agent ready)`, c.btns.at(-1) === "Retry" && c.btns.includes("Switch agent"), JSON.stringify(c.btns));
-      if (SHOTS) {
+      const cardShot = async (name) => {
+        if (!SHOTS) return;
         const bb = await card.boundingBox();
-        await qp.screenshot({ path: path.join(SHOTS, `card-not-found-${theme}.png`), clip: { x: Math.max(0, bb.x - 16), y: Math.max(0, bb.y - 16), width: bb.width + 32, height: bb.height + 32 } });
+        const vw = qp.viewportSize().width;
+        const x = Math.max(0, bb.x - 16);
+        await qp.screenshot({ path: path.join(SHOTS, `${name}.png`), clip: { x, y: Math.max(0, bb.y - 16), width: Math.min(vw - x, bb.width + 32), height: bb.height + 32 } });
+      };
+      await cardShot(`card-not-found-${theme}`);
+      // review-pr22 r3 #1: the command and its Copy stay inside the card on a phone, the longest command too.
+      const fit = () =>
+        card.evaluate((b) => {
+          const box = (e) => {
+            const r = e.getBoundingClientRect();
+            return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom) };
+          };
+          const well = b.querySelector(".cmd.wrap");
+          return { vw: innerWidth, card: box(b), well: box(well), code: box(well.querySelector("code")), copy: box(well.querySelector(".i")), text: well.querySelector("code").textContent, scroll: document.documentElement.scrollWidth - innerWidth };
+        });
+      const within = (a, o) => a.l >= o.l && a.r <= o.r && a.t >= o.t && a.b <= o.b;
+      for (const width of [390, 360, 320]) {
+        await qp.setViewportSize({ width, height: 844 });
+        await settle(qp);
+        let g = await fit();
+        check(`${theme} phone ${width} not-installed card: the command and Copy inside the card, no horizontal scroll`, within(g.well, g.card) && within(g.code, g.well) && within(g.copy, g.well) && g.card.r <= g.vw && g.scroll <= 0, JSON.stringify(g));
+        if (width !== 360) await cardShot(`card-not-found-m${width}-${theme}`);
+        // The same card with the longest install command (layout only: the text is swapped in place).
+        const was = await card.evaluate((b, t) => {
+          const code = b.querySelector(".cmd.wrap code");
+          const old = code.textContent;
+          code.textContent = t;
+          return old;
+        }, LONGEST_HINT);
+        await settle(qp);
+        g = await fit();
+        check(`${theme} phone ${width} not-installed card, longest command (${LONGEST_HINT}): wraps inside the card, Copy too`, g.text === LONGEST_HINT && within(g.well, g.card) && within(g.code, g.well) && within(g.copy, g.well) && g.card.r <= g.vw && g.scroll <= 0, JSON.stringify(g));
+        if (width === 320) await cardShot(`card-not-found-m320-longest-${theme}`);
+        await card.evaluate((b, t) => (b.querySelector(".cmd.wrap code").textContent = t), was);
       }
+      await qp.setViewportSize({ width: 1440, height: 900 });
+      await settle(qp);
       await axe(qp, `${theme} desktop: not-installed card`);
+      // review-pr22 r3 #2: a Retry well after the send starts its own turn, so it reads as working, not "Still cooking…".
+      if (one) {
+        const left = 16_500 - (Date.now() - sentAt);
+        if (left > 0) await qp.waitForTimeout(left); // a wall-clock wait on purpose: the timer under test is 15 s
+        renameSync(path.join(sq.bin, "claude.off"), path.join(sq.bin, "claude"));
+        writeFileSync(qctl, JSON.stringify({ FAKE_DELAY_MS: "3000" }));
+        await card.getByRole("button", { name: "Retry" }).click();
+        const st = qp.locator(".intro .status");
+        await st.waitFor({ timeout: 5000 });
+        const label = (await st.textContent()).trim();
+        check(`${theme} Retry ${Math.round((Date.now() - sentAt) / 1000)} s after the send: the normal working line, not "Still cooking…"`, label === "Preparing round 2 · reading your answers", label);
+        if (SHOTS) await qp.screenshot({ path: path.join(SHOTS, `retry-working-${theme}.png`) });
+        await st.waitFor({ state: "detached", timeout: 15000 });
+      }
       await qctx.close();
       await sq.stop();
     }

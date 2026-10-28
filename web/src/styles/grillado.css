@@ -187,6 +187,9 @@ button:disabled{cursor:default}
 .banner p+p,.banner .t+*{color:var(--muted-foreground);margin-top:2px}
 .banner .acts{display:flex;gap:8px;align-items:center}
 .banner .cmd{margin-top:10px;cursor:pointer}
+/* the install command's well (review-pr22 r3 #1): as wide as the command, wrapping inside the card, Copy beside its last line */
+.banner .cmd.wrap{width:fit-content;max-width:100%;height:auto;min-height:40px;padding:6px 6px 6px 12px;align-items:end;background:color-mix(in oklab,var(--foreground) 6%,transparent)}
+.banner .cmd.wrap code{white-space:normal;overflow-wrap:anywhere;text-overflow:clip;font-family:var(--mono);font-size:12px;line-height:18px;padding:5px 0}
 .nudge{display:flex;align-items:center;gap:8px;color:var(--muted-foreground);margin-block:20px 24px;flex-wrap:wrap}
 .nudge>span,.nudge>p{flex:1;min-width:0}
 /* Mobile: the quiet buttons' labels line up with the text edge, closer under it (#20 leftover 6). */

@@ -83,13 +83,9 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
     not_found: {
       icon: <ITerm s={16} />,
       title: reasonText("not_found", name),
-      body: provider?.installHint ? (
-        <>
-          Grillado runs your own {name}. Install it with <Cmds text={`\`${provider.installHint}\``} />, then retry. Your answers are kept.
-        </>
-      ) : (
-        `Grillado runs your own ${name}. Install it, then retry. Your answers are kept.`
-      ),
+      body: `Grillado runs your own ${name}. Install it, then retry. Your answers are kept.`,
+      // The command gets its own row, a well that wraps, so a long one (Grok's curl) never runs off a phone (review-pr22 r3 #1).
+      cmd: provider?.installHint,
       retry: "Retry",
     },
     unknown: { icon: <IAlert s={16} />, title: "Can't reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
@@ -104,6 +100,7 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
       <div>
         {copy.title ? <p className="t">{copy.title}</p> : null}
         <p>{copy.body}</p>
+        {"cmd" in copy && copy.cmd ? <CopyButton kind="cmd" className="wrap" text={copy.cmd} label={`Copy ${copy.cmd}`} /> : null}
       </div>
       <div className="acts">
         {code === "auth" ? null : sw}
@@ -362,7 +359,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
 
 function Plating({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
   const busy = session.busy;
-  const elapsed = useSince(session.updatedAt, busy);
+  const elapsed = useSince(session.runAt ?? session.updatedAt, busy);
   const groups = groupDecisions(session);
   const n = Object.keys(session.decisions).length;
   const base = `Plating your plan from ${n} ${n === 1 ? "decision" : "decisions"}…`;

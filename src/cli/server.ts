@@ -97,6 +97,8 @@ export class GrilladoServer {
   private inflight = new Map<string, AbortController>();
   /** Every session snapshot gets the next number, so the browser can drop one older than what it shows. */
   private rev = 0;
+  /** When each session's current agent turn started (a send or a retry): the waiting timers count from here. */
+  private runAt = new Map<string, string>();
   /** Agent runs on comment threads, by thread id. They don't lock the plan, except "Apply feedback". */
   private commentRuns = new Map<string, AbortController>();
   private diagramRuns = new Map<string, AbortController>();
@@ -509,6 +511,7 @@ export class GrilladoServer {
       rev: ++this.rev,
       error: s.error ? { ...s.error, message: redact(s.error.message, userText(s)) } : undefined,
       busy: this.inflight.has(s.id),
+      runAt: this.runAt.get(s.id),
       applying: this.applying(s),
       drawing: this.diagramRuns.has(s.id),
       // A run cut short by a restart reads as stopped.
@@ -717,12 +720,16 @@ export class GrilladoServer {
     if (this.inflight.has(s.id)) return;
     const controller = new AbortController();
     this.inflight.set(s.id, controller);
+    this.runAt.set(s.id, new Date().toISOString());
     s.error = undefined;
     this.changed(s);
     work(controller)
       .catch((err) => setError(s, "unknown", String(err?.message ?? err)))
       .finally(() => {
-        if (this.inflight.get(s.id) === controller) this.inflight.delete(s.id);
+        if (this.inflight.get(s.id) === controller) {
+          this.inflight.delete(s.id);
+          this.runAt.delete(s.id);
+        }
         this.progress.delete(s.id);
         this.changed(s);
       });

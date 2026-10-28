@@ -95,7 +95,7 @@ describe("each feature shows the words for usage-limit and not-found failures", 
     };
     // 429 from the CLI → rate_limit; the CLI deleted after detection → not_found.
     const fail = (code: Code) => (code === "rate_limit" ? writeFileSync(ctl, JSON.stringify({ FAKE_MODE: "rate" })) : rmSync(path.join(bin, "claude")));
-    return { call, until, fail, id: s.id };
+    return { call, until, fail, ctl, id: s.id };
   }
 
   /** What Activity shows for the failed run: its meta line, its failed step, the copied log and the live message. */
@@ -108,6 +108,23 @@ describe("each feature shows the words for usage-limit and not-found failures", 
     expect(liveMessage(e!, A)).toContain(`${words}.`);
     expect(JSON.stringify(e).replaceAll("{agent}", A)).not.toContain("stopped responding");
   }
+
+  test("a Retry after a failure starts its own turn: the waiting timer counts from the Retry (review-pr22 r3 #2)", async () => {
+    const { call, until, fail, ctl } = await serve();
+    fail("rate_limit");
+    const id = (await call("POST", "/api/sessions", { idea: "A tiny app" })).json.id;
+    const failed = await until(`/api/sessions/${id}`, (x) => !x.busy && x.error && x);
+    expect(failed.runAt).toBeUndefined(); // only while a turn runs
+    await new Promise((r) => setTimeout(r, 60));
+    writeFileSync(ctl, JSON.stringify({ FAKE_DELAY_MS: "400" }));
+    const before = Date.now();
+    const r = (await call("POST", `/api/sessions/${id}/retry`)).json;
+    expect(r.busy).toBe(true);
+    expect(Date.parse(r.runAt)).toBeGreaterThanOrEqual(before - 5);
+    expect(Date.parse(r.runAt)).toBeGreaterThan(Date.parse(failed.createdAt) + 50);
+    const done = await until(`/api/sessions/${id}`, (x) => !x.busy && x);
+    expect(done.runAt).toBeUndefined();
+  });
 
   for (const code of ["rate_limit", "not_found"] as const) {
     const words = WORDS[code];

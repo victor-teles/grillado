@@ -193,6 +193,8 @@ export interface SessionView {
   id: string;
   /** Snapshot order from the server: a higher one is newer. */
   rev?: number;
+  /** When the agent's current turn started (a send or a retry); only while busy. */
+  runAt?: string;
   createdAt: string;
   updatedAt: string;
   provider: ProviderId;
