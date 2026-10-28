@@ -138,12 +138,44 @@ export const planTitle = (s: Session) => (s.plan?.title || s.idea.split("\n")[0]
 /** Settled decisions, in round order. */
 export const resolved = (s: Session) => Object.values(s.decisions).sort((a, b) => a.round - b.round);
 
-function decisionList(s: Session, keys?: string[]): string {
-  const ds = resolved(s).filter((d) => !keys || keys.includes(d.key));
-  return ds.map((d) => `- **${d.title.trim()}**: ${d.answer.trim()}`).join("\n");
+/** "R2·2": a decision's id as the plan page shows it (round, then its place in the round). */
+export function decisionId(s: Session, key: string): string {
+  const r = s.rounds.find((x) => x.questions.some((q) => q.key === key));
+  return r ? `R${r.n}·${r.questions.findIndex((q) => q.key === key) + 1}` : "";
 }
 
-const footer = (s: Session, key: string) => `\n\n---\n\nFrom the Grillado plan “${planTitle(s)}”\n\n${marker(s.id, key)}\n`;
+// ---------------------------------------------------------------- BIG-1: what goes into the issue bodies
+// Victor's answer is option A, the spec's wording (frames d-q-body-a, d-gh-body, d-gh-parentbody). The bodies are
+// written only here: option B (A plus the full plan in a closed <details>) or C (minimal) is a swap of these three.
+
+/** The end of every body: where it came from, and the hidden marker that finds it again. */
+const footer = (s: Session, key: string) => `\n\nFrom Grillado plan ‘${planTitle(s)}’\n${marker(s.id, key)}\n`;
+
+/** The parent: Problem, Solution, the decisions (question, then answer), Out of scope. */
+function parentText(s: Session, md: string): { text: string; sections: string[] } {
+  const parts: string[] = [];
+  const sections: string[] = [];
+  const section = (name: string) => {
+    const t = sectionText(md, name);
+    if (!t) return;
+    parts.push(`## ${name}\n${t}`);
+    sections.push(name);
+  };
+  section("Problem");
+  section("Solution");
+  const ds = resolved(s).map((d) => `- **${d.title.trim()}** ${d.answer.trim()}`);
+  if (ds.length) parts.push(`## Decisions\n${ds.join("\n")}`);
+  section("Out of scope");
+  return { text: parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, "")), sections };
+}
+
+/** A child: its slice's first paragraph, "**Covers:** R2·2 question answer", then the rest of the slice. */
+function childText(s: Session, x: Slice, covers: string[]): string {
+  const [head, ...rest] = (cleanText(x.body) || x.title).split(/\n{2,}/);
+  const line = covers.map((k) => `${decisionId(s, k)} ${s.decisions[k].title.trim()} ${s.decisions[k].answer.trim()}`.trim()).join(" · ");
+  return [head, line ? `**Covers:** ${line}` : "", ...rest].filter(Boolean).join("\n\n");
+}
+// ---------------------------------------------------------------- end of BIG-1
 
 /**
  * Fit a body to the tracker: over the limit, the text is cut at a line and ends with a pointer back to
@@ -162,33 +194,21 @@ export function fitBody(text: string, end: string, limit: number, back: string, 
   return { body: `${head.trimEnd()}${note}${end}`, cut: true };
 }
 
-/** The parent issue: Problem, Solution, Out of scope and the resolved decisions (spec option A, BIG-1 pending). */
+/** The parent issue: the plan's title, its body (BIG-1, parentText) and where it came from. */
 export function parentItem(s: Session, md: string, tracker: Tracker): IssueItem {
-  const parts: string[] = [];
-  const sections: string[] = [];
-  for (const [name, ...alias] of [["Problem"], ["Solution"], ["Out of scope"]]) {
-    const t = sectionText(md, name, ...alias);
-    if (t) {
-      parts.push(`## ${name}\n\n${t}`);
-      sections.push(name);
-    }
-  }
-  const ds = decisionList(s);
-  if (ds) parts.push(`## Decisions\n\n${ds}`);
-  const text = parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, ""));
+  const { text, sections } = parentText(s, md);
   const { body, cut } = fitBody(text, footer(s, PARENT_KEY), BODY_LIMIT[tracker], `the Grillado plan “${planTitle(s)}” (${s.id})`, TRACKER_NAME[tracker]);
   return { key: PARENT_KEY, title: planTitle(s), body, covers: resolved(s).map((d) => d.key), sections, ...(cut ? { cut } : {}) };
 }
 
 /**
- * A child: its own text, then the decisions it covers. A cut points at the parent issue by name, not by
+ * A child: its own text with the decisions it covers (BIG-1, childText). A cut points at the parent issue by name, not by
  * link, so the body (and its hash) doesn't change when the parent is recreated; the tracker links them.
  */
 export function childItem(s: Session, x: Slice, tracker: Tracker): IssueItem {
   const known = new Set(Object.keys(s.decisions));
   const covers = [...new Set(x.covers.filter((k) => known.has(k)))];
-  const ds = covers.length ? `\n\n## Decisions\n\n${decisionList(s, covers)}` : "";
-  const text = `${cleanText(x.body) || x.title}${ds}`;
+  const text = childText(s, x, covers);
   const { body, cut } = fitBody(text, footer(s, x.key), BODY_LIMIT[tracker], `the parent issue “${planTitle(s)}”`, TRACKER_NAME[tracker]);
   return { key: x.key, title: x.title.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE), body, covers, sections: x.sections, ...(cut ? { cut } : {}) };
 }
@@ -214,6 +234,50 @@ export function fallbackSlices(s: Session, md: string): { source: SplitSource; s
   const stories = bullets(sectionText(md, "User stories"));
   if (stories.length) return { source: "stories", slices: uniqueKeys(stories.map((t) => ({ key: t, title: firstSentence(t), body: t, covers: coversIn(s, md, t), sections: ["User stories"] }))) };
   return { source: "none", slices: [] };
+}
+
+/**
+ * Review r5 (PO): a plan with to-dos and no decisions has nothing to slice by, so {agent} groups its to-dos
+ * instead (a separate prompt), and the sheet says so.
+ */
+export function groupsTodos(s: Session, fb: { source: SplitSource }): boolean {
+  return fb.source === "todos" && Object.keys(s.decisions).length === 0;
+}
+
+/** The to-dos as {agent} sees them: short ids, so a reply can't mistype one. */
+export const todoIds = (todos: Slice[]) => todos.map((t, i) => ({ id: `t${i + 1}`, text: t.body }));
+
+export type Group = { key: string; title: string; body: string; todos: string[] };
+
+/**
+ * {agent}'s groups checked against the to-dos: each to-do in exactly one group, none missing, repeated or
+ * invented, and every group titled and non-empty. No groups at all is valid: the to-dos stay as they are.
+ */
+export function groupedSlices(todos: Slice[], groups: Group[]): { ok: true; slices: Slice[] } | { ok: false; reason: string } {
+  const ids = todoIds(todos);
+  const byId = new Map(ids.map((t, i) => [t.id, i]));
+  const seen = new Map<string, number>();
+  for (const g of groups) for (const id of g.todos) seen.set(id, (seen.get(id) ?? 0) + 1);
+  const invented = [...seen.keys()].filter((id) => !byId.has(id));
+  if (invented.length) return { ok: false, reason: `Unknown to-do ids: ${invented.join(", ")}. Use only the ids given.` };
+  if (!groups.length) return { ok: true, slices: [] };
+  const twice = [...seen].filter(([, n]) => n > 1).map(([id]) => id);
+  if (twice.length) return { ok: false, reason: `To-dos in more than one slice: ${twice.join(", ")}. Put each to-do in exactly one slice.` };
+  const missing = ids.filter((t) => !seen.has(t.id)).map((t) => t.id);
+  if (missing.length) return { ok: false, reason: `To-dos in no slice: ${missing.join(", ")}. Put each to-do in exactly one slice.` };
+  if (groups.some((g) => !g.title.trim() || !g.todos.length)) return { ok: false, reason: "Every slice needs a title and at least one to-do." };
+  return {
+    ok: true,
+    slices: uniqueKeys(
+      groups.map((g) => ({
+        key: g.key || g.title,
+        title: g.title.trim(),
+        body: [g.body.trim(), ...g.todos.map((id) => `- [ ] ${todos[byId.get(id)!].body}`)].filter(Boolean).join("\n"),
+        covers: [],
+        sections: ["Tasks"],
+      })),
+    ),
+  };
 }
 
 /** Clean {agent}'s slices: keys made unique, unknown decisions dropped, empty ones skipped. */

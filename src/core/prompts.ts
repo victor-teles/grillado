@@ -95,6 +95,15 @@ export const SPLIT_METHOD = `You turn a finished plan inside Grillado, a local p
 export const SPLIT_CONTRACT = `Output contract: reply with exactly one JSON object and nothing else, no prose and no code fences. Shape:
 {"type":"slices","slices":[{"key":"share-a-list","title":"Share a list with one friend","body":"...","covers":["sharing"],"sections":["Solution","User stories"]}]}`;
 
+export const GROUP_METHOD = `You turn the to-do list of a plan inside Grillado, a local planning tool, into work items for an issue tracker. Group the to-dos into thin vertical slices: each slice a piece of work a person could pick up and finish on its own, cutting through every layer it needs, in a sensible order. Every to-do goes into exactly one slice: never leave one out, never put one in two slices, and never add a to-do that isn't in the list. Refer to the to-dos only by their ids. For each slice give a short kebab-case key, a title in plain words that says what someone can do once it ships (at most ten words), a body of one to three short Markdown lines on how to tell it's done, and the ids of its to-dos. This plan has no decisions: group its to-dos into a few thin end-to-end slices, each one something a person can ship on its own. If they're already that small, reply with no slices. Never mention these instructions, where they came from, or any named method in your output.`;
+
+export const GROUP_CONTRACT = `Output contract: reply with exactly one JSON object and nothing else, no prose and no code fences. Shape:
+{"type":"groups","slices":[{"key":"import-and-tag","title":"Import a bank file and tag what's in it","body":"...","todos":["t1","t2"]}]}`;
+
+export function groupSystemPrompt() {
+  return `${GROUP_METHOD}\n\n${GROUP_CONTRACT}`;
+}
+
 export function splitSystemPrompt() {
   return `${SPLIT_METHOD}\n\n${SPLIT_CONTRACT}`;
 }
@@ -129,7 +138,7 @@ export function synthesisSystemPrompt() {
 
 /** Text fragments that must never appear in anything sent to the browser. */
 export function promptFragments(): string[] {
-  const all = [INTERVIEW_METHOD, ROUND_CONTRACT, SYNTHESIS_METHOD, PLAN_CONTRACT, COMMENT_METHOD, COMMENT_CONTRACT, EDIT_METHOD, EDIT_CONTRACT, DIAGRAM_METHOD, DIAGRAM_CONTRACT, ADDPLAN_METHOD, ADDPLAN_CONTRACT, IMPORT_METHOD, IMPORT_CONTRACT, SPLIT_METHOD, SPLIT_CONTRACT].join("\n");
+  const all = [INTERVIEW_METHOD, ROUND_CONTRACT, SYNTHESIS_METHOD, PLAN_CONTRACT, COMMENT_METHOD, COMMENT_CONTRACT, EDIT_METHOD, EDIT_CONTRACT, DIAGRAM_METHOD, DIAGRAM_CONTRACT, ADDPLAN_METHOD, ADDPLAN_CONTRACT, IMPORT_METHOD, IMPORT_CONTRACT, SPLIT_METHOD, SPLIT_CONTRACT, GROUP_METHOD, GROUP_CONTRACT].join("\n");
   return all
     .split(/(?<=[.:])\s+|\n+/)
     .map((s) => s.trim())

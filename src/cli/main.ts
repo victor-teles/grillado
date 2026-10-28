@@ -58,6 +58,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     onQuit: () => void shutdown("quit"),
     mcpLaunch: mcpLaunch(fileURLToPath(import.meta.url), store.dir),
     launchDir: process.cwd(),
+    // Tests point Linear at a local fake; only a loopback URL is taken, so the key can't be sent anywhere else.
+    issues: /^http:\/\/127\.0\.0\.1:\d+\/[\w/-]*$/.test(process.env.GRILLADO_LINEAR_URL ?? "") ? { linear: { url: process.env.GRILLADO_LINEAR_URL } } : undefined,
     found: new FoundService({ store, cwd: process.cwd(), off: !args.scan || process.env.GRILLADO_NO_SCAN === "1" }),
   });
 

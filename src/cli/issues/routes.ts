@@ -3,7 +3,7 @@
 // the marker search and the 404 check, Linear's viewer, teams, projects and labels (#180).
 import type http from "node:http";
 import { textHash } from "../../core/text-hash.ts";
-import { PARENT_KEY, type PlanIssues, type Slice, type SplitSource, type Tracker, agentSlices, buildItems, contentHash, fallbackSlices, planChanges } from "../../core/issues.ts";
+import { PARENT_KEY, type PlanIssues, type Slice, type SplitSource, type Tracker, agentSlices, buildItems, contentHash, fallbackSlices, groupsTodos, planChanges } from "../../core/issues.ts";
 import type { Session } from "../../core/session.ts";
 import type { Store } from "../store.ts";
 import { Gh, type GhOptions, GitHubTracker, projectRemotes } from "./gh.ts";
@@ -25,6 +25,8 @@ export interface IssuesHost {
   projectDir(s: Session): string | undefined;
   /** {agent} splits the plan. null: no agent is ready. */
   split(s: Session, md: string, exported: { key: string; title: string }[], signal: AbortSignal): Promise<{ ok: true; slices: Slice[] } | { ok: false; code: string } | null>;
+  /** Review r5: a decision-less plan's to-dos grouped by {agent}, already checked (each to-do in exactly one slice). */
+  group(s: Session, md: string, todos: Slice[], signal: AbortSignal): Promise<{ ok: true; slices: Slice[] } | { ok: false; code: string } | null>;
 }
 
 export interface IssuesOptions {
@@ -160,6 +162,7 @@ export class IssuesRoutes {
         why = github ? "no-gh" : "no-remote";
       }
     }
+    const split = this.cachedSplit(s, this.md(s));
     return {
       destination: { tracker, ...(why ? { why } : {}) },
       github: { ...remotes, host: remotes.origin?.host ?? "github.com" },
@@ -167,7 +170,7 @@ export class IssuesRoutes {
       linear: linearView(this.host.store.dir),
       issues: s.issues ?? null,
       run: this.runs.get(s.id) ?? null,
-      split: s.issueSplit && s.issueSplit.planHash === textHash(this.md(s)) ? { source: s.issueSplit.source, at: s.issueSplit.at } : null,
+      split: split ? { source: split.source, at: split.at } : null,
     };
   }
 
@@ -181,55 +184,98 @@ export class IssuesRoutes {
     const planHash = textHash(md);
     this.splits.get(s.id)?.abort();
     let failed: string | undefined;
+    // {agent} answered with no slices at all: the fallback stays, said plainly (not a failure).
+    let empty = false;
     let out: { source: SplitSource; slices: Slice[] } | null = null;
     const fb = fallbackSlices(s, md);
-    if (!fallback && fb.source !== "todos") {
+    const grouping = groupsTodos(s, fb);
+    // Imported to-dos can be split too, when asked (PO, review round 4).
+    if (!fallback) {
       const c = new AbortController();
       this.splits.set(s.id, c);
       try {
-        const exported = Object.keys(s.issues?.items ?? {}).map((key) => ({ key, title: s.issueSplit?.slices.find((x) => x.key === key)?.title ?? key }));
-        const r = await this.host.split(s, md, exported, c.signal);
+        const exported = Object.keys(s.issues?.items ?? {}).map((key) => ({ key, title: s.issueTitles?.[key] ?? s.issueSplit?.slices.find((x) => x.key === key)?.title ?? key }));
+        const r = grouping ? await this.host.group(s, md, fb.slices, c.signal) : await this.host.split(s, md, exported, c.signal);
         if (c.signal.aborted) return { stopped: true };
-        if (r?.ok) out = { source: "agent", slices: agentSlices(s, r.slices) };
-        else failed = r ? r.code : "missing";
+        const slices = r?.ok ? (grouping ? r.slices : agentSlices(s, r.slices)) : [];
+        if (slices.length) out = { source: "agent", slices };
+        else if (r?.ok && !r.slices.length) empty = true;
+        // Slices that were all unusable (no titles) are a failed split, not "0 slices".
+        else failed = r && !r.ok ? r.code : r ? "failed" : "missing";
       } finally {
         if (this.splits.get(s.id) === c) this.splits.delete(s.id);
       }
     }
     out ??= fb;
-    s.issueSplit = { planHash, source: out.source, slices: out.slices, at: new Date().toISOString() };
+    // Only {agent}'s split is cached: the fallback is recomputed from the plan every time (it's cheap and exact).
+    s.issueSplit = out.source === "agent" ? { planHash, source: out.source, slices: out.slices, at: new Date().toISOString() } : undefined;
     this.host.changed(s);
-    return { ...this.items(s, tracker), ...(failed ? { failed } : {}) };
+    return { ...this.items(s, tracker), ...(failed ? { failed } : {}), ...(empty ? { empty } : {}) };
   }
 
-  /** The items for a destination: the cached split when the plan hasn't changed since, else the fallback. */
+  /** {agent}'s split that still applies: made from this plan text, or the one the exported issues came from. */
+  private cachedSplit(s: Session, md: string) {
+    const c = s.issueSplit;
+    if (!c || c.source !== "agent") return null;
+    if (c.planHash === textHash(md)) return c;
+    return s.issues && Object.keys(s.issues.items).some((k) => c.slices.some((x) => x.key === k)) ? c : null;
+  }
+
+  /**
+   * The items for a destination: the cached split when the plan hasn't changed since, else the fallback.
+   * Once exported, the split the issues were made from stays (until Split again), so editing the plan
+   * updates those issues instead of reading every sub-issue as removed.
+   */
   private items(s: Session, tracker: Tracker, titles: Record<string, string> = {}) {
     const md = this.md(s);
-    const cached = s.issueSplit && s.issueSplit.planHash === textHash(md) ? s.issueSplit : null;
-    const { source, slices } = cached ?? fallbackSlices(s, md);
-    const named = slices.map((x) => ({ ...x, title: cleanTitle(titles[x.key]) || x.title }));
+    const cached = this.cachedSplit(s, md);
+    const fb = fallbackSlices(s, md);
+    const { source, slices } = cached ?? fb;
+    // `fallback`: what "Use … instead" gives; `stale`: {agent}'s split was made from an older plan text.
+    const fallback = fb.source;
+    const stale = !!cached && cached.planHash !== textHash(md);
+    const title = (key: string) => cleanTitle(titles[key]) || cleanTitle(s.issueTitles?.[key]);
+    const named = slices.map((x) => ({ ...x, title: title(x.key) || x.title }));
     const built = buildItems(s, md, tracker, named);
-    const parentTitle = cleanTitle(titles[PARENT_KEY]);
+    const parentTitle = title(PARENT_KEY);
     if (parentTitle) built.items[0] = { ...built.items[0], title: parentTitle };
-    return { source, ...built };
+    // `grouping`: no decisions, so {agent} would group the to-dos (review r5).
+    // The decision count: with none, the card offers to group the plan's work (review r5, #188).
+    return { source, fallback, stale, decisions: Object.keys(s.decisions).length, ...built };
   }
 
   /** Read-only: the items and what each would do, checked against the tracker (404s and edits, #176, #182). */
   private async preview(s: Session, body: any) {
-    const dest = this.destOf(body);
-    const { items, source, dropped } = this.items(s, dest.tracker, titlesOf(body));
-    const linked = s.issues && s.issues.tracker === dest.tracker && s.issues.target === dest.target ? s.issues : undefined;
+    // With no repository or team picked yet the sheet still shows the items; nothing is checked remotely.
+    let dest: ReturnType<IssuesRoutes["destOf"]> | undefined;
+    try {
+      dest = this.destOf(body);
+    } catch (err) {
+      if (!(err instanceof ExportError)) throw err;
+    }
+    const tracker: Tracker = dest?.tracker ?? (body?.tracker === "linear" ? "linear" : "github");
+    const { items, source, fallback, stale, decisions, dropped } = this.items(s, tracker, titlesOf(body));
+    const linked = dest && s.issues && s.issues.tracker === dest.tracker && s.issues.target === dest.target ? s.issues : undefined;
     const remote: Record<string, string | null> = {};
-    if (linked) {
-      const tracker = this.tracker(dest);
+    // Titles of exported issues no longer in the plan, for the "Removed from the plan" rows (#178).
+    const removed: Record<string, string> = {};
+    if (dest && linked) {
       const links = { ...linked.items, ...(linked.parent ? { [PARENT_KEY]: linked.parent } : {}) };
-      for (const [key, l] of Object.entries(links)) {
-        if (!items.some((it) => it.key === key)) continue;
-        const x = await tracker.get(l);
-        remote[key] = x ? contentHash(x.title, x.body) : null;
+      try {
+        const t = this.tracker(dest);
+        for (const [key, l] of Object.entries(links)) {
+          const x = await t.get(l);
+          if (items.some((it) => it.key === key)) remote[key] = x ? contentHash(x.title, x.body) : null;
+          else if (x) removed[key] = x.title;
+        }
+      } catch (err) {
+        // gh missing or signed out, a bad key: the sheet's fix-it says so; the items still show, unchecked.
+        if (!(err instanceof TrackerError)) throw err;
+        for (const k of Object.keys(remote)) delete remote[k];
+        for (const k of Object.keys(removed)) delete removed[k];
       }
     }
-    return { source, dropped, items, changes: planChanges(items, linked, remote) };
+    return { source, fallback, stale, decisions, dropped, items, changes: planChanges(items, linked, remote), removed };
   }
 
   private destOf(body: any) {
@@ -265,6 +311,7 @@ export class IssuesRoutes {
     if (chosen.some((it) => it.key !== PARENT_KEY) && !chosen.some((it) => it.key === PARENT_KEY)) chosen = [items[0], ...chosen];
     if (!chosen.length) throw new ExportError("empty", "Select at least one issue.");
     checkItems(s, chosen);
+    this.keepTitles(s, dest.tracker, titlesOf(body));
     // gh is checked before anything starts, so a missing or signed-out gh is a fix-it, not a failed run.
     let tracker: IssueTracker;
     if (dest.tracker === "github") {
@@ -310,6 +357,21 @@ export class IssuesRoutes {
       }
     })();
     return { run };
+  }
+
+  /** Titles edited in the sheet stay with the items they were sent as, so a later check doesn't read them as plan changes. */
+  private keepTitles(s: Session, tracker: Tracker, titles: Record<string, string>) {
+    // Only real edits: a title equal to the plan's own is dropped, so rewording the plan still renames it.
+    const md = this.md(s);
+    const plain = new Map(buildItems(s, md, tracker, (this.cachedSplit(s, md) ?? fallbackSlices(s, md)).slices).items.map((it) => [it.key, it.title]));
+    const next = { ...(s.issueTitles ?? {}) };
+    for (const [k, v] of Object.entries(titles)) {
+      const t = cleanTitle(v);
+      if (!t) continue;
+      if (t === plain.get(k)) delete next[k];
+      else next[k] = t;
+    }
+    s.issueTitles = Object.keys(next).length ? next : undefined;
   }
 
   /** #177, #179: the destination this project used, the last one anywhere, and the labels per target. */

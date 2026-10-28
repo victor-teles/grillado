@@ -246,6 +246,58 @@ export interface SessionView {
   tree: TreeState;
   acceptStreak: number;
   nudge: boolean;
+  /** "Send to issues" (v1.3 item 2): the plan's links, and the run going now or last finished. */
+  issues?: PlanIssues | null;
+  issuesRun?: ExportRun;
+}
+
+// Mirrors src/core/issues.ts (importing it would pull session.ts and node types into the web build).
+export type Tracker = "github" | "linear";
+export type SplitSource = "agent" | "todos" | "stories" | "none";
+export interface IssueItem {
+  key: string;
+  title: string;
+  body: string;
+  covers: string[];
+  sections: string[];
+  cut?: boolean;
+}
+export interface IssueLink {
+  id: string;
+  number?: number;
+  identifier?: string;
+  url: string;
+  contentHash: string;
+  unattached?: boolean;
+}
+export interface PlanIssues {
+  tracker: Tracker;
+  target: string;
+  host?: string;
+  targetName?: string;
+  projectId?: string;
+  labels: string[];
+  parent?: IssueLink;
+  items: Record<string, IssueLink>;
+  failed?: Record<string, string>;
+  exportedAt: string;
+}
+export interface Planned {
+  key: string;
+  change: "new" | "unchanged" | "update" | "edited" | "missing" | "removed";
+  link?: IssueLink;
+  failed?: string;
+}
+/** Mirrors src/cli/issues/service.ts ExportRun. */
+export type RowStatus = "waiting" | "creating" | "updating" | "created" | "updated" | "unchanged" | "skipped" | "edited" | "failed";
+export interface ExportRun {
+  state: "running" | "done";
+  tracker: Tracker;
+  target: string;
+  name: string;
+  rows: { key: string; status: RowStatus; url?: string; number?: number; identifier?: string; message?: string }[];
+  startedAt: string;
+  ms?: number;
 }
 
 export type { AddPlanRun, CommentThread, DiagramRun, Suggestion };

@@ -140,7 +140,7 @@ function fitMeta(root: HTMLElement | null) {
   const bn = br?.querySelector<HTMLElement>(".bn");
   if (br && bn) {
     br.hidden = false;
-    if (bn.scrollWidth > bn.clientWidth + 0.5 && bn.clientWidth < BRANCH_MIN) br.hidden = true;
+    if (bn.scrollWidth > bn.clientWidth + 0.5 && bn.getBoundingClientRect().width < BRANCH_MIN) br.hidden = true;
   }
   titleIfCut(root.querySelector<HTMLElement>(".fh .proj b"));
   if (br && !br.hidden) titleIfCut(bn);

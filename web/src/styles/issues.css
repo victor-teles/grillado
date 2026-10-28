@@ -1,0 +1,329 @@
+/* v1.3 item 2 · Send to issues: the sheet, the ⋯ menu entry, the plan's Issues strip and decision chips.
+   Ported from the design source (grillado-design v1.3/item2-issues/src/issues.css); generic names are scoped to .ish. */
+:root{--ish-w:560px}
+.ish .dt,.istrip .dt{color:var(--subtle-foreground);margin:0 6px}
+.ish .lnk{color:var(--foreground);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px;background:none;border:0;padding:0;font:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:3px}
+.ish .lnk svg{color:var(--muted-foreground)}
+
+/* ---- menu entry ---- */
+.imi{align-items:flex-start!important}
+.imi>svg{margin-top:2px;color:var(--muted-foreground)}
+.imi-m{display:grid;gap:2px}
+.imi-h{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.imi.dis>svg,.imi.dis .imi-m>span:first-child{opacity:.5}
+.imi[data-hl]:not(.dis){background:var(--accent);color:var(--accent-foreground)}
+.imi.dis[data-hl]{background:var(--accent)}
+
+/* ---- sheet ---- */
+.ischrim{z-index:45}
+.ish{position:fixed;z-index:46;top:0;right:0;bottom:0;width:var(--ish-w);max-width:100vw;display:flex;flex-direction:column;background:var(--popover);color:var(--popover-foreground);box-shadow:-1px 0 0 var(--hair),-24px 0 48px -24px oklch(0 0 0/.45);
+  transition:translate var(--d-base) var(--ease-out),opacity var(--d-base) var(--ease-out)}
+@starting-style{.ish{translate:16px 0;opacity:0}}
+html.ish-open .copy-md{background:var(--muted);color:var(--foreground)} /* the sheet's confirm is the one blue (#160) */
+.ish-h{display:flex;align-items:center;gap:8px;height:56px;padding:0 12px 0 24px;flex:none}
+.ish-h b{flex:1;font-size:var(--t-h);font-weight:600;line-height:24px}
+.ish-b{flex:1;min-height:0;overflow:auto;padding:0 24px 24px;display:grid;align-content:start;gap:16px}
+.ish-d{margin:-4px 0 0;color:var(--muted-foreground);line-height:20px;text-wrap:pretty}
+
+/* destination switch: the .ue .sw look, 2 columns */
+.isw{display:grid;grid-template-columns:1fr 1fr;padding:2px;border-radius:10px;background:var(--sel)}
+.isw button{height:32px;border:0;border-radius:8px;background:none;font:500 var(--t-body)/1 var(--sans);color:var(--muted-foreground);transition:background-color var(--d-press) var(--ease-out),color var(--d-press) var(--ease-out)}
+.isw button[aria-selected=true]{background:var(--background);color:var(--foreground);box-shadow:0 0 0 1px var(--hair)}
+.light .isw button[aria-selected=true]{background:var(--card)}
+
+/* fields */
+.ifl{display:grid;gap:6px;position:relative;min-width:0}
+.ilb{font-size:var(--t-meta);line-height:16px;font-weight:500;color:var(--muted-foreground)}
+.ilb .opt{font-weight:400;color:var(--subtle-foreground);margin-left:4px}
+.ihn{margin:0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);text-wrap:pretty}
+.isel{display:flex;align-items:center;gap:8px;height:36px;width:100%;padding:0 10px 0 12px;border:0;border-radius:9px;background:var(--background);box-shadow:inset 0 0 0 1px var(--border-strong);font:400 var(--t-body)/1 var(--sans);color:var(--foreground);text-align:left}
+.isel .v{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.isel.ph{color:var(--subtle-foreground);justify-content:space-between}
+.isel svg{color:var(--muted-foreground);flex:none;margin-left:auto}
+.isel[aria-expanded=true]{box-shadow:inset 0 0 0 1px var(--border-strong),0 0 0 2px var(--ring)}
+.igrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ichips{display:flex;flex-wrap:wrap;gap:6px}
+.ichip{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 10px;border:0;border-radius:8px;background:var(--muted);font:400 var(--t-meta)/1 var(--sans);color:var(--foreground)}
+.ichip button{width:20px;height:20px;display:grid;place-items:center;border:0;border-radius:5px;background:none;color:var(--muted-foreground);padding:0}
+.ichip .nw{margin-left:6px;color:var(--muted-foreground)}
+.ichip.add{padding:0 10px 0 8px;background:transparent;box-shadow:inset 0 0 0 1px var(--hair);color:var(--muted-foreground)}
+.ichip.add[aria-expanded=true]{box-shadow:inset 0 0 0 1px var(--border-strong);color:var(--foreground)}
+/* listbox popover */
+.ilist{position:absolute;z-index:3;left:0;right:0;top:calc(100% + 4px);padding:4px;border-radius:12px;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);display:grid;gap:0;transform-origin:top center;transition:opacity var(--d-quick) var(--ease-out),transform var(--d-quick) var(--ease-out)}
+@starting-style{.ilist{opacity:0;transform:scale(.98)}}
+.ifl:has(.ichips) .ilist{top:58px}
+.isrch{display:flex;align-items:center;gap:8px;height:36px;padding:0 8px;margin-bottom:4px;border-bottom:1px solid var(--hair);color:var(--muted-foreground)}
+.isrch input{flex:1;border:0;background:none;font:400 var(--t-body)/1 var(--sans);color:var(--foreground);outline:0;min-width:0}
+.isrch input::placeholder{color:var(--subtle-foreground)}
+.iopt{display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;border-radius:7px;font-size:var(--t-body)}
+.iopt .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.iopt .m{font-size:var(--t-meta);color:var(--muted-foreground)}
+.iopt svg{margin-left:auto}
+.iopt[aria-selected=true],.iopt[data-hl]{background:var(--accent)}
+.ish .ok{color:var(--success-ink)}
+.ish .bad{color:var(--destructive-ink)}
+
+/* fix-it (Status Banner) */
+.ifix{display:grid;grid-template-columns:20px minmax(0,1fr);gap:12px;padding:14px 16px;border-radius:14px;background:var(--sel)}
+.ifix>svg{color:var(--warning-ink);margin-top:1px}
+.ifix-m{display:grid;gap:8px;min-width:0}
+.ifix-m strong{font-weight:500;line-height:20px}
+.ifix-m>span{color:var(--muted-foreground);line-height:20px;text-wrap:pretty}
+.ifix .ios{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);margin:2px 0 -4px}
+.ifix .well,.iac .well{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;border-radius:10px;background:var(--well);padding:4px 4px 4px 12px}
+.ifix .well pre{margin:0;font:400 13px/20px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.ifix-a{display:flex;gap:8px;margin-top:2px}
+.ifix-o{font-size:var(--t-meta);color:var(--muted-foreground)}
+
+/* Linear key */
+.ikey{display:flex;gap:8px}
+.ikey .in5{flex:1;font-family:var(--mono);font-size:13px}
+.in5.bad{box-shadow:inset 0 0 0 1px var(--destructive-ink)}
+.ierr{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:var(--t-meta);line-height:16px;color:var(--destructive-ink)}
+.ierr .lnk{color:var(--foreground)}
+.iconn{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 4px 0 12px;border-radius:12px;background:var(--sel);font-size:var(--t-body)}
+.iconn>svg{color:var(--success-ink);flex:none}
+.iconn b{font-weight:500}
+.iconn .mono-n{font-family:var(--sans);font-variant-numeric:tabular-nums;color:var(--muted-foreground)}
+.iconn .sp{flex:1}
+.iconn.ask{padding-left:14px}
+.iconn.ask>span:first-child{color:var(--foreground);line-height:20px;padding:8px 0}
+.btn.dz2{color:var(--destructive-ink)}
+
+/* preview */
+.ipv{display:grid;gap:8px;margin-top:4px}
+.ipv-h{display:flex;align-items:baseline;gap:8px}
+.ipv-h h3{font-size:var(--t-body);font-weight:600;line-height:20px;margin:0;flex:1}
+.ipv-n{font-size:var(--t-meta);color:var(--muted-foreground);font-variant-numeric:tabular-nums}
+.ipv-src{margin:-4px 0 0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);display:flex;flex-wrap:wrap;align-items:center}
+.ipv-src .dt{margin:0 6px}
+.ipv-src .lnk{color:var(--foreground)}
+.ipv-src.warn svg{color:var(--warning-ink);margin-right:6px}
+/* The warning icon stays with its first word when the line wraps (a block line, not flex items). */
+.ipv-src.warn{display:block}
+.ipv-src.warn .iw1{white-space:nowrap}
+.ipv-src.warn svg{display:inline-block;vertical-align:-2px}
+.ipl{list-style:none;margin:0;padding:0;display:grid;border-radius:12px;box-shadow:inset 0 0 0 1px var(--hair)}
+.ir{display:grid;grid-template-columns:20px minmax(0,1fr);gap:12px;padding:12px 14px 12px 12px;border-top:1px solid var(--hair);transition:opacity var(--d-quick) var(--ease-out)}
+.ir:first-child{border-top:0}
+.ir.par{background:color-mix(in oklab,var(--sel) 60%,transparent);border-radius:12px 12px 0 0}
+.ir[data-off] .ir-ti,.ir[data-off] .cov{color:var(--subtle-foreground)}
+.icb{width:18px;height:18px;margin-top:7px;border-radius:5px;display:grid;place-items:center;background:var(--foreground);color:var(--background);position:relative;cursor:pointer;transition:background-color var(--d-press) var(--ease-out)}
+.icb::after{content:"";position:absolute;inset:-13px}
+.icb[aria-checked=false]{background:transparent;box-shadow:inset 0 0 0 1.5px var(--subtle-foreground)}
+.icb[aria-disabled=true]{background:var(--muted-foreground);cursor:default}
+.icb:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.ir-m{display:grid;gap:2px;min-width:0}
+.ir-top{display:flex;align-items:center;gap:8px;min-width:0}
+.ir-ti,.ir-tt{flex:1;min-width:0;min-height:32px;margin:0 0 0 -8px;padding:6px 8px;border:0;border-radius:8px;background:transparent;font:500 var(--t-body)/20px var(--sans);color:var(--foreground);display:block;box-sizing:border-box}
+.ir-ti{field-sizing:content;resize:none;overflow:hidden}
+.ir-ti{transition:box-shadow var(--d-press) var(--ease-out),background-color var(--d-press) var(--ease-out)}
+@media (hover:hover){.ir-ti:hover{background:var(--sel)}}
+.ir-ti:focus{outline:0;background:var(--background);box-shadow:inset 0 0 0 1px var(--border-strong),0 0 0 2px var(--ring)}
+.itag{flex:none;margin-left:-2px;display:inline-flex;align-items:center;gap:4px;font-size:var(--t-meta);line-height:20px;padding:0 6px;border-radius:6px;background:var(--muted);color:var(--muted-foreground)}
+.ir-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;min-height:24px;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.ir-x{display:inline-flex;align-items:center;gap:2px;height:24px;margin-left:-6px;padding:0 6px 0 2px;border:0;border-radius:6px;background:none;font:inherit;color:var(--muted-foreground);cursor:pointer}
+.ir-x svg{transition:transform var(--d-quick) var(--ease-out)}
+.ir-x[aria-expanded=true] svg{transform:rotate(90deg)}
+.cov b{font-weight:500;color:var(--foreground);margin-left:2px}
+.cov b+b{margin-left:6px}
+.ist{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ist[data-k=ok]{color:var(--success-ink);font-weight:500;text-decoration:none}
+.ist[data-k=fail]{color:var(--destructive-ink);font-weight:500}
+.ist[data-k=will]{color:var(--warning-ink);font-weight:500}
+.ist[data-k=new]{color:var(--foreground);font-weight:500}
+.ist[data-k=run]{color:var(--foreground)}
+.ir-why{margin:4px 0 0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);text-wrap:pretty}
+.ir-body{margin-top:8px;border-radius:10px;background:var(--well);max-height:240px;overflow:auto}
+.ir-body pre{margin:0;padding:10px 12px;font:400 12px/18px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--foreground)}
+.ir-body .k1{font-weight:600}
+.ir-body .k2{color:var(--muted-foreground)}
+.ir.gone{grid-template-columns:20px minmax(0,1fr)}
+.ir.gone .icb{visibility:hidden}
+.ir.gone .ir-tt{color:var(--muted-foreground);text-decoration:line-through;text-decoration-color:var(--subtle-foreground)}
+.ir.gone .ist{margin-left:0}
+.ir.sk i{display:block;height:12px;margin:10px 0 6px;width:62%;border-radius:4px;background:var(--muted)}
+.ir.sk i.s{width:30%;height:10px;margin:2px 0 8px}
+.ir.sk .icb{background:var(--muted)}
+
+/* footer: approval card, progress, run summary */
+.ish-f{flex:none;padding:12px 24px 20px;border-top:1px solid var(--hair);background:var(--popover)}
+.iac{display:grid;gap:4px}
+.iac-t{margin:0;font-weight:500;line-height:20px;display:flex;flex-wrap:wrap;align-items:center}
+.iac-t.sum{font-size:var(--t-h);font-weight:600;line-height:24px}
+.iac-t.sum>svg{margin-right:8px}
+.iac-t.sum .dt{margin:0 8px}
+.iac-t.sum .m{font-size:var(--t-body);font-weight:400;color:var(--muted-foreground)}
+.iac[data-k=blocked] .iac-t{font-weight:400;color:var(--muted-foreground)}
+.iac-n{margin:0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);text-wrap:pretty}
+.iac-n .pub{display:inline-flex;gap:6px;align-items:center;color:var(--foreground)}
+.iac-n .pub svg{color:var(--warning-ink)}
+.iac-b{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.iac-b .btn{height:36px;border-radius:10px}
+.iac-b .go{white-space:normal;text-align:center;line-height:18px}
+.iac-b a.btn svg{color:var(--muted-foreground)}
+
+/* ---- plan: Issues strip + decision chips ---- */
+.istrip{display:flex;flex-wrap:wrap;align-items:center;column-gap:15px;row-gap:4px;margin:6px 0 0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.istrip .ilab{font-weight:500;color:var(--muted-foreground);margin-right:-7px}
+.istrip .sg{position:relative;white-space:nowrap}
+.istrip .sg .dt{margin:0 7px 0 -8px}
+.ilnk{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px 0 6px;border-radius:7px;background:var(--muted);color:var(--foreground);font-weight:500;text-decoration:none}
+.ilnk svg{color:var(--success-ink)}
+.ilnk.gone{background:transparent;box-shadow:inset 0 0 0 1px var(--hair);color:var(--muted-foreground);text-decoration:line-through}
+.ilnk.gone svg{color:var(--muted-foreground)}
+.lnk2{background:none;border:0;padding:0;font:inherit;color:var(--foreground);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px;cursor:pointer}
+.istrip .bad{color:var(--destructive-ink);font-weight:500}
+.ilk{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px 0 5px;border:0;border-radius:6px;background:color-mix(in oklab,var(--foreground) 7%,transparent);font:500 var(--t-meta)/1 var(--sans);color:var(--muted-foreground);text-decoration:none;font-variant-numeric:tabular-nums;position:relative;align-self:center}
+.ilk svg{color:var(--success-ink)}
+.ilk.gone{color:var(--destructive-ink);background:transparent;box-shadow:inset 0 0 0 1px var(--border-strong)}
+.ilk.gone svg{color:var(--destructive-ink)}
+.ilk.gone .dt{margin:0 2px;color:var(--subtle-foreground)}
+.dz-av.op{color:var(--gr-ember-ink)}
+
+
+/* ---- motion rules (handoff §7) ---- */
+html[data-kbd] .ish,html[data-kbd] .ilist,html[data-kbd] .ir-x svg,html[data-kbd] .ir,html[data-kbd] .isw button{transition:none}
+@media (prefers-reduced-motion:reduce){
+  .ish{transition:opacity var(--d-quick) var(--ease-out)}
+  @starting-style{.ish{translate:none;opacity:0}}
+  .ilist{transition:opacity var(--d-press) var(--ease-out)}
+  @starting-style{.ilist{transform:none;opacity:0}}
+  .ir-x svg{transition:none}
+}
+
+/* ---- phones ---- */
+@media (max-width:640px){
+  .ish{top:12px;left:0;width:auto;border-radius:16px 16px 0 0;box-shadow:0 -1px 0 var(--hair);transition:translate var(--d-sheet) var(--ease-out)}
+  @starting-style{.ish{translate:0 100%;opacity:1}}
+  .ish .grab{width:36px;height:4px;border-radius:2px;background:var(--border-strong);margin:8px auto 0;flex:none}
+  .ish-h{height:52px;padding:0 4px 0 16px}
+  .ish-h .icon-btn{width:44px;height:44px}
+  .ish-b{padding:0 16px 20px;gap:14px}
+  .isw button{height:40px}
+  .isw{padding:2px}
+  .isel,.in5{height:44px;font-size:16px}
+  .ikey .in5{font-size:16px}
+  .ikey .btn{height:44px}
+  .igrid{grid-template-columns:1fr}
+  .ichip{height:32px;position:relative}
+  .ichip button{width:28px;height:28px}
+  .ichip.add::after{content:"";position:absolute;inset:-6px 0}
+  .iopt{height:44px}
+  .isrch{height:44px}
+  .isrch input{font-size:16px}
+  .ir{padding:10px 12px 10px 10px;gap:10px}
+  .ir-ti,.ir-tt{min-height:44px;padding:12px 8px;font-size:16px;line-height:20px}
+  .icb{margin-top:11px}
+  .ir-x{height:32px;position:relative}
+  .ir-x::after{content:"";position:absolute;inset:0 -4px -12px}
+  .ist{margin-left:0}
+  .ir-meta{gap:4px 14px}
+  .ish .cbtn{height:36px;position:relative}
+  .ish .cbtn::after{content:"";position:absolute;inset:-4px 0}
+  .ifix .well{padding:4px 4px 4px 12px}
+  .ish-f{padding:12px 16px calc(16px + env(safe-area-inset-bottom))}
+  .iac-b .btn{height:44px;border-radius:12px}
+  .iac-b .go,.iac-b .btn.primary{flex:1}
+  .iac-b .btn.soft{flex:1}
+  .iac-t.sum{font-size:var(--t-body);line-height:20px}
+  .iac-t.sum .m{flex-basis:100%;margin-top:2px;font-size:var(--t-meta)}
+  .iac-t.sum .m{margin-left:24px}
+  .iac-t.sum .dt:last-of-type{display:none}
+  .iconn{min-height:48px}
+  .iconn .btn{height:44px}
+  .ifix-a .btn{height:44px}
+  .istrip{row-gap:8px}
+  .ilnk{height:32px;padding:0 10px 0 8px;position:relative}
+  .ilnk::after{content:"";position:absolute;inset:-6px -4px}
+  .lnk2{min-height:32px;display:inline-flex;align-items:center;position:relative}
+  .lnk2::after{content:"";position:absolute;inset:-6px -4px}
+  .ilk{height:28px;padding:0 8px 0 6px}
+  .ilk::after{content:"";position:absolute;inset:-8px -2px}
+}
+@media (max-width:360px){
+  .ish-b{padding:0 12px 16px}
+  .ish-f{padding:10px 12px calc(14px + env(safe-area-inset-bottom))}
+  .ir{grid-template-columns:18px minmax(0,1fr);gap:8px;padding:10px 10px 10px 10px}
+  .iac-b .btn.quiet{padding:0 10px}
+}
+/* the doc styles links; the chips are not prose links */
+.doc a.ilk,.doc a.ilnk{text-decoration:none}
+.doc a.ilk{color:var(--muted-foreground)}
+.doc a.ilnk{color:var(--foreground)}
+.doc .lnk2{color:var(--foreground)}
+.ir.gone .ist{white-space:normal}
+/* a "·" that lands at a line start is clipped (#83); 6px vertical padding keeps the phone hit areas inside */
+.istrip{overflow:hidden;padding:6px 0;margin:0 0 -6px}
+.isrch input:focus{outline:0}
+/* PO answers (#174+) */
+.iac-n .pub svg{color:var(--muted-foreground)}
+.ir-ow{font-size:var(--t-meta);line-height:16px;color:var(--foreground)}
+@media (max-width:640px){.ir-ow{min-height:32px;position:relative}.ir-ow::after{content:"";position:absolute;inset:-6px -4px}}
+/* app additions */
+.ish-b>*{min-width:0}
+.ish .icon-btn:focus-visible,.ish .lnk:focus-visible,.ir-x:focus-visible,.istrip .lnk2:focus-visible,.ilk:focus-visible,.ilnk:focus-visible,.ir-ow:focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:6px}
+.isw button:focus-visible,.isel:focus-visible,.ichip:focus-visible,.ichip button:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.ir-body{interpolate-size:allow-keywords;transition:height var(--d-base) var(--ease-out),opacity var(--d-base) var(--ease-out)}
+@starting-style{.ir-body{height:0;opacity:0}}
+html[data-kbd] .ir-body{transition:none}
+@media (prefers-reduced-motion:reduce){.ir-body{transition:opacity var(--d-quick) var(--ease-out)}@starting-style{.ir-body{height:auto}}}
+.ilist[hidden]{display:none}
+.ilist .iopt{cursor:default}
+.ir-ow{border:0;background:none;padding:0;font:inherit;font-size:var(--t-meta);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px;cursor:pointer;color:var(--foreground)}
+.ipv-src .lnk{font-size:var(--t-meta)}
+.ish .sr-only{position:absolute}
+/* Split rows arrive (§3): a short fade, staggered; none under data-kbd (.ir above) or reduced motion. */
+@starting-style{.ipl>.ir{opacity:0}}
+.ipl>.ir:nth-child(2){transition-delay:30ms}.ipl>.ir:nth-child(3){transition-delay:60ms}.ipl>.ir:nth-child(4){transition-delay:90ms}.ipl>.ir:nth-child(n+5){transition-delay:120ms}
+html[data-kbd] .ipl>.ir{transition-delay:0s}
+.ilks{display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center}
+.ilk.more{background:transparent}
+
+/* ---- review round 2 ---- */
+/* Keyboard mode: nothing in the sheet, the strip, the chips or Copy Markdown moves (acceptance check 11). */
+html[data-kbd] :is(.ish,.ish *,.ischrim,.istrip,.istrip *,.ilks,.ilks *),html[data-kbd] .copy-md{transition:none}
+@starting-style{html[data-kbd] :is(.ish,.ischrim,.istrip,.ilks){opacity:1;translate:none}}
+/* Closing: a 160ms fade out (the sheet unmounts after). */
+.ish[data-leaving],.ischrim[data-leaving]{opacity:0;pointer-events:none;transition:opacity var(--d-quick) var(--ease-out)}
+/* The strip and the decision chips fade in (220ms) when they appear after an export. */
+.istrip,.ilks{transition:opacity var(--d-base) var(--ease-out)}
+@starting-style{.istrip,.ilks{opacity:0}}
+/* Desktop: the backdrop keeps the sheet's 220ms, not the phone sheet's 300ms. */
+@media (min-width:641px){.ischrim{transition:opacity var(--d-base) var(--ease-out)}}
+@media (min-width:641px) and (prefers-reduced-motion:reduce){.ischrim{transition:opacity var(--d-quick) var(--ease-out)}@starting-style{.ischrim{opacity:0}}}
+@media (prefers-reduced-motion:reduce){.ipl>.ir{transition-delay:0s!important}}
+/* Phones with reduced motion: a 160ms fade instead of the slide (the phone rule above set opacity to 1). */
+@media (max-width:640px) and (prefers-reduced-motion:reduce){
+  .ish{transition:opacity var(--d-quick) var(--ease-out)}
+  @starting-style{.ish{translate:none;opacity:0}}
+}
+/* Phones and touch: 44px hit areas on the sheet's text links, the look unchanged (#172). */
+@media (max-width:640px),(pointer:coarse){
+  .ish .lnk{position:relative}
+  /* Review r2: they grow down and sideways only, so they never cover the field or button above a hint line. */
+  .ish .lnk::after{content:"";position:absolute;top:-4px;bottom:-24px;left:min(-4px,calc(50% - 22px));right:min(-4px,calc(50% - 22px))}
+}
+@media (max-width:640px){
+  /* the intro's link: 4px under the sticky header, not clipped by it */
+  .ish-b{padding-top:4px}
+  /* the checkbox's 44px reaches left, into the row's padding, not into the title */
+  .icb::after{inset:-13px -4px -13px -22px}
+  /* cli.github.com's hit area reaches 24px down: room for it above Check again */
+  .ifix-o{margin-bottom:14px}
+  /* Split again sits right above the list: its hit area stays centred, as before */
+  .ish .ipv-src .lnk::after{top:-14px;bottom:-14px}
+}
+/* 320: 4px more between the checkbox and the title, so the checkbox's 44px fits on screen without covering it */
+@media (max-width:360px){.ir{gap:12px}}
+.ipv-src.stale{margin-top:-6px}
+/* review r6: the no-change line takes focus after an empty reply; its ring clears the text */
+.ipv-src[tabindex]:focus-visible{outline-offset:3px;border-radius:4px}
+.ish:focus{outline:none}
+
+/* BIG-3 B: the split is offered, not run (frame d-q-split-ask) */
+.iask{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border-radius:12px;background:var(--sel);font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.iask-h{display:block;margin-bottom:2px;font-weight:500;color:var(--foreground)}
+/* review r4 nice 1: the soft button on --sel needs an edge (light 1.02:1 without); hover still goes to --muted */
+.iask .btn.soft{background:var(--card);box-shadow:inset 0 0 0 1px var(--subtle-foreground)}
+@media (max-width:640px){.iask{grid-template-columns:1fr}.iask .btn{height:44px}}

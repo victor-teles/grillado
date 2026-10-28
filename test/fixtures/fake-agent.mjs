@@ -6,7 +6,7 @@
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
 // FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
-// FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS.
+// FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS, FAKE_SPLIT_LOG (a file that gets one line per split run), FAKE_GROUP (empty | missing | dup | invent).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -109,7 +109,8 @@ const isEdit = /"type":"edits"/.test(system);
 const isDiagram = /"type":"diagram"/.test(system);
 const isAddPlan = /"type":"addplan"/.test(system);
 const isImport = /"type":"decisions"/.test(system);
-const isSplit = /"type":"slices"/.test(system);
+const isGroup = /"type":"groups"/.test(system);
+const isSplit = /"type":"slices"/.test(system) || isGroup;
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -313,13 +314,34 @@ function splitReply() {
   return { type: "slices", slices };
 }
 
+// Review r5: a decision-less plan's to-dos, grouped two by two. FAKE_GROUP=empty (no slices), missing (drops
+// the last to-do), dup (one to-do in two slices), invent (an id that isn't there); FAKE_SPLIT=fail fails it too.
+function groupReply() {
+  if ((process.env.FAKE_SPLIT ?? "") === "fail") fail("rate");
+  const todos = JSON.parse(/<todos>([\s\S]*?)<\/todos>/.exec(prompt)?.[1] ?? "[]");
+  const m = process.env.FAKE_GROUP ?? "";
+  if (m === "empty") return { type: "groups", slices: [] };
+  const ids = todos.map((t) => t.id);
+  if (m === "missing") ids.pop();
+  const slices = [];
+  for (let i = 0; i < ids.length; i += 2) {
+    const two = ids.slice(i, i + 2);
+    const words = two.map((id) => todos.find((t) => t.id === id).text.split(/\s+/).slice(0, 3).join(" "));
+    slices.push({ key: `group-${i / 2 + 1}`, title: `Ship ${words.join(" and ")}`.slice(0, 120), body: "Done when each to-do in it works end to end.", todos: two });
+  }
+  if (m === "dup" && slices.length > 1) slices[1].todos.push(slices[0].todos[0]);
+  if (m === "invent" && slices.length) slices[0].todos.push("t99");
+  return { type: "groups", slices };
+}
+
+if (isSplit && process.env.FAKE_SPLIT_LOG) appendFileSync(process.env.FAKE_SPLIT_LOG, `${name}\n`);
 if (isSplit && process.env.FAKE_SPLIT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_SPLIT_DELAY_MS)));
 if (isImport && process.env.FAKE_IMPORT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_IMPORT_DELAY_MS)));
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
 if (isDiagram && process.env.FAKE_DIAGRAM_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DIAGRAM_DELAY_MS)));
 if (isAddPlan && process.env.FAKE_ADDPLAN_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ADDPLAN_DELAY_MS)));
-const reply = isSplit ? splitReply() : isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
+const reply = isGroup ? groupReply() : isSplit ? splitReply() : isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude" && flag("--output-format") === "stream-json") {

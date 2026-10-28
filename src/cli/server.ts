@@ -3,7 +3,7 @@ import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, stat
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { decisionsFromAnswers, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import { decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
@@ -133,14 +133,20 @@ export class GrilladoServer {
         push: (s) => this.broadcast({ type: "session", session: this.view(s) }),
         projectDir: (s) => s.project ?? this.opts.launchDir,
         split: async (s, md, exported, signal) => {
-          const ready = (id: string) => this.providers.some((p) => p.id === id && p.detection.status === "ready");
-          const id = ready(s.provider) ? s.provider : this.selected && ready(this.selected) ? this.selected : null;
-          const adapter = id ? this.opts.adapters.find((a) => a.id === id) : undefined;
+          const adapter = this.splitAdapter(s);
           if (!adapter) return null;
           const c = new AbortController();
           signal.addEventListener("abort", () => c.abort(), { once: true });
           const r = await splitPlan(s, md, exported, adapter, { ...this.runOptions(s, c), onProgress: undefined });
           return r.ok ? { ok: true, slices: r.value.slices } : { ok: false, code: r.code };
+        },
+        group: async (s, md, todos, signal) => {
+          const adapter = this.splitAdapter(s);
+          if (!adapter) return null;
+          const c = new AbortController();
+          signal.addEventListener("abort", () => c.abort(), { once: true });
+          const r = await groupTodos(s, md, todos, adapter, { ...this.runOptions(s, c), onProgress: undefined });
+          return r.ok ? { ok: true, slices: r.value } : { ok: false, code: r.code };
         },
       },
       opts.issues,
@@ -180,6 +186,13 @@ export class GrilladoServer {
     else if (ready.length === 1) this.selected = ready[0];
     else this.selected = null;
     return this.providers;
+  }
+
+  /** The session's agent when it's ready, else the selected one (the split and the to-do grouping). */
+  private splitAdapter(s: Session) {
+    const ready = (id: string) => this.providers.some((p) => p.id === id && p.detection.status === "ready");
+    const id = ready(s.provider) ? s.provider : this.selected && ready(this.selected) ? this.selected : null;
+    return id ? this.opts.adapters.find((a) => a.id === id) : undefined;
   }
 
   async listen(): Promise<number> {
@@ -557,6 +570,7 @@ export class GrilladoServer {
       issuesRun: this.issues?.runView(s.id),
       // Grillado's own cache, not the browser's business.
       issueSplit: undefined,
+      issueTitles: undefined,
     };
   }
 

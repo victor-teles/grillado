@@ -8,7 +8,7 @@
 //   .dz-warn muted text, .dz-err destructive text, .dz-act buttons on the right
 // Item 2: .dz.lk (lit from its plan text), [data-fl] (jump flash), .dz-who ("Picked by {agent}" at rest),
 //   .dz-orph (no passage cites it), .fb.wait (re-ask line under the block), .fb.ext (#26 outside edit).
-import { useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import type { DecisionFields } from "../../../../src/core/decision-block.ts";
 import { COPY, fmt } from "../copy";
 import { OTHER_OPTION, type Question } from "../types";
@@ -52,7 +52,10 @@ export function DecisionCard({
   onReview,
   startExpanded,
   onClose,
+  chips,
 }: {
+  /** v1.3 item 2: the issues that cover this decision, after the answer. */
+  chips?: ReactNode;
   fields: DecisionFields;
   state: CardState;
   question?: Question;
@@ -252,6 +255,7 @@ export function DecisionCard({
           {fields.answer ? (
             <div className="dz-a">
               {state === "stale" ? <s className="dz-av">{fields.answer}</s> : <span className="dz-av">{fields.answer}</span>}
+              {chips}
               {tag ? (
                 <span className={tag.kind === "yours" ? "dz-badge yc" : "dz-badge dz-who"} data-kind={tag.kind}>
                   {tag.text}

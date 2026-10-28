@@ -6,7 +6,7 @@ import { findBanned } from "../../core/filter.ts";
 import { type IssueItem, type IssueLink, PARENT_KEY, type PlanIssues, type Tracker, contentHash } from "../../core/issues.ts";
 import { type Session, userText } from "../../core/session.ts";
 import { type Store, withLock, writeAtomic } from "../store.ts";
-import { type IssueTracker, type RemoteIssue, TrackerError } from "./tracker.ts";
+import { type IssueTracker, type RemoteIssue, TrackerError, saidAfter } from "./tracker.ts";
 
 export type RowStatus = "waiting" | "creating" | "updating" | "created" | "updated" | "unchanged" | "skipped" | "edited" | "failed";
 
@@ -211,7 +211,7 @@ export async function runExport(s: Session, req: ExportRequest, hooks: { save: (
       const made = await tracker.create(sent, parent);
       setLink(it.key, { ...linkOf(made.issue, sent), ...(parent && !made.attached ? { unattached: true } : {}) });
       if (parent && !made.attached) {
-        fail(it.key, new Error(`Created, but couldn’t make it a sub-issue: ${made.attachError ?? "no reason given"}`));
+        fail(it.key, new Error(saidAfter("Created, but couldn’t make it a sub-issue", made.attachError)));
         return false;
       }
       row(it.key, { status: "created", ...shown(link(it.key)!) });

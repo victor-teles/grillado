@@ -4,11 +4,12 @@ import { extractCandidate } from "./extract.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { StreamGuard } from "./stream-guard.ts";
-import { addPlanSystemPrompt, importSystemPrompt, splitSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { addPlanSystemPrompt, importSystemPrompt, groupSystemPrompt, splitSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
 import { checkAddPlan, citeId } from "./addplan.ts";
+import { type Slice, fallbackSlices, groupedSlices, todoIds } from "./issues.ts";
 import {
   type AddPlanReply,
   AddPlanReplySchema,
@@ -25,6 +26,9 @@ import {
   importJsonSchema,
   type PlanReply,
   PlanReplySchema,
+  type GroupReply,
+  GroupReplySchema,
+  groupJsonSchema,
   type SplitReply,
   SplitReplySchema,
   splitJsonSchema,
@@ -391,8 +395,47 @@ export function buildSplitPrompt(s: Session, md: string, exported: { key: string
     "Its decisions, and slices already exported (JSON):",
     `<state>${JSON.stringify({ decisions: Object.values(s.decisions).map((d) => ({ key: d.key, question: d.title, answer: d.answer })), exported })}</state>`,
     "",
-    "Split the plan into thin end-to-end slices.",
+    splitAsk(s, md),
   ].join("\n");
+}
+
+/** The split's last line (review r6). To-do plans with no decisions use buildGroupPrompt, so only stories and parent-only plans get here without decisions. */
+function splitAsk(s: Session, md: string): string {
+  if (Object.keys(s.decisions).length) return "Split the plan into thin end-to-end slices.";
+  if (fallbackSlices(s, md).source === "stories")
+    return "This plan has no decisions. Group its user stories into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty. If they’re already that small, reply with no slices.";
+  return "This plan has no decisions. Split it into a few thin end-to-end slices, each one something a person can ship on its own, and leave covers empty.";
+}
+
+/** Review r5: the prompt for grouping a decision-less plan's to-dos, by id. */
+export function buildGroupPrompt(md: string, todos: Slice[]): string {
+  return [
+    "The plan (Markdown):",
+    `<plan>${md}</plan>`,
+    "",
+    "Its to-dos (JSON):",
+    `<todos>${JSON.stringify(todoIds(todos))}</todos>`,
+    "",
+    "This plan has no decisions. Group its to-dos into a few thin end-to-end slices, each one something a person can ship on its own, each to-do in exactly one slice. If they’re already that small, reply with no slices.",
+  ].join("\n");
+}
+
+/** Review r5: {agent} groups the to-dos; a reply that drops, repeats or invents one is rejected (one repair, then a failure). */
+export async function groupTodos(s: Session, md: string, todos: Slice[], adapter: ProviderAdapter, opts: RunOptions): Promise<Validated<Slice[]>> {
+  const r = await runValidated<GroupReply>(
+    adapter,
+    { kind: "split", systemPrompt: groupSystemPrompt(), userPrompt: buildGroupPrompt(md, todos), jsonSchema: groupJsonSchema() },
+    GroupReplySchema,
+    (g) => {
+      const v = groupedSlices(todos, g.slices);
+      return v.ok ? null : v.reason;
+    },
+    opts,
+    [userText(s), md].join("\n"),
+  );
+  if (!r.ok) return r;
+  const v = groupedSlices(todos, r.value.slices);
+  return v.ok ? { ...r, value: v.slices } : { ok: false, code: "malformed", message: v.reason };
 }
 
 /** v1.3 item 2: {agent} proposes the slices. A slice needs a title; at most 100. */

@@ -183,6 +183,93 @@ describe("export", () => {
   });
 });
 
+describe("what the sheet reads", () => {
+  test("with no destination yet, preview still lists the items and reads nothing remote", async () => {
+    const { store, gh, call } = await start();
+    const s = storySession(store);
+    const before = gh.calls().length;
+    const r = await call("POST", `/api/sessions/${s.id}/issues/preview`, { tracker: "github" });
+    expect(r.status).toBe(200);
+    expect(r.json.items.length).toBe(4);
+    expect(r.json.changes.every((c: any) => c.change === "new")).toBe(true);
+    expect(gh.calls().length).toBe(before);
+  });
+
+  test("titles edited in the sheet stay with their items, so the next check reads unchanged", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    const keys = json.items.map((it: any) => it.key);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys, titles: { plan: "Recipe box, v1" } });
+    await done(s.id);
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.items[0].title).toBe("Recipe box, v1");
+    expect(pre.json.changes.every((c: any) => c.change === "unchanged")).toBe(true);
+  });
+
+  test("review r2: after a title edit, story edits and new stories still show (the fallback isn't frozen)", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    const keys = json.items.map((it: any) => it.key);
+    // The sheet sends every row's title; only the edited one is kept.
+    const sent = Object.fromEntries(json.items.map((it: any) => [it.key, it.title]));
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys, titles: { ...sent, [keys[1]]: "Photo import" } });
+    await done(s.id);
+    store.writePlan(s.id, STORY_MD.replace("I find a recipe by ingredient.", "I find a recipe by ingredient or by tag.").replace("- As a cook, I see my recipes on a second phone [R2:sync].\n", "- As a cook, I see my recipes on a second phone [R2:sync].\n- As a cook, I share a recipe with a friend.\n"));
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.source).toBe("stories");
+    const by = (k: string) => pre.json.changes.find((c: any) => c.key === k)?.change;
+    const titles = pre.json.items.map((it: any) => it.title);
+    expect(pre.json.items.find((it: any) => it.key === keys[1])?.title).toBe("Photo import");
+    expect(by(keys[1])).toBe("unchanged");
+    // The reworded story keeps its key (the slug of its start), so its issue is updated; the new one is offered.
+    expect(by(keys[2])).toBe("update");
+    expect(titles).toContain("As a cook, I find a recipe by ingredient or by tag");
+    expect(titles).toContain("As a cook, I share a recipe with a friend");
+    expect(pre.json.changes.filter((c: any) => c.change === "new").length).toBe(1);
+  });
+
+  test("an item taken out of the plan is listed as removed, with its title from the tracker", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    const keys = json.items.map((it: any) => it.key);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys });
+    await done(s.id);
+    const last = json.items[json.items.length - 1];
+    store.writePlan(s.id, STORY_MD.replace("- As a cook, I see my recipes on a second phone [R2:sync].\n", ""));
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.items.length).toBe(3);
+    expect(pre.json.changes.find((c: any) => c.key === last.key)?.change).toBe("removed");
+    expect(pre.json.removed[last.key]).toBe(last.title);
+  });
+
+  test("once exported, a plan edit updates the split's issues instead of reading them as removed", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const split = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    const keys = split.json.items.map((it: any) => it.key);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys });
+    await done(s.id);
+    store.writePlan(s.id, STORY_MD.replace("One app that keeps them on the device.", "One app that keeps them on the device, for the whole family."));
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.source).toBe("agent");
+    expect(pre.json.items.map((it: any) => it.key)).toEqual(keys);
+    expect(pre.json.changes.map((c: any) => c.change)).toEqual(["update", "unchanged"]);
+  });
+  test("gh signed out: the exported items still show, unchecked against GitHub", async () => {
+    const { store, call, done, gh } = await start();
+    const s = storySession(store);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: ["plan"] });
+    await done(s.id);
+    gh.set({ FAKE_GH_AUTH: "out" });
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.status).toBe(200);
+    expect(pre.json.changes[0]).toMatchObject({ key: "plan", change: "unchanged" });
+  });
+});
+
 describe("the agent split", () => {
   test("{agent}'s slices, cached for the plan text; a failure falls back to the stories", async () => {
     const { store, call } = await start();
@@ -192,6 +279,75 @@ describe("the agent split", () => {
     expect(r.json.items.length).toBe(2);
     expect(r.json.items[1].covers).toEqual(["storage", "sync"]);
     expect((await call("GET", `/api/sessions/${s.id}/issues`)).json.split.source).toBe("agent");
+  });
+
+  test("review r4 (PO): an imported plan's to-dos are split by {agent} when asked", async () => {
+    const { store, call } = await start();
+    const s = storySession(store, "# Recipe box\n\n## Tasks\n- [ ] Save a recipe\n- [ ] Sync later\n");
+    s.source = { app: "cursor", kind: "plan", path: "/nowhere/recipe.plan.md", date: s.createdAt } as never;
+    store.save(s);
+    const fb = await call("POST", `/api/sessions/${s.id}/issues/split`, { use: "fallback" });
+    expect(fb.json.source).toBe("todos");
+    // Review r5: with decisions it's still the split (slices that cover decisions), not the to-do grouping.
+    expect(fb.json.decisions).toBeGreaterThan(0);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("agent");
+    expect(r.json.failed).toBeUndefined();
+    expect(r.json.items.slice(1).every((it: any) => it.body.includes("**Covers:**"))).toBe(true);
+  });
+
+  test("review r5: an empty agent reply keeps the stories and says so; it isn't a failure", async () => {
+    const { store, call } = await start();
+    const s = storySession(store);
+    s.decisions = {};
+    store.save(s);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("stories");
+    expect(r.json.empty).toBe(true);
+    expect(r.json.failed).toBeUndefined();
+  });
+
+  const TODO_MD = "# Budget\n\n## Tasks\n\n- [ ] Import bank CSVs\n- [ ] Tag each expense\n- [ ] Show the totals\n";
+  const todoPlan = (store: Store) => {
+    const s = storySession(store, TODO_MD);
+    s.source = { app: "cursor", kind: "plan", path: "/nowhere/budget.plan.md", date: s.createdAt } as never;
+    s.decisions = {};
+    store.save(s);
+    return s;
+  };
+
+  test("review r5: no decisions, so the to-dos are grouped (its own prompt), each in exactly one slice", async () => {
+    const { store, call } = await start();
+    const s = todoPlan(store);
+    const pv = await call("POST", `/api/sessions/${s.id}/issues/preview`, {});
+    expect(pv.json.source).toBe("todos");
+    expect(pv.json.decisions).toBe(0);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("agent");
+    expect(r.json.failed).toBeUndefined();
+    const kids = r.json.items.slice(1);
+    expect(kids.map((it: any) => it.title)).toEqual(["Ship Import bank CSVs and Tag each expense", "Ship Show the totals"]);
+    expect(kids[0].body).toContain("- [ ] Import bank CSVs\n- [ ] Tag each expense");
+  });
+
+  for (const [mode, what] of [["missing", "a to-do left out"], ["dup", "a to-do in two slices"], ["invent", "an invented to-do"]] as const)
+    test(`review r5: ${what} is an invalid grouping, so a failure that keeps the to-dos`, async () => {
+      const { store, call } = await start({}, { FAKE_GROUP: mode });
+      const s = todoPlan(store);
+      const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+      expect(r.json.source).toBe("todos");
+      expect(r.json.failed).toBe("malformed");
+      expect(r.json.items.length).toBe(4);
+    });
+
+  test("review r5: an empty grouping keeps the to-dos, plainly", async () => {
+    const { store, call } = await start({}, { FAKE_GROUP: "empty" });
+    const s = todoPlan(store);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("todos");
+    expect(r.json.empty).toBe(true);
+    expect(r.json.failed).toBeUndefined();
+    expect(r.json.items.length).toBe(4);
   });
 
   test("FAKE_SPLIT=fail: the user stories, with the reason", async () => {

@@ -66,5 +66,13 @@ export function said(text: string): string {
       .map((l) => l.trim())
       .find((l) => l && !/^\s*$/.test(l)) ?? "";
   const t = line.replace(/^(error|gh|graphql):\s*/i, "");
-  return t.length > 200 ? `${t.slice(0, 197)}…` : t || "No reason given.";
+  return t.length > 200 ? `${t.slice(0, 197)}…` : t || NO_REASON;
+}
+
+const NO_REASON = "No reason given.";
+
+/** "Couldn’t connect: fetch failed" with the tracker's words, or just "Couldn’t connect." when it gave none. */
+export function saidAfter(lead: string, text: string | undefined): string {
+  const t = text === undefined ? "" : said(text);
+  return t && t !== NO_REASON ? `${lead}: ${t}` : `${lead}.`;
 }
