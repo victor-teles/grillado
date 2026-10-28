@@ -1,7 +1,7 @@
 // Linear over its GraphQL API with the user's personal API key (v1.3 item 2). The key goes in the
 // Authorization header as is (personal keys take no "Bearer" prefix) and only to api.linear.app.
 import { type IssueLink, markerSearch, readMarker } from "../../core/issues.ts";
-import { type IssueTracker, type NewIssue, type RemoteIssue, TrackerError, said } from "./tracker.ts";
+import { type IssueTracker, type NewIssue, type RemoteIssue, TrackerError, said, saidAfter } from "./tracker.ts";
 
 export const LINEAR_URL = "https://api.linear.app/graphql";
 export const LINEAR_KEYS_URL = "https://linear.app/settings/account/security";
@@ -34,7 +34,7 @@ export class Linear {
           signal: AbortSignal.timeout(30_000),
         });
       } catch (err) {
-        throw new TrackerError("failed", `Couldn’t connect: ${said(String((err as Error)?.message ?? err))}`);
+        throw new TrackerError("failed", saidAfter("Couldn’t connect", String((err as Error)?.message ?? err)));
       }
       const j: any = await res.json().catch(() => ({}));
       const errs: any[] = j?.errors ?? [];

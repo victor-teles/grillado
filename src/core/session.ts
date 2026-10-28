@@ -102,7 +102,8 @@ export interface Session extends CommentState {
    */
   issues?: PlanIssues;
   /** {agent}'s last split, cached per plan text (v1.3 item 2). */
-  issueSplit?: { planHash: string; source: SplitSource; slices: Slice[]; at: string };
+  /** `titles`: the titles as last sent, by item key (edited in the sheet), until the plan changes or is split again. */
+  issueSplit?: { planHash: string; source: SplitSource; slices: Slice[]; at: string; titles?: Record<string, string> };
   plan?: {
     title: string;
     markdown: string;

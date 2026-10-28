@@ -183,6 +183,70 @@ describe("export", () => {
   });
 });
 
+describe("what the sheet reads", () => {
+  test("with no destination yet, preview still lists the items and reads nothing remote", async () => {
+    const { store, gh, call } = await start();
+    const s = storySession(store);
+    const before = gh.calls().length;
+    const r = await call("POST", `/api/sessions/${s.id}/issues/preview`, { tracker: "github" });
+    expect(r.status).toBe(200);
+    expect(r.json.items.length).toBe(4);
+    expect(r.json.changes.every((c: any) => c.change === "new")).toBe(true);
+    expect(gh.calls().length).toBe(before);
+  });
+
+  test("titles edited in the sheet stay with their items, so the next check reads unchanged", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    const keys = json.items.map((it: any) => it.key);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys, titles: { plan: "Recipe box, v1" } });
+    await done(s.id);
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.items[0].title).toBe("Recipe box, v1");
+    expect(pre.json.changes.every((c: any) => c.change === "unchanged")).toBe(true);
+  });
+
+  test("an item taken out of the plan is listed as removed, with its title from the tracker", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    const keys = json.items.map((it: any) => it.key);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys });
+    await done(s.id);
+    const last = json.items[json.items.length - 1];
+    store.writePlan(s.id, STORY_MD.replace("- As a cook, I see my recipes on a second phone [R2:sync].\n", ""));
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.items.length).toBe(3);
+    expect(pre.json.changes.find((c: any) => c.key === last.key)?.change).toBe("removed");
+    expect(pre.json.removed[last.key]).toBe(last.title);
+  });
+
+  test("once exported, a plan edit updates the split's issues instead of reading them as removed", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const split = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    const keys = split.json.items.map((it: any) => it.key);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys });
+    await done(s.id);
+    store.writePlan(s.id, STORY_MD.replace("One app that keeps them on the device.", "One app that keeps them on the device, for the whole family."));
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.source).toBe("agent");
+    expect(pre.json.items.map((it: any) => it.key)).toEqual(keys);
+    expect(pre.json.changes.map((c: any) => c.change)).toEqual(["update", "unchanged"]);
+  });
+  test("gh signed out: the exported items still show, unchecked against GitHub", async () => {
+    const { store, call, done, gh } = await start();
+    const s = storySession(store);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: ["plan"] });
+    await done(s.id);
+    gh.set({ FAKE_GH_AUTH: "out" });
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.status).toBe(200);
+    expect(pre.json.changes[0]).toMatchObject({ key: "plan", change: "unchanged" });
+  });
+});
+
 describe("the agent split", () => {
   test("{agent}'s slices, cached for the plan text; a failure falls back to the stories", async () => {
     const { store, call } = await start();

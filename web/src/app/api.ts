@@ -1,4 +1,4 @@
-import type { ActivityView, AppState, FoundView, ImportReply, SessionView } from "./types";
+import type { ActivityView, AppState, ExportRun, FoundView, ImportReply, IssueItem, PlanIssues, Planned, SessionView, SplitSource, Tracker } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -52,6 +52,60 @@ export const api = {
   action: (id: string, action: string, body?: unknown) =>
     call<SessionView>("POST", `/api/sessions/${encodeURIComponent(id)}/${action}`, body),
 };
+
+const sid = (id: string) => `/api/sessions/${encodeURIComponent(id)}/issues`;
+const qs = (o: Record<string, string | undefined>) => new URLSearchParams(Object.entries(o).filter((e): e is [string, string] => !!e[1])).toString();
+/** "Send to issues" (v1.3 item 2). Only `export` and `retry` write to a tracker; everything else reads. */
+export const issuesApi = {
+  state: (id: string) => call<IssuesState>("GET", sid(id)),
+  split: (id: string, tracker: Tracker, fallback?: boolean) => call<Preview & { failed?: string; stopped?: boolean }>("POST", `${sid(id)}/split`, { tracker, ...(fallback ? { use: "fallback" } : {}) }),
+  preview: (id: string, body: DestBody) => call<Preview>("POST", `${sid(id)}/preview`, body),
+  export: (id: string, body: DestBody & { selected: string[]; overwrite: string[]; newLabels: string[] }) => call<{ run: ExportRun }>("POST", `${sid(id)}/export`, body),
+  retry: (id: string) => call<{ run: ExportRun }>("POST", `${sid(id)}/retry`),
+  ghStatus: (host: string) => call<GhStatus>("GET", `/api/github/status?${qs({ host })}`),
+  ghRepos: (host: string) => call<{ repos: string[] }>("GET", `/api/github/repos?${qs({ host })}`),
+  ghRepo: (repo: string, host: string) => call<RepoInfo>("GET", `/api/github/repo?${qs({ repo, host })}`),
+  ghLabels: (repo: string, host: string) => call<{ labels: { name: string; color?: string }[] }>("GET", `/api/github/labels?${qs({ repo, host })}`),
+  linearConnect: (key: string) => call<LinearView>("POST", "/api/linear/connect", { key }),
+  linearDisconnect: () => call<LinearView>("POST", "/api/linear/disconnect"),
+  linearTeams: () => call<{ teams: { id: string; name: string; key?: string }[] }>("GET", "/api/linear/teams"),
+  linearProjects: (team: string) => call<{ projects: { id: string; name: string }[] }>("GET", `/api/linear/projects?${qs({ team })}`),
+  linearLabels: (team: string) => call<{ labels: { id: string; name: string; color?: string }[] }>("GET", `/api/linear/labels?${qs({ team })}`),
+};
+export type LinearView = { connected: false } | { connected: true; name: string; last4: string };
+export type GhStatus = { state: "missing" } | { state: "auth"; version: string; host: string; command: string } | { state: "ready"; version: string; host: string; user: string; subIssues: string };
+export interface RepoInfo {
+  repo: string;
+  visibility: string;
+  access: boolean;
+  upstream?: string;
+}
+export interface IssuesState {
+  destination: { tracker: Tracker; why?: "no-remote" | "no-gh" };
+  github: { origin?: { host: string; repo: string }; upstream?: { host: string; repo: string }; host: string };
+  labels: Record<string, string[]>;
+  linear: LinearView;
+  issues: PlanIssues | null;
+  run: ExportRun | null;
+  split: { source: SplitSource; at: string } | null;
+}
+export interface Preview {
+  source: SplitSource;
+  dropped: number;
+  items: IssueItem[];
+  changes: Planned[];
+  removed?: Record<string, string>;
+}
+export interface DestBody {
+  tracker: Tracker;
+  repo?: string;
+  host?: string;
+  team?: string;
+  teamName?: string;
+  project?: string;
+  labels: string[];
+  titles?: Record<string, string>;
+}
 
 export type ServerEvent =
   | { type: "session"; session: SessionView }

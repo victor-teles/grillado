@@ -160,6 +160,7 @@ export class IssuesRoutes {
         why = github ? "no-gh" : "no-remote";
       }
     }
+    const split = this.cachedSplit(s, this.md(s));
     return {
       destination: { tracker, ...(why ? { why } : {}) },
       github: { ...remotes, host: remotes.origin?.host ?? "github.com" },
@@ -167,7 +168,7 @@ export class IssuesRoutes {
       linear: linearView(this.host.store.dir),
       issues: s.issues ?? null,
       run: this.runs.get(s.id) ?? null,
-      split: s.issueSplit && s.issueSplit.planHash === textHash(this.md(s)) ? { source: s.issueSplit.source, at: s.issueSplit.at } : null,
+      split: split ? { source: split.source, at: split.at } : null,
     };
   }
 
@@ -202,34 +203,63 @@ export class IssuesRoutes {
     return { ...this.items(s, tracker), ...(failed ? { failed } : {}) };
   }
 
-  /** The items for a destination: the cached split when the plan hasn't changed since, else the fallback. */
+  /** The split that still applies: made from this plan text, or the one the exported issues came from. */
+  private cachedSplit(s: Session, md: string) {
+    const c = s.issueSplit;
+    if (!c) return null;
+    if (c.planHash === textHash(md)) return c;
+    return s.issues && Object.keys(s.issues.items).some((k) => c.slices.some((x) => x.key === k)) ? c : null;
+  }
+
+  /**
+   * The items for a destination: the cached split when the plan hasn't changed since, else the fallback.
+   * Once exported, the split the issues were made from stays (until Split again), so editing the plan
+   * updates those issues instead of reading every sub-issue as removed.
+   */
   private items(s: Session, tracker: Tracker, titles: Record<string, string> = {}) {
     const md = this.md(s);
-    const cached = s.issueSplit && s.issueSplit.planHash === textHash(md) ? s.issueSplit : null;
+    const cached = this.cachedSplit(s, md);
     const { source, slices } = cached ?? fallbackSlices(s, md);
-    const named = slices.map((x) => ({ ...x, title: cleanTitle(titles[x.key]) || x.title }));
+    const title = (key: string) => cleanTitle(titles[key]) || cleanTitle(cached?.titles?.[key]);
+    const named = slices.map((x) => ({ ...x, title: title(x.key) || x.title }));
     const built = buildItems(s, md, tracker, named);
-    const parentTitle = cleanTitle(titles[PARENT_KEY]);
+    const parentTitle = title(PARENT_KEY);
     if (parentTitle) built.items[0] = { ...built.items[0], title: parentTitle };
     return { source, ...built };
   }
 
   /** Read-only: the items and what each would do, checked against the tracker (404s and edits, #176, #182). */
   private async preview(s: Session, body: any) {
-    const dest = this.destOf(body);
-    const { items, source, dropped } = this.items(s, dest.tracker, titlesOf(body));
-    const linked = s.issues && s.issues.tracker === dest.tracker && s.issues.target === dest.target ? s.issues : undefined;
+    // With no repository or team picked yet the sheet still shows the items; nothing is checked remotely.
+    let dest: ReturnType<IssuesRoutes["destOf"]> | undefined;
+    try {
+      dest = this.destOf(body);
+    } catch (err) {
+      if (!(err instanceof ExportError)) throw err;
+    }
+    const tracker: Tracker = dest?.tracker ?? (body?.tracker === "linear" ? "linear" : "github");
+    const { items, source, dropped } = this.items(s, tracker, titlesOf(body));
+    const linked = dest && s.issues && s.issues.tracker === dest.tracker && s.issues.target === dest.target ? s.issues : undefined;
     const remote: Record<string, string | null> = {};
-    if (linked) {
-      const tracker = this.tracker(dest);
+    // Titles of exported issues no longer in the plan, for the "Removed from the plan" rows (#178).
+    const removed: Record<string, string> = {};
+    if (dest && linked) {
       const links = { ...linked.items, ...(linked.parent ? { [PARENT_KEY]: linked.parent } : {}) };
-      for (const [key, l] of Object.entries(links)) {
-        if (!items.some((it) => it.key === key)) continue;
-        const x = await tracker.get(l);
-        remote[key] = x ? contentHash(x.title, x.body) : null;
+      try {
+        const t = this.tracker(dest);
+        for (const [key, l] of Object.entries(links)) {
+          const x = await t.get(l);
+          if (items.some((it) => it.key === key)) remote[key] = x ? contentHash(x.title, x.body) : null;
+          else if (x) removed[key] = x.title;
+        }
+      } catch (err) {
+        // gh missing or signed out, a bad key: the sheet's fix-it says so; the items still show, unchecked.
+        if (!(err instanceof TrackerError)) throw err;
+        for (const k of Object.keys(remote)) delete remote[k];
+        for (const k of Object.keys(removed)) delete removed[k];
       }
     }
-    return { source, dropped, items, changes: planChanges(items, linked, remote) };
+    return { source, dropped, items, changes: planChanges(items, linked, remote), removed };
   }
 
   private destOf(body: any) {
@@ -265,6 +295,7 @@ export class IssuesRoutes {
     if (chosen.some((it) => it.key !== PARENT_KEY) && !chosen.some((it) => it.key === PARENT_KEY)) chosen = [items[0], ...chosen];
     if (!chosen.length) throw new ExportError("empty", "Select at least one issue.");
     checkItems(s, chosen);
+    this.keepTitles(s, titlesOf(body));
     // gh is checked before anything starts, so a missing or signed-out gh is a fix-it, not a failed run.
     let tracker: IssueTracker;
     if (dest.tracker === "github") {
@@ -310,6 +341,15 @@ export class IssuesRoutes {
       }
     })();
     return { run };
+  }
+
+  /** Titles edited in the sheet stay with the items they were sent as, so a later check doesn't read them as plan changes. */
+  private keepTitles(s: Session, titles: Record<string, string>) {
+    if (!Object.keys(titles).length) return;
+    const md = this.md(s);
+    const planHash = textHash(md);
+    const cur = this.cachedSplit(s, md) ?? { planHash, ...fallbackSlices(s, md), at: new Date().toISOString() };
+    s.issueSplit = { ...cur, titles: { ...(cur.titles ?? {}), ...titles } };
   }
 
   /** #177, #179: the destination this project used, the last one anywhere, and the labels per target. */

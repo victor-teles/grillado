@@ -7,6 +7,7 @@ import path from "node:path";
 import { Gh, GitHubTracker, atLeast, parseRemote, parseVersion } from "../src/cli/issues/gh.ts";
 import { Linear, LinearTracker } from "../src/cli/issues/linear.ts";
 import { linearView, readSecrets, writeSecrets } from "../src/cli/issues/secrets.ts";
+import { said, saidAfter } from "../src/cli/issues/tracker.ts";
 import { type ExportRun, countExport, runExport, takeExportLock } from "../src/cli/issues/service.ts";
 import { Store } from "../src/cli/store.ts";
 import { BODY_LIMIT, MAX_CHILDREN, PARENT_KEY, type PlanIssues, buildItems, contentHash, fallbackSlices, fitBody, marker, parentItem, planChanges, readMarker } from "../src/core/issues.ts";
@@ -299,6 +300,16 @@ describe("gh adapter (fake gh)", () => {
     const other = new GitHubTracker(new Gh({ bin: gh.bin, env: gh.env }), "victor-teles/other", "github.com", "flag");
     await exportAll(s, other, "github", "victor-teles/other");
     expect(s.issues!.target).toBe("victor-teles/other");
+  });
+});
+
+describe("the tracker's words (review r2)", () => {
+  test("its first line, without the gh/error prefix; nothing said reads as no reason, never an empty colon", () => {
+    expect(said("gh: Not Found (HTTP 404)\nmore")).toBe("Not Found (HTTP 404)");
+    expect(said("  \n ")).toBe("No reason given.");
+    expect(saidAfter("Couldn’t connect", "fetch failed")).toBe("Couldn’t connect: fetch failed");
+    expect(saidAfter("Couldn’t connect", "")).toBe("Couldn’t connect.");
+    expect(saidAfter("Created, but couldn’t make it a sub-issue", undefined)).toBe("Created, but couldn’t make it a sub-issue.");
   });
 });
 

@@ -6,7 +6,7 @@
 //   .pbanner[data-tone] .dtab .dgrp .drow .acc .acc-h[aria-expanded] .copy-md
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { useMobile } from "./chrome";
+import { useMedia, useMobile } from "./chrome";
 import { COPY, fmt } from "./copy";
 import { CopyButton, copy } from "./CopyButton";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -24,6 +24,7 @@ import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
 import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "../../../src/core/decision-block.ts";
 import { Provenance } from "./found/Provenance";
 import { AddPlanButton, AddPlanLine, AddPlanLive, addPlanFor } from "./addplan/AddPlan";
+import { useIssues } from "./issues/Issues";
 
 const nameOf = (d: { label?: string; title: string }) => d.label || d.title;
 
@@ -181,6 +182,9 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
   // Opens once the ⋯ menu has returned focus, so its focus trap can't take focus off the tab.
   const ueNext = useRef(false);
   const dg = useDiagrams({ session, draft, agentName, mobile, enabled: !readOnly && tab === "doc", moreRef, setNote });
+  // v1.3 item 2: Send to issues (⋯ item, strip under the title, chips on decisions, the sheet).
+  const phone = useMedia("(max-width: 640px)");
+  const iss = useIssues({ session, agentName, phone, draft: session.status !== "plated" || openCount > 0, idOf: label, moreRef });
   const cm = useComments({ session, draft, mode, tab, mobile, agentName, readOnly, docRef, editRef, onShowDecision: showInPlan, decisionInfo, onDecisionRow: showDecisionRow, agentNameOf, setNote, inserts: dg.inserts, hideReviewBar: dg.hideReviewBar });
   cmRef.current = cm;
 
@@ -214,6 +218,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         onReask={stale && !waiting.includes(key) && session.status === "plated" ? () => act("reask", { key }).then(() => undefined) : undefined}
         addPlan={session.decisions[key] && session.status === "plated" && !own ? addPlanFor(session, key, act) : undefined}
         onReview={reviewSuggestion}
+        chips={iss.chipsFor(key)}
       />
     );
   };
@@ -317,6 +322,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
               align="end"
               className="pmenu"
               onCloseAutoFocus={(e) => {
+                if (iss.onMenuClosed(e)) return;
                 if (!ueNext.current) return;
                 ueNext.current = false;
                 e.preventDefault();
@@ -339,6 +345,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
                 <IPlug s={16} />
                 {UCOPY.menu}
               </DropdownMenuItem>
+              {iss.menuItem}
               <DropdownMenuItem asChild>
                 <a href={`/api/sessions/${session.id}/plan.md`} download>
                   <IDl s={16} />
@@ -410,14 +417,17 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
             editRef={editRef}
             onAgentDiagram={dg.onAgentDiagram}
             afterTitle={
-              session.source ? (
-                <Provenance session={session} head={text.titleMeta} edited={!!plan.editedAt} />
-              ) : (
-                <p className="sub" data-testid="plan-meta">
-                  {text.titleMeta}
-                  {plan.editedAt ? " · edited" : ""}
-                </p>
-              )
+              <>
+                {session.source ? (
+                  <Provenance session={session} head={text.titleMeta} edited={!!plan.editedAt} />
+                ) : (
+                  <p className="sub" data-testid="plan-meta">
+                    {text.titleMeta}
+                    {plan.editedAt ? " · edited" : ""}
+                  </p>
+                )}
+                {iss.strip}
+              </>
             }
             openBadge={openCount ? <span className="ct"> {openCount}</span> : null}
             // Cites live in the right margin now (§2.3); on mobile there are none (§5).
@@ -434,6 +444,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
           <AddPlanLive session={session} />
           {dg.bar}
           {dg.popover}
+          {iss.sheet}
           {ue ? (
             <UseInEditor
               launch={mcp}
