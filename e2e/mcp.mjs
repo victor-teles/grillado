@@ -101,6 +101,7 @@ try {
   const { tools } = await c.listTools();
   check("seven tools", JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(["add_comment", "get_decisions", "get_plan", "import_source", "list_plans", "list_project_sources", "start_plan"]));
   check("no banned words in tool or server descriptions", !/grill-me|grilling|pocock/i.test(JSON.stringify(tools)));
+  check("no create_issues tool (v1.3 item 2: the browser's confirm only)", !tools.some((t) => /issue/.test(t.name)));
   check("list_plans with no plans says so", /No plans yet/.test(textOf(await call(c, "list_plans"))));
 
   // Plate a plan in the browser, the normal way.
@@ -128,6 +129,7 @@ try {
   const md = got.structuredContent.markdown;
   check("get_plan: the plan's Markdown", got.content[0].text === md && md.startsWith("# "), md.slice(0, 40));
   check("get_plan: resolved decisions with answers", got.structuredContent.decisions.length >= 3 && got.structuredContent.decisions.every((d) => d.answer), `${got.structuredContent.decisions.length} decisions`);
+  check("get_plan: issues is null before the plan is sent", got.structuredContent.issues === null && JSON.parse(got.content[1].text).issues === null);
 
   const dec = (await call(c, "get_decisions", { plan: plan.id })).structuredContent;
   check("get_decisions: keys, answers, rounds", dec.decisions.every((d) => d.key && d.answer && d.round >= 1) && Array.isArray(dec.open), dec.decisions.map((d) => d.key).join(","));
