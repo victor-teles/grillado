@@ -12,7 +12,7 @@ import { DEFAULT_TIMEOUT_MS } from "../src/core/providers/base.ts";
 import type { ProviderAdapter, ProviderId } from "../src/core/providers/types.ts";
 import { COPY, fmt } from "../web/src/app/copy.ts";
 import { waitLabel } from "../web/src/app/wait.ts";
-import { STOPPED, isStopped } from "../src/core/reason.ts";
+import { STOPPED, STOPPED_BEFORE_26, isStopped } from "../src/core/reason.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
 
 const servers: GrilladoServer[] = [];
@@ -32,9 +32,8 @@ function spied(adapters: ProviderAdapter[], seen: [string, number][]): ProviderA
   return adapters.map((a) => ({ ...a, run: (req, signal) => (seen.push([a.id, req.timeoutMs]), a.run(req, signal)) }));
 }
 
-async function serve(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs?: number) {
+async function serve(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs?: number, store = new Store(mkdtempSync(path.join(os.tmpdir(), "grillado-home-")))) {
   const seen: [string, number][] = [];
-  const store = new Store(mkdtempSync(path.join(os.tmpdir(), "grillado-home-")));
   const server = new GrilladoServer({ adapters: spied(createAdapters({ env }), seen), store, webDir: webDir(), port: 0, strictPort: true, ...(timeoutMs ? { timeoutMs } : {}) });
   servers.push(server);
   await server.detect();
@@ -63,7 +62,7 @@ async function serve(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs?: number)
   };
   const retry = () => call("POST", `/api/sessions/${created.id}/retry`, {});
   const stop = () => call("POST", `/api/sessions/${created.id}/stop`, {});
-  return { seen, until, retry, stop };
+  return { seen, until, retry, stop, store, id: created.id as string, call };
 }
 
 describe("per-provider default timeout", () => {
@@ -136,12 +135,44 @@ describe("review-pr26 r2: the 60 s line and the card after Stop", () => {
     const s = await g.until((v) => !v.busy && !!v.error);
     expect(s.error).toMatchObject({ code: "unknown", message: STOPPED });
     expect(isStopped(s.error)).toBe(true);
-    expect(isStopped({ code: "unknown", message: "Stopped. Retry when you're ready." })).toBe(false);
     expect(isStopped({ code: "timeout", message: STOPPED })).toBe(false);
     expect(fmt(COPY.stoppedTitle, { agent: "Grok" })).toBe("You stopped Grok");
     expect(COPY.stoppedBody).toBe("Your answers are saved. Retry when you’re ready.");
     writeFileSync(ctl, "{}");
     await g.retry();
     expect((await g.until((v) => !v.busy && v.status === "answering")).error).toBeFalsy();
+  });
+
+  test("a session stopped on a build before #26 (straight ' in the message) still reopens as stopped", async () => {
+    expect(STOPPED_BEFORE_26).toBe("Stopped. Retry when you're ready.");
+    expect(isStopped({ code: "unknown", message: STOPPED_BEFORE_26 })).toBe(true);
+    expect(isStopped({ code: "timeout", message: STOPPED_BEFORE_26 })).toBe(false);
+    expect(isStopped({ code: "unknown", message: "Stopped." })).toBe(false);
+    // Stop, rewrite the stored message as an older build left it, and reopen it on a fresh server.
+    const ctl = path.join(mkdtempSync(path.join(os.tmpdir(), "grillado-ctl-")), "ctl.json");
+    writeFileSync(ctl, JSON.stringify({ FAKE_DELAY_MS: "20000" }));
+    const env = fakeEnv(fakeBinDir(["grok"]), { FAKE_CTL: ctl });
+    const g = await serve("grok", env);
+    await g.until((v) => v.busy);
+    await g.stop();
+    await g.until((v) => !v.busy && !!v.error);
+    const old = g.store.load(g.id)!;
+    old.error = { ...old.error!, message: STOPPED_BEFORE_26 };
+    g.store.save(old);
+    const again = new GrilladoServer({ adapters: createAdapters({ env }), store: new Store(g.store.dir), webDir: webDir(), port: 0, strictPort: true });
+    servers.push(again);
+    await again.detect();
+    await again.listen();
+    const reopened = await new Promise<any>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port: again.port, method: "GET", path: `/api/sessions/${g.id}`, headers: { "x-grillado-token": again.token } }, (res) => {
+        let b = "";
+        res.on("data", (d) => (b += d));
+        res.on("end", () => resolve(JSON.parse(b)));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect(reopened.error).toMatchObject({ code: "unknown", message: STOPPED_BEFORE_26 });
+    expect(isStopped(reopened.error)).toBe(true);
   });
 });

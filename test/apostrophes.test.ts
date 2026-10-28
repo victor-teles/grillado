@@ -51,7 +51,9 @@ describe("scan: on-screen strings only", () => {
       "const d = \"it said 'done' in the '90s\";",
       "const e = \"button,[tabindex='0']\";",
       "export const V = () => <p>We're on it</p>;",
-      "export { a, b, c, d, e };",
+      "/** An old stored message, only matched. @offscreen */",
+      "const f = \"Stopped. Retry when you're ready.\";",
+      "export { a, b, c, d, e, f };",
     ].join("\n"));
     const hits = scan([[f, true]]);
     expect(hits.map((h) => h.split(":")[1])).toEqual(["2", "3", "4", "5", "7"]);
@@ -63,6 +65,7 @@ describe("scan: on-screen strings only", () => {
     expect(out).toContain("\"it said ‘done’ in the ’90s\"");
     expect(out).toContain("[tabindex='0']");
     expect(out).toContain("<p>We’re on it</p>");
+    expect(out).toContain("const f = \"Stopped. Retry when you're ready.\";");
     expect(out).toContain("// a comment: don't, agents' and 'quoted' never count");
     expect(scan([[f, true]])).toEqual([]);
   });

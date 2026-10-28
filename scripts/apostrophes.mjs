@@ -7,6 +7,7 @@
 // - The src/core modules the web bundle imports for its labels (reasonText, the Activity labels, STOPPED):
 //   every string, like web/src.
 // CSS attribute values in selectors and class names ([tabindex='0'], [class*='size-']) are code, not text.
+// A statement whose comment says `@offscreen` is never shown (e.g. an old stored message kept only to match it).
 // `node scripts/apostrophes.mjs` lists them; `--fix` rewrites them to ’ in place.
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -79,6 +80,7 @@ export function scan(files, { fix = false, rel = (f) => f, hits = [] } = {}) {
     const src = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
     const ranges = [];
     const visit = (n) => {
+      if (ts.isStatement(n) && (ts.getLeadingCommentRanges(text, n.getFullStart()) ?? []).some((c) => text.slice(c.pos, c.end).includes("@offscreen"))) return;
       if (isPiece(n) && straightIn(n.text, afterValue(n)) && (web || shownOnServer(n))) {
         ranges.push([n, n.getStart(src), n.getEnd()]);
         hits.push(`${rel(file)}:${src.getLineAndCharacterOfPosition(n.getStart(src)).line + 1}: ${n.text.trim().replace(/\s+/g, " ").slice(0, 80)}`);
