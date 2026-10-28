@@ -59,9 +59,11 @@ html[data-kbd] .imp>span{transition:none}
 .fempty .fnm{display:inline-block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .fempty .x svg{width:14px;height:14px}
 /* §5 provenance on an imported plan: the meta line as gap-separated parts (#144) */
-.sub.fp{display:flex;flex-wrap:wrap;column-gap:15px}
+/* Each part stays whole (a flex item only breaks inside when it alone is wider than the line); the "·" ends the part
+   before it, so a wrap never starts a line with one (review-pr28 nice 1). */
+.sub.fp{display:flex;flex-wrap:wrap;column-gap:6px}
 .sub.fp>span{position:relative}
-.sub.fp>span+span::before{content:"·";position:absolute;left:-10px}
+.sub.fp>span:not(:last-child)::after{content:"·";padding-left:6px}
 .sub.fp-agent{margin:2px 0 0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
 .fp-ch{color:var(--foreground);font-weight:500}
 .fp-up{border:0;background:none;padding:0 2px;margin:0 -2px;font:inherit;color:var(--foreground);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair);cursor:pointer;border-radius:4px}

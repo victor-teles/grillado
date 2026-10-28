@@ -201,6 +201,20 @@ try {
       await pg.getByTestId("plan").waitFor({ timeout: 10000 });
       await pg.locator(".dz").first().waitFor({ timeout: 10000 });
 
+      // review-pr28 nice 1: the plan meta ("4 decisions · Imported from a Claude Code session, …") never starts a line with "·".
+      const pm = await pg.getByTestId("plan-meta").evaluate((m) => {
+        const mr = m.getBoundingClientRect();
+        const parts = [...m.querySelectorAll(":scope > span")].map((e) => {
+          const r = e.getBoundingClientRect();
+          return { t: Math.round(r.top), l: r.left, r: r.right, before: getComputedStyle(e, "::before").content, after: getComputedStyle(e, "::after").content, text: e.textContent };
+        });
+        return { l: mr.left, r: mr.right, parts };
+      });
+      const starts = pm.parts.filter((x, i) => i === 0 || x.t > pm.parts[i - 1].t);
+      check(`review-pr28 nice 1 ${tag}: the meta's "·" ends the part before it, so no line starts with one`, pm.parts.length >= 2 && pm.parts.every((x) => x.before === "none") && pm.parts.slice(0, -1).every((x) => x.after === '"·"') && pm.parts.at(-1).after === "none" && starts.every((x) => x.l <= pm.l + 0.5 && !x.text.startsWith("·")), JSON.stringify(pm));
+      check(`review-pr28 nice 1 ${tag}: every part of the meta is inside its line`, pm.parts.every((x) => x.l >= pm.l - 0.5 && x.r <= pm.r + 0.5), JSON.stringify(pm));
+      if (vp.phone) await shot(pg, `r2-nice1-meta-${tag}`);
+
       // NTH 2: decision cards name the decision, not its code.
       const card = pg.locator(".dz").filter({ has: pg.locator(".dz-id", { hasText: LONG_LABEL.slice(0, 20) }) }).first();
       await card.scrollIntoViewIfNeeded();
