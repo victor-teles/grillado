@@ -243,6 +243,8 @@ html[data-kbd] .ish,html[data-kbd] .ilist,html[data-kbd] .ir-x svg,html[data-kbd
   .lnk2::after{content:"";position:absolute;inset:-6px -4px}
   .ilk{height:28px;padding:0 8px 0 6px}
   .ilk::after{content:"";position:absolute;inset:-8px -2px}
+  /* The chip's 44px reaches 8px under it: the card's meta line starts past that, so a wide title there never takes its taps. */
+  .dz:has(.dz-a .ilks) .dz-h{margin-top:8px}
 }
 @media (max-width:360px){
   .ish-b{padding:0 12px 16px}
