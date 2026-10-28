@@ -15,6 +15,7 @@ import {
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
 import { COPY } from "./copy";
+import { waitLabel } from "./wait";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
 import { MobileStrip, SidePanel } from "./Tree";
@@ -256,7 +257,7 @@ function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; open
 function Nudge({ onReview, onDismiss }: { onReview: () => void; onDismiss: () => void }) {
   return (
     <div className="nudge" role="status" data-testid="nudge">
-      <p>You've kept every suggestion for 4 rounds. Anything you'd push back on?</p>
+      <p>You’ve kept every suggestion for 4 rounds. Anything you’d push back on?</p>
       <button type="button" className="btn quiet" onClick={onReview}>
         Review my picks
       </button>
@@ -269,12 +270,7 @@ function Nudge({ onReview, onDismiss }: { onReview: () => void; onDismiss: () =>
 
 // ---------------------------------------------------------------- waiting for the agent
 
-export function waitLabel(session: SessionView, elapsed: number, base: string) {
-  if (session.progress === "Taking another pass") return elapsed >= 60 ? "Still cooking. This one is taking a while" : "Taking another pass…";
-  if (elapsed >= 60) return "Still cooking. This one is taking a while";
-  if (elapsed >= 15) return "Still cooking…";
-  return base;
-}
+export { waitLabel } from "./wait";
 
 /** Static skeleton lines (v1.2: no shimmer): a heading, a line and three option rows. */
 export function SkeletonCard({ wide }: { wide?: boolean }) {

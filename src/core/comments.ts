@@ -266,13 +266,13 @@ function thread(s: CommentState, id: string): CommentThread {
 }
 
 export function addComment(s: CommentState & { plan?: { markdown: string } }, input: { quote: unknown; at: unknown; text: unknown }): CommentThread {
-  if (!s.plan) throw new Error("There's no plan yet.");
+  if (!s.plan) throw new Error("There’s no plan yet.");
   const quote = typeof input.quote === "string" ? input.quote : "";
   const text = typeof input.text === "string" ? input.text.trim() : "";
   if (!quote.trim() || quote.length > MAX_QUOTE) throw new Error("Select some text in the plan first.");
   if (!text) throw new Error("Write a comment first.");
   const at = locate(s.plan.markdown, quote, Number(input.at) || 0);
-  if (at < 0) throw new Error("The text you selected isn't in the plan anymore.");
+  if (at < 0) throw new Error("The text you selected isn’t in the plan anymore.");
   const t: CommentThread = { id: newId(), quote, at, section: headingAt(s.plan.markdown, Math.max(0, at)), createdAt: now(), messages: [{ id: newId(), by: "you", text: text.slice(0, MAX_COMMENT), at: now() }] };
   s.comments = [...(s.comments ?? []), t];
   return t;
@@ -456,7 +456,7 @@ function applyAll(md: string, list: Suggestion[], dir: "forward" | "back"): { md
  * caller saves it to plan.md. Suggestions whose text changed under them are dropped.
  */
 export function review(s: CommentState & { plan?: { markdown: string } }, action: "accept" | "reject", ids: unknown): { done: number; stale: number } {
-  if (!s.plan) throw new Error("There's no plan yet.");
+  if (!s.plan) throw new Error("There’s no plan yet.");
   const want = new Set(Array.isArray(ids) ? ids.map(String) : []);
   const pick = (s.suggestions ?? []).filter((x) => want.has(x.id) && x.status === "pending");
   if (!pick.length) throw new Error("Those suggestions were already reviewed.");

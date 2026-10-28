@@ -221,7 +221,7 @@ export const piSpec: AdapterSpec = {
   displayName: "pi",
   bin: "pi",
   installHint: "npm i -g @mariozechner/pi-coding-agent",
-  loginHint: "Run `pi` in a terminal and use /login, or set your provider's API key",
+  loginHint: "Run `pi` in a terminal and use /login, or set your provider’s API key",
   buildInvocation: (req) => ({
     args: [
       "-p",

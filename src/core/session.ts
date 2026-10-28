@@ -253,7 +253,7 @@ export function submitAnswers(s: Session, roundN: number, answers: Answer[]): vo
     } else if (a.optionId === OTHER_OPTION && a.text?.trim()) {
       decision = { key: q.key, round: round.n, title: q.title, answer: a.text.trim().slice(0, 2000), kind: "other", accepted_recommendation: false, dependsOn: q.dependsOn };
     } else if (a.optionId === UNKNOWN_OPTION) {
-      decision = { key: q.key, round: round.n, title: q.title, answer: "I don't know", kind: "unknown", accepted_recommendation: false, dependsOn: q.dependsOn };
+      decision = { key: q.key, round: round.n, title: q.title, answer: "I don’t know", kind: "unknown", accepted_recommendation: false, dependsOn: q.dependsOn };
     } else {
       throw new Error(`Invalid answer for "${q.title}".`);
     }
@@ -339,7 +339,7 @@ export const MAX_PLAN_CHARS = 500_000;
  * `[R1:id]` citations and anything else the editor doesn't understand survive untouched.
  */
 export function editPlan(s: Session, markdown: unknown) {
-  if (s.status !== "plated" || !s.plan) throw new Error("There's no plan to edit yet.");
+  if (s.status !== "plated" || !s.plan) throw new Error("There’s no plan to edit yet.");
   if (typeof markdown !== "string") throw new Error("Expected the plan as Markdown text.");
   if (markdown.length > MAX_PLAN_CHARS) throw new Error("The plan is too long to save.");
   s.plan.markdown = markdown;
@@ -532,7 +532,7 @@ function answerFor(q: Question, pick: Pick): { answer: string; kind: Decision["k
  * marked, until the next plan replaces it. Returns the dependents that will be re-asked.
  */
 export function changeDecision(s: Session, key: string, pick: Pick): string[] {
-  if (s.status !== "plated" || !s.plan) throw new Error("Change answers from the plan once it's written.");
+  if (s.status !== "plated" || !s.plan) throw new Error("Change answers from the plan once it’s written.");
   const deps = setAnswer(s, key, pick);
   if (deps === null) return [];
   reask(s, key, deps);
@@ -722,7 +722,7 @@ export function dismissExternal(s: Session): void {
 
 /** "Re-ask" on a stale decision: ask it again in a new round. */
 export function reaskStale(s: Session, keys: string[]): string[] {
-  if (s.status !== "plated" || !s.plan) throw new Error("There's no plan yet.");
+  if (s.status !== "plated" || !s.plan) throw new Error("There’s no plan yet.");
   const ks = keys.filter((k) => s.stale?.[k] && !s.decisions[k]);
   if (!ks.length) throw new Error("Nothing to ask again.");
   finishChange(s, ks);
@@ -742,7 +742,7 @@ const settledAnswers = (s: Session) => {
  * text is the agent's job in a later step.)
  */
 export function answerOpenDecision(s: Session, key: string, pick: Pick): void {
-  if (s.status !== "plated" || !s.plan) throw new Error("There's no plan yet.");
+  if (s.status !== "plated" || !s.plan) throw new Error("There’s no plan yet.");
   if (s.decisions[key]) throw new Error("That decision is already answered.");
   const found = questionFor(s, key);
   if (!found) throw new Error("Unknown decision.");

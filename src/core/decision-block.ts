@@ -80,7 +80,7 @@ export function parseDecisionBody(body: string): DecisionParse {
   const at = get("at");
   if (at && at.value && Number.isNaN(Date.parse(at.value))) return { ok: false, line: at.line, message: "“at” must be a date and time, like 2026-10-22T21:14-03:00.", entries };
   const key = get("key");
-  if (key && !/^[^\s\],]+$/.test(key.value)) return { ok: false, line: key.line, message: "“key” can't contain spaces, commas or ].", entries };
+  if (key && !/^[^\s\],]+$/.test(key.value)) return { ok: false, line: key.line, message: "“key” can’t contain spaces, commas or ].", entries };
   return {
     ok: true,
     entries,
@@ -197,7 +197,7 @@ export function decisionProblems(md: string): { line: number; message: string }[
   return findDecisionBlocks(md).flatMap((b) => {
     if (b.parsed.ok) return [];
     const line = b.parsed.line < 0 ? b.fenceLine + 1 : b.fenceLine + 2 + b.parsed.line;
-    return [{ line, message: `This decision block can't be read: ${b.parsed.message}` }];
+    return [{ line, message: `This decision block can’t be read: ${b.parsed.message}` }];
   });
 }
 

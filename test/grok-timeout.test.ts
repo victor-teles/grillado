@@ -11,6 +11,8 @@ import { SPECS, createAdapters } from "../src/core/providers/adapters.ts";
 import { DEFAULT_TIMEOUT_MS } from "../src/core/providers/base.ts";
 import type { ProviderAdapter, ProviderId } from "../src/core/providers/types.ts";
 import { COPY, fmt } from "../web/src/app/copy.ts";
+import { waitLabel } from "../web/src/app/wait.ts";
+import { STOPPED, isStopped } from "../src/core/reason.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
 
 const servers: GrilladoServer[] = [];
@@ -60,7 +62,8 @@ async function serve(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs?: number)
     }
   };
   const retry = () => call("POST", `/api/sessions/${created.id}/retry`, {});
-  return { seen, until, retry };
+  const stop = () => call("POST", `/api/sessions/${created.id}/stop`, {});
+  return { seen, until, retry, stop };
 }
 
 describe("per-provider default timeout", () => {
@@ -109,5 +112,36 @@ describe("a run past the timeout reads as slow, not failed", () => {
     expect(COPY.timeoutBody).toBe("Nothing came back in time. Your answers are saved.");
     expect(`${COPY.timeoutTitle} ${COPY.timeoutBody}`).not.toMatch(/didn.t come through|fail|error/i);
     expect(COPY.roundWaitNote).toBe("Rounds can take a few minutes.");
+  });
+});
+
+describe("review-pr26 r2: the 60 s line and the card after Stop", () => {
+  test("from 15 s the status is just “Still cooking…”, at 60 s too, on a first pass and another pass", () => {
+    const v = (progress?: string) => ({ progress }) as never;
+    expect(waitLabel(v(), 3, "Sizing up your idea…")).toBe("Sizing up your idea…");
+    expect(waitLabel(v(), 15, "Sizing up your idea…")).toBe("Still cooking…");
+    expect(waitLabel(v(), 60, "Sizing up your idea…")).toBe("Still cooking…");
+    expect(waitLabel(v(), 600, "Sizing up your idea…")).toBe("Still cooking…");
+    expect(waitLabel(v("Taking another pass"), 20, "x")).toBe("Taking another pass…");
+    expect(waitLabel(v("Taking another pass"), 60, "x")).toBe("Still cooking…");
+  });
+
+  test("Stop leaves the shared STOPPED message (curly ’), and the card keys on it, not on wording", async () => {
+    expect(STOPPED).toBe("Stopped. Retry when you’re ready.");
+    const ctl = path.join(mkdtempSync(path.join(os.tmpdir(), "grillado-ctl-")), "ctl.json");
+    writeFileSync(ctl, JSON.stringify({ FAKE_DELAY_MS: "20000" }));
+    const g = await serve("grok", fakeEnv(fakeBinDir(["grok"]), { FAKE_CTL: ctl }));
+    await g.until((v) => v.busy);
+    await g.stop();
+    const s = await g.until((v) => !v.busy && !!v.error);
+    expect(s.error).toMatchObject({ code: "unknown", message: STOPPED });
+    expect(isStopped(s.error)).toBe(true);
+    expect(isStopped({ code: "unknown", message: "Stopped. Retry when you're ready." })).toBe(false);
+    expect(isStopped({ code: "timeout", message: STOPPED })).toBe(false);
+    expect(fmt(COPY.stoppedTitle, { agent: "Grok" })).toBe("You stopped Grok");
+    expect(COPY.stoppedBody).toBe("Your answers are saved. Retry when you’re ready.");
+    writeFileSync(ctl, "{}");
+    await g.retry();
+    expect((await g.until((v) => !v.busy && v.status === "answering")).error).toBeFalsy();
   });
 });

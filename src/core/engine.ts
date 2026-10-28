@@ -200,7 +200,7 @@ export async function runValidated<T>(
     }
     return { ok: true, value: parsed.data };
   }
-  return { ok: false, code: "malformed", message: "The agent's reply didn't come through." };
+  return { ok: false, code: "malformed", message: "The agent’s reply didn’t come through." };
 }
 
 /** Ask for the next round and apply it to the session (or record the error). */
@@ -230,7 +230,7 @@ export async function synthesize(
   adapter: ProviderAdapter,
   opts: RunOptions,
 ): Promise<{ ok: true; plan: PlanReply; markdown: string } | { ok: false }> {
-  if (s.status !== "synthesizing") throw new Error("Synthesis requires the user's confirmation.");
+  if (s.status !== "synthesizing") throw new Error("Synthesis requires the user’s confirmation.");
   const result = await runValidated<PlanReply>(
     adapter,
     { kind: "synthesis", systemPrompt: synthesisSystemPrompt(), userPrompt: buildSynthesisPrompt(s), jsonSchema: planJsonSchema() },

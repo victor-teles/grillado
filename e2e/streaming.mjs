@@ -296,7 +296,7 @@ try {
     await stopped.waitFor({ timeout: 10000 });
     const st = await stopped.evaluate((m) => ({ text: m.querySelector("p").textContent, mark: m.querySelector(".stopped").textContent, colour: getComputedStyle(m.querySelector(".stopped")).color, time: m.querySelector(".who .m")?.textContent ?? "", author: m.querySelector(".who b").textContent }));
     check(`${theme}: Stop keeps what was written, followed by “ (stopped)” in --muted-foreground`, st.text === `${held} (stopped)` && st.mark === "(stopped)" && st.colour === muted && st.author === "Claude Code" && /\d:\d\d/.test(st.time), JSON.stringify(st));
-    check(`${theme}: stopped: Apply feedback is offered on the partial text; no retry row, nothing retried`, (await rail.getByRole("button", { name: "Apply feedback" }).count()) === 1 && (await rail.getByText("Couldn't reply").count()) === 0 && (await rail.getByRole("button", { name: "Try again" }).count()) === 0);
+    check(`${theme}: stopped: Apply feedback is offered on the partial text; no retry row, nothing retried`, (await rail.getByRole("button", { name: "Apply feedback" }).count()) === 1 && (await rail.getByText("Couldn’t reply").count()) === 0 && (await rail.getByRole("button", { name: "Try again" }).count()) === 0);
     await pg.waitForTimeout(1200);
     check(`${theme}: stopped: no new run starts on its own`, (await streamingMsg(pg).count()) === 0 && (await rail.getByText(/replying/).count()) === 0);
     await snap("d-stream-stopped");
@@ -313,7 +313,7 @@ try {
     const th2 = rail.locator(".th").filter({ hasText: "Is one flow enough?" });
     await th2.locator(".crow[role=alert]").waitFor({ timeout: 15000 });
     const er = await th2.evaluate((t) => ({ partial: t.querySelector(".msg[data-partial] p")?.textContent ?? "", row: t.querySelector(".crow[role=alert]").textContent, caret: !!t.querySelector(".caret"), busy: !!t.querySelector("[aria-busy]") }));
-    check(`${theme}: error mid-stream: the partial text stays, then “Couldn't reply · Try again”`, er.partial.length >= 10 && /^Good catch/.test(er.partial) && /^Couldn't reply\s*·?\s*Try again$/.test(er.row.trim()) && !er.caret && !er.busy, JSON.stringify(er));
+    check(`${theme}: error mid-stream: the partial text stays, then “Couldn't reply · Try again”`, er.partial.length >= 10 && /^Good catch/.test(er.partial) && /^Couldn’t reply\s*·?\s*Try again$/.test(er.row.trim()) && !er.caret && !er.busy, JSON.stringify(er));
     await snap("d-stream-error");
     if (theme === "dark") await axe(pg, `${theme} desktop: error mid-stream`);
     s.mode({});

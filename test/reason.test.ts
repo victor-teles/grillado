@@ -24,7 +24,7 @@ describe("the one mapping (core/reason.ts)", () => {
     expect(reasonText("rate_limit", A)).toBe(WORDS.rate_limit);
     expect(reasonText("not_found", A)).toBe(WORDS.not_found);
     expect(reasonText("auth", A)).toBe(`${A} isn’t signed in`);
-    expect(reasonText("timeout", A)).toBe(`${A} took too long`);
+    expect(reasonText("timeout", A)).toBe(`${A} is running slow`);
     expect(reasonText("malformed", A)).toBe(`${A}’s reply didn’t come through`);
     expect(reasonText("unknown", A)).toBe(`${A} couldn’t finish this`);
     expect(reasonText(undefined, A)).toBe(`${A} couldn’t finish this`);

@@ -61,7 +61,7 @@ describe("decision blocks (Q3)", () => {
 
   test("problems point at the document line, in plain words", () => {
     const md = `# Plan\n\nText.\n\n\`\`\`decision\nid: R1·1\nquestion: q\nkept_suggestion: maybe\nanswer: a\n\`\`\`\n`;
-    expect(decisionProblems(md)).toEqual([{ line: 8, message: "This decision block can't be read: “kept_suggestion” must be true or false." }]);
+    expect(decisionProblems(md)).toEqual([{ line: 8, message: "This decision block can’t be read: “kept_suggestion” must be true or false." }]);
     expect(decisionProblems(md.replace("maybe", "true"))).toEqual([]);
   });
 
@@ -492,10 +492,10 @@ describe("context passages and diagrams", () => {
 
   test("diagram errors point at the line where the shape opened", () => {
     const code = "flowchart LR\n  A[Start] --> B{Ok?\n  B --> C[Done]";
-    expect(explainDiagramError(code, "Parse error on line 3:\n...")).toEqual({ line: 2, message: "Line 2: a shape isn't closed. Add the missing } after “Ok?”." });
-    expect(explainDiagramError("flowchart LR\n  A --> ", "Parse error on line 2")).toEqual({ line: 2, message: "Mermaid couldn't read line 2." });
+    expect(explainDiagramError(code, "Parse error on line 3:\n...")).toEqual({ line: 2, message: "Line 2: a shape isn’t closed. Add the missing } after “Ok?”." });
+    expect(explainDiagramError("flowchart LR\n  A --> ", "Parse error on line 2")).toEqual({ line: 2, message: "Mermaid couldn’t read line 2." });
     expect(explainDiagramError("flowchat LR\n  A --> B", "Parse error")).toEqual({ line: 1, message: "Line 1: the diagram type is missing. Start with flowchart TD or stateDiagram-v2." });
-    expect(explainDiagramError("flowchart LR\n  A --> --> B", "Parse error on line 2:\nExpecting 'AMP'")).toEqual({ line: 2, message: "Line 2: Mermaid doesn't know this arrow. Use --> or -.->." });
+    expect(explainDiagramError("flowchart LR\n  A --> --> B", "Parse error on line 2:\nExpecting 'AMP'")).toEqual({ line: 2, message: "Line 2: Mermaid doesn’t know this arrow. Use --> or -.->." });
     expect(diagramLabel(code, '<g class="node default"></g><g class="node"></g>')).toBe("flowchart diagram, 2 nodes");
     expect(diagramLabel("stateDiagram-v2\n  accTitle: Sync states\n  [*] --> A", "")).toBe("State diagram: Sync states");
   });

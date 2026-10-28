@@ -708,6 +708,8 @@ html:not([data-kbd]) .q [data-slot=agent-question-option]:has(:focus-visible){ou
 @media (hover:none) and (pointer:coarse){
   .q [data-slot=agent-question-option] kbd,.dz-opt .n{display:none!important}
   .dz .dz-n{display:block!important}
+  /* A thumb-sized target for the problem card's Retry and the 60 s Stop (review-pr26 r2 n2). */
+  .banner .btn,.status button{min-height:44px}
 }
 /* The tree root (the idea) may take two lines. */
 .tn.idea{height:auto;min-height:30px;white-space:normal;align-items:flex-start;padding-top:5px;padding-bottom:5px}

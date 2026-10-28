@@ -21,7 +21,7 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown, ini
       body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {
-    throw new ApiError("Grillado isn't running.", 0);
+    throw new ApiError("Grillado isn’t running.", 0);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data?.error ?? `Request failed (${res.status})`, res.status, data ?? {});

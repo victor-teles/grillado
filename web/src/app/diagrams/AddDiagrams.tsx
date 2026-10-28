@@ -25,7 +25,7 @@ export const DCOPY = {
   oneKind: "At least one kind",
   focus: "Anything to focus on?",
   focusPh: "e.g. what happens offline",
-  note: "At most one diagram per section. {agent} skips sections a diagram wouldn't help.",
+  note: "At most one diagram per section. {agent} skips sections a diagram wouldn’t help.",
   running: "{agent} is adding diagrams",
   count: (d: number, n: number) => `${d} of ${n} ${n === 1 ? "section" : "sections"}`,
   drawing: (s: string) => `{agent} is drawing a diagram for “${s}”`,

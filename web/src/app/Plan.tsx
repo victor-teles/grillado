@@ -386,7 +386,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
       {mobile && draft.save.state === "error" && !draft.conflict && !draft.answerChange ? (
         <div className="pbanner" data-tone="warn">
           <IAlert s={16} />
-          <span>Couldn't save to plan.md.</span>
+          <span>Couldn’t save to plan.md.</span>
           <span className="pbanner-acts">
             <button type="button" className="btn quiet" onClick={() => void draft.flush()}>
               Retry

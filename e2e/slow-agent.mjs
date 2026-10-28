@@ -175,6 +175,62 @@ try {
 
       await ctx.close();
       await s.stop();
+
+      // review-pr26 r2 must 1 + 2: at 60 s just "Still cooking…" (the note stays, Stop appears); Stop gives its own quiet card.
+      const s2 = await server({ GRILLADO_TIMEOUT_MS: "120000" });
+      const phone = vp.tag === "320";
+      const ctx2 = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, reducedMotion: "no-preference", ...(phone ? { isMobile: true, hasTouch: true } : {}) });
+      await ctx2.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+      const p2 = await ctx2.newPage();
+      await p2.clock.install();
+      const shot2 = async (name) => SHOTS && p2.screenshot({ path: path.join(SHOTS, `${name}-${theme}-${vp.tag}.png`) });
+      s2.mode({ FAKE_DELAY_MS: "110000" });
+      await p2.goto(s2.url);
+      const pick2 = p2.getByRole("radio", { name: /Grok/ });
+      if (await pick2.isVisible().catch(() => false)) {
+        await pick2.click();
+        await p2.getByRole("button", { name: /Continue/ }).click();
+      }
+      await p2.getByRole("textbox", { name: "What are you planning?" }).fill("Shared shopping list for my household");
+      await p2.keyboard.press("Enter");
+      await p2.getByTestId("wait-note").waitFor({ timeout: 10000 });
+      await p2.clock.fastForward("01:05");
+      const stop = p2.locator(".intro .status").getByRole("button", { name: "Stop" });
+      await stop.waitFor({ timeout: 5000 });
+      const label = (await p2.locator(".intro .status > span:not(.ember)").first().innerText()).trim();
+      check(`${at}: at 60 s the status says just “Still cooking…”`, label === "Still cooking…", label);
+      check(`${at}: at 60 s the note stays, and nothing says “taking a while”`, (await p2.getByTestId("wait-note").innerText()) === NOTE && !/taking a while/i.test(await p2.locator("main, body").first().innerText()));
+      if (phone) {
+        const h = (await stop.boundingBox())?.height ?? 0;
+        check(`${at}: on a phone the 60 s Stop is at least 44 px tall`, h >= 44, `${h}`);
+      }
+      check(`${at}: the 60 s state fits`, (await fits(p2, [".intro .status", "[data-testid=wait-note]"])).length === 0, (await fits(p2, [".intro .status", "[data-testid=wait-note]"])).join("; "));
+      await p2.mouse.move(0, 0);
+      await shot2("5-sixty-seconds");
+      if (theme === "dark") await axe(p2, `${at}: 60 s`);
+      await stop.click();
+      const sc = p2.locator("[data-testid=problem][data-stopped]");
+      await sc.waitFor({ timeout: 10000 });
+      const st = (await sc.innerText()).replace(/\s+/g, " ").trim();
+      check(`${at}: after Stop, “You stopped Grok” / “Your answers are saved. Retry when you’re ready.”`, st.includes("You stopped Grok") && st.includes("Your answers are saved. Retry when you’re ready."), st);
+      check(`${at}: the stopped card is quiet (info tone), never “Can’t reach the agent”`, (await sc.getAttribute("data-tone")) === "info" && !/Can.t reach|couldn.t|fail/i.test(st));
+      await p2.waitForFunction(() => document.activeElement?.textContent?.trim() === "Retry", null, { timeout: 3000 }).catch(() => {});
+      const f2 = await p2.evaluate(() => `${document.activeElement?.tagName}:${document.activeElement?.textContent?.trim()}`);
+      check(`${at}: after Stop, focus moves to Retry`, f2 === "BUTTON:Retry", f2);
+      if (phone) {
+        const h = (await sc.getByRole("button", { name: "Retry" }).boundingBox())?.height ?? 0;
+        check(`${at}: on a phone the card's Retry is at least 44 px tall`, h >= 44, `${h}`);
+      }
+      check(`${at}: the stopped card fits`, (await fits(p2, ["[data-testid=problem]", "[data-testid=problem] button"])).length === 0);
+      await p2.mouse.move(0, 0);
+      await shot2("6-stopped");
+      if (theme === "light") await axe(p2, `${at}: stopped card`);
+      s2.mode({});
+      await sc.getByRole("button", { name: "Retry" }).click();
+      await p2.getByRole("button", { name: /Send round/ }).waitFor({ timeout: 15000 });
+      check(`${at}: Retry after Stop gets the round`, (await p2.locator("[data-testid=problem]").count()) === 0);
+      await ctx2.close();
+      await s2.stop();
     }
   }
 } finally {

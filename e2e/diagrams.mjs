@@ -151,7 +151,7 @@ async function mobileError(pg, root, theme, what, shot) {
   await ta.fill(bad);
   const bar = root.locator(".merr");
   await bar.waitFor({ timeout: 5000 });
-  const ok = async () => (await shown(bar)) && /Line \d+: a shape isn't closed/.test(await txt(bar)) && (await bar.getAttribute("role")) === "status" && (await bar.getByRole("button", { name: "Details" }).count()) === 1;
+  const ok = async () => (await shown(bar)) && /Line \d+: a shape isn’t closed/.test(await txt(bar)) && (await bar.getAttribute("role")) === "status" && (await bar.getByRole("button", { name: "Details" }).count()) === 1;
   check(`${theme} mobile ${what}: error bar in Source (message, Details, announced)`, (await ok()) && (await ta.getAttribute("aria-invalid")) === "true" && (await ta.getAttribute("aria-describedby"))?.includes(await bar.getAttribute("id")), await txt(bar));
   await root.evaluate((e) => e.scrollIntoView({ block: "start" }));
   if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, `${shot}-error-source-m-${theme}.png`) });
@@ -474,7 +474,7 @@ try {
       await pg.waitForTimeout(500);
       check("no error before 1s of quiet", (await pg.locator(".merr").count()) === 0);
       await pg.locator(".merr").waitFor({ timeout: 5000 });
-      check("error message names the line and the missing }", /Line \d+: a shape isn't closed\. Add the missing } after “Same item\?”\./.test(await txt(pg.locator(".merr"))), await txt(pg.locator(".merr")));
+      check("error message names the line and the missing }", /Line \d+: a shape isn’t closed\. Add the missing } after “Same item\?”\./.test(await txt(pg.locator(".merr"))), await txt(pg.locator(".merr")));
       check("textarea aria-invalid", (await pg.locator(TA).getAttribute("aria-invalid")) === "true");
       check("last good version dimmed with its label", (await pg.locator(".lp5.dim").count()) === 1 && /Last version that worked/.test(await txt(pg.locator(".lp5 .lbl"))));
       await pg.locator(".blk[data-editing] .lp5").evaluate((e) => e.scrollIntoView({ block: "center" }));
@@ -482,7 +482,7 @@ try {
       await axe(pg, "dark desktop: editor error");
       await pg.keyboard.press("Escape");
       await pg.locator(".err5").waitFor({ timeout: 8000 });
-      check("broken saved source: error figure with lines", /This diagram can't be drawn/.test(await txt(pg.locator(".err5"))) && (await pg.locator(".err5 .src5 .bad").count()) === 1, await txt(pg.locator(".err5")));
+      check("broken saved source: error figure with lines", /This diagram can’t be drawn/.test(await txt(pg.locator(".err5"))) && (await pg.locator(".err5 .src5 .bad").count()) === 1, await txt(pg.locator(".err5")));
       await snap("i5-errfig");
       await axe(pg, "dark desktop: error figure");
     }

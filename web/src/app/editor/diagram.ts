@@ -132,16 +132,16 @@ export function explainDiagramError(code: string, raw: string): { line?: number;
     }
     if (stack.length) {
       const after = labelOn(lines[i]);
-      return { line: i + 1, message: `Line ${i + 1}: a shape isn't closed. Add the missing ${stack.at(-1)}${after ? ` after “${after}”` : " at the end of the label"}.` };
+      return { line: i + 1, message: `Line ${i + 1}: a shape isn’t closed. Add the missing ${stack.at(-1)}${after ? ` after “${after}”` : " at the end of the label"}.` };
     }
   }
   if (reported > 0) {
     const l = lines[reported - 1] ?? "";
-    if (/-->\s*-->|--\s+>|<--|==>>/.test(l.replace(/"[^"]*"/g, "")) || /got '(ARROW|LINK)/i.test(raw)) return { line: reported, message: `Line ${reported}: Mermaid doesn't know this arrow. Use --> or -.->.` };
-    if (/^\s*[a-z]+\s/i.test(l) && /Expecting/.test(raw) && !/[-=.]{2,}/.test(l)) return { line: reported, message: `Line ${reported}: Mermaid doesn't know “${l.trim().split(/\s+/)[0]}”.` };
-    return { line: reported, message: `Mermaid couldn't read line ${reported}.` };
+    if (/-->\s*-->|--\s+>|<--|==>>/.test(l.replace(/"[^"]*"/g, "")) || /got '(ARROW|LINK)/i.test(raw)) return { line: reported, message: `Line ${reported}: Mermaid doesn’t know this arrow. Use --> or -.->.` };
+    if (/^\s*[a-z]+\s/i.test(l) && /Expecting/.test(raw) && !/[-=.]{2,}/.test(l)) return { line: reported, message: `Line ${reported}: Mermaid doesn’t know “${l.trim().split(/\s+/)[0]}”.` };
+    return { line: reported, message: `Mermaid couldn’t read line ${reported}.` };
   }
-  return { message: "Mermaid couldn't read this diagram." };
+  return { message: "Mermaid couldn’t read this diagram." };
 }
 
 /** Zoom steps in full screen (§7). */

@@ -580,3 +580,41 @@ describe("found in this project: v1.3 item 1 UI paths", () => {
     expect(groupMeta(g)).toBe("1 entry");
   });
 });
+
+describe("review-pr26 r2 n4: a Claude Code import picked onto Grok gets Grok's 600 s", () => {
+  const servers: GrilladoServer[] = [];
+  afterEach(async () => {
+    while (servers.length) await servers.pop()!.close();
+  });
+  const req = (port: number, token: string, method: string, p: string, body?: unknown) =>
+    new Promise<{ status: number; json: any }>((resolve, reject) => {
+      const r = http.request({ host: "127.0.0.1", port, method, path: p, headers: { "x-grillado-token": token, "content-type": "application/json" } }, (res) => {
+        let b = "";
+        res.on("data", (d) => (b += d));
+        res.on("end", () => resolve({ status: res.statusCode!, json: JSON.parse(b) }));
+      });
+      r.on("error", reject);
+      r.end(body === undefined ? undefined : JSON.stringify(body));
+    });
+  for (const [what, timeoutMs, want] of [["the default", undefined, 600_000], ["GRILLADO_TIMEOUT_MS", 45_000, 45_000]] as const) {
+    test(`${what}: ${want / 1000} s`, async () => {
+      const w = world();
+      cpFree(w, "free.jsonl");
+      const web = mkdtempSync(path.join(os.tmpdir(), "grillado-web-"));
+      writeFileSync(path.join(web, "index.html"), "<!doctype html>");
+      const seen: [string, number][] = [];
+      const adapters = createAdapters({ env: fakeEnv(fakeBinDir(["grok"])) }).map((a) => ({ ...a, run: (req: any, signal: any) => (seen.push([a.id, req.timeoutMs]), a.run(req, signal)) }));
+      const server = new GrilladoServer({ adapters, store: w.store, webDir: web, port: 0, strictPort: true, found: w.svc(), ...(timeoutMs ? { timeoutMs } : {}) });
+      servers.push(server);
+      await server.detect();
+      await server.listen();
+      const call = (m: string, p: string, b?: unknown) => req(server.port, server.token, m, p, b);
+      await server.scanProject();
+      const free = (await call("GET", "/api/found")).json.rows.find((x: Row) => x.importable === "agent");
+      expect(free.app ?? "claude").toBe("claude");
+      const r = await call("POST", "/api/found/import", { id: free.id });
+      expect(r.status).toBe(200);
+      expect(seen).toEqual([["grok", want]]);
+    });
+  }
+});

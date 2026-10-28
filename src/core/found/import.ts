@@ -112,9 +112,9 @@ function withDecisions(x: Extract, ds: AgentDecision[]): Extract {
 }
 
 function check(x: Extract, inProgress?: boolean, decided?: boolean) {
-  if (inProgress) throw new ImportError("in_progress", "This session is still going. Import it once it's finished.");
+  if (inProgress) throw new ImportError("in_progress", "This session is still going. Import it once it’s finished.");
   if (x.qualifies === "freetext" && !decided) throw new ImportError("needs_agent", "This interview has no structured questions; turning its answers into decisions needs an agent run.");
-  if (x.qualifies !== "structured" && !(x.qualifies === "freetext" && decided)) throw new ImportError("not_qualified", "This isn't a planning session.");
+  if (x.qualifies !== "structured" && !(x.qualifies === "freetext" && decided)) throw new ImportError("not_qualified", "This isn’t a planning session.");
 }
 
 /** Fill `s` (new or existing) from the source: idea, rounds, decisions, status and plan text. */
@@ -131,7 +131,7 @@ function fill(s: Session, x: Extract, title: string, at: string): string | null 
   s.status = md ? "plated" : "confirm";
   s.wrappedUp = !md;
   const agentSide = [md ?? "", title, ...rounds.flatMap((r) => r.questions.flatMap((q) => [q.title, q.label, ...q.options.flatMap((o) => [o.label, o.description])]))].join("\n");
-  if (findBanned(agentSide, userText(s))) throw new ImportError("filtered", "Couldn't import this source safely.");
+  if (findBanned(agentSide, userText(s))) throw new ImportError("filtered", "Couldn’t import this source safely.");
   return md;
 }
 

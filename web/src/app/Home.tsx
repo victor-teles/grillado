@@ -283,7 +283,7 @@ export function Landing({
           </span>
           {showContext ? (
             <div className="ctxbox">
-              <textarea aria-label="Context for the agent (optional)" placeholder="Anything the agent should know: constraints, stack, who it's for" value={context} onChange={(e) => setContext(e.target.value)} maxLength={20000} />
+              <textarea aria-label="Context for the agent (optional)" placeholder="Anything the agent should know: constraints, stack, who it’s for" value={context} onChange={(e) => setContext(e.target.value)} maxLength={20000} />
             </div>
           ) : null}
           <div className="ar">

@@ -61,7 +61,7 @@ export function App() {
   useEffect(() => {
     if (!sessionId) return setSession(null);
     api.session(sessionId).then(setSession, (err) => {
-      setNotice(err instanceof Error ? err.message : "Couldn't open that session.");
+      setNotice(err instanceof Error ? err.message : "Couldn’t open that session.");
       go(null);
     });
   }, [sessionId]);
@@ -83,7 +83,7 @@ export function App() {
         setSession((cur) => (cur && cur.id === next.id ? newer(cur, next) : next));
       } catch (err) {
         // Round submits show their own error in the bar.
-        if (action !== "answers") setNotice(err instanceof Error ? err.message : "That didn't work.");
+        if (action !== "answers") setNotice(err instanceof Error ? err.message : "That didn’t work.");
         throw err;
       }
     },
@@ -102,7 +102,7 @@ export function App() {
         <Header onQuit={quit} theme={theme} onTheme={toggleTheme} />
         <main className="solo">
           <div className="col">
-            <h1>This window isn't connected</h1>
+            <h1>This window isn’t connected</h1>
             <p className="lede" role="alert">
               Open the link printed in your terminal to use this Grillado window.
             </p>
