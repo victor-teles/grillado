@@ -448,7 +448,9 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
     return (
       <div className="fmount e" ref={mount} data-testid="found">
         <p className="fempty">
-          <span>No plans found in {name}</span>
+          <span>
+            No plans found in <span className="pn">{name}</span>
+          </span>
           <span aria-hidden="true">·</span>
           <button type="button" className="lnk" onClick={() => void lookAgain()} aria-disabled={looking || undefined}>
             {looking ? "Looking…" : "Look again"}
@@ -470,10 +472,10 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
             <span className="proj">
               · <b>{on.project.name}</b>
               {branch ? (
-                <>
+                <span className="brw" title={branch}>
                   <IBranch s={12} />
-                  {branch}
-                </>
+                  <span className="brn">{branch}</span>
+                </span>
               ) : null}
             </span>
           ) : null}
