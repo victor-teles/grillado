@@ -1,0 +1,59 @@
+{
+  "text": "{\"type\":\"decisions\",\"decisions\":[{\"label\":\"Who adds\",\"title\":\"Who adds things to the list?\",\"answer\":\"Everyone at home, my partner and the two kids\"},{\"label\":\"Delete rights\",\"title\":\"Should the kids' additions need a grown-up's OK?\",\"answer\":\"No, anyone can add, but only adults can delete\"},{\"label\":\"Double tick\",\"title\":\"When two people tick the same item in the shop, what should happen?\",\"answer\":\"Ticking twice is fine, it just stays ticked\"},{\"label\":\"Offline sync\",\"title\":\"Does it need to work with no signal in the shop?\",\"answer\":\"Yes, the supermarket basement has none, so it has to work offline and sync later\"},{\"label\":\"Aisle order\",\"title\":\"How should items be ordered?\",\"answer\":\"By aisle, the way we walk through our usual store\"}]}",
+  "stopReason": "end_turn",
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "requestId": "00000000-0000-0000-0000-000000000001",
+  "cwd": "/tmp/grillado-import-XXXXXX",
+  "thought": "I will convert the five replies into decisions in JSON format.\n\nEach reply will become one JSON object with a label, title, and answer. The second reply settles both adding and deleting permissions.",
+  "usage": {
+    "input_tokens": 10331,
+    "cache_read_input_tokens": 1152,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 607,
+    "reasoning_tokens": 408,
+    "total_tokens": 12090
+  },
+  "num_turns": 1,
+  "total_cost_usd": 0.02488,
+  "total_cost_usd_ticks": 248800000,
+  "modelUsage": {
+    "grok-4.7-build": {
+      "inputTokens": 10331,
+      "outputTokens": 607,
+      "cacheReadInputTokens": 1152,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.02488
+    }
+  },
+  "structuredOutput": {
+    "type": "decisions",
+    "decisions": [
+      {
+        "label": "Who adds",
+        "title": "Who adds things to the list?",
+        "answer": "Everyone at home, my partner and the two kids"
+      },
+      {
+        "label": "Delete rights",
+        "title": "Should the kids' additions need a grown-up's OK?",
+        "answer": "No, anyone can add, but only adults can delete"
+      },
+      {
+        "label": "Double tick",
+        "title": "When two people tick the same item in the shop, what should happen?",
+        "answer": "Ticking twice is fine, it just stays ticked"
+      },
+      {
+        "label": "Offline sync",
+        "title": "Does it need to work with no signal in the shop?",
+        "answer": "Yes, the supermarket basement has none, so it has to work offline and sync later"
+      },
+      {
+        "label": "Aisle order",
+        "title": "How should items be ordered?",
+        "answer": "By aisle, the way we walk through our usual store"
+      }
+    ]
+  }
+}
