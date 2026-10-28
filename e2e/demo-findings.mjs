@@ -4,6 +4,8 @@
 //           in one quiet line, and plates without a picker or an "isn't installed" card first.
 //   NTH 1   "Is it done?": a long answer truncates and its "Your call" tag never does; on a phone the tag goes under it.
 //   NTH 2   Decisions are named by their short title, never the internal R·n code (that stays in title attributes).
+// And the designer's Confirm key follow-up: at 320 the 96px key wraps to two lines, so "Who can scan" and
+// "Who can scan offline" read apart (they both cut to "Who can sc…" before), and the whole name is in its title.
 // And review-pr27 nice 1: reloading a session page never flashes Home while its GET is in flight.
 // Desktop (1440) and 320, light and dark. One server and one browser at a time; only processes started here are killed.
 //   node e2e/demo-findings.mjs                 checks only
@@ -43,6 +45,8 @@ const LONG_LABEL = "Where the family’s recipes come from, and who keeps every 
 // The designer's short answer that a phone cut to "Everyone at …" (review-pr28 must 1).
 // The answer the designer read cut to "Everyone at …" at 320 (review-pr28 must 1, its world-nonpm.sh).
 const HOME_ANSWER = "Everyone at home";
+// Two keys that cut to the same "Who can sc…" in one 96px line (the designer's Confirm key follow-up).
+const KEYS = ["Who can scan", "Who can scan offline"];
 const LONG_ANSWER = "Typed in by hand from the recipe cards in the kitchen drawer, one at a time, with a photo of each card kept next to it so nothing written in the margins is ever lost";
 
 /** A project with one Claude Code interview (the partial fixture: three answered, one torn), its answer and header made long. */
@@ -58,8 +62,10 @@ function world() {
     .replaceAll("__ROOT__", root)
     .replace('"header": "Recipes"', `"header": "${LONG_LABEL}"`)
     .replace('"Where do recipes come from?": "Typed in"', `"Where do recipes come from?": "${LONG_ANSWER}"`)
-    .replace('"Who uses the app first?": "Just my family"', `"Who uses the app first?": "${HOME_ANSWER}"`);
-  if (!src.includes(LONG_LABEL) || !src.includes(LONG_ANSWER) || !src.includes(HOME_ANSWER)) throw new Error("the fixture changed: can't lengthen its row");
+    .replace('"Who uses the app first?": "Just my family"', `"Who uses the app first?": "${HOME_ANSWER}"`)
+    .replace('"header": "Users"', `"header": "${KEYS[0]}"`)
+    .replace('"header": "Sync"', `"header": "${KEYS[1]}"`);
+  if (!src.includes(LONG_LABEL) || !src.includes(LONG_ANSWER) || !src.includes(HOME_ANSWER) || KEYS.some((k) => !src.includes(`"header": "${k}"`))) throw new Error("the fixture changed: can't lengthen its row");
   const f = path.join(claude, "partial.jsonl");
   writeFileSync(f, src);
   const ago = (Date.now() - 3600_000) / 1000;
@@ -168,6 +174,22 @@ try {
       if (vp.phone) check(`NTH 1 ${tag}: on a phone the tag sits under the answer`, yc.t >= va.b - 1, `${yc.t} vs ${va.b}`);
       else check(`NTH 1 ${tag}: on desktop the tag stays on the answer's line, after it`, Math.abs(yc.t + yc.b - va.t - va.b) / 2 < 4 && yc.l >= va.r - 0.5, `${JSON.stringify(yc)} ${JSON.stringify(va)}`);
       await shot(pg, `nth1-yourcall-${tag}`);
+
+      // Confirm key follow-up: both keys whole (wrapped to at most two lines at 320), told apart, named in full in their title.
+      const keys = [];
+      for (const name of KEYS) {
+        const k = pg.locator(".dr dt.k").filter({ hasText: new RegExp(`^${name}$`) });
+        const r = (await k.count()) === 1 ? await rect(k) : null;
+        keys.push({ name, text: r ? await k.textContent() : null, title: r ? await k.getAttribute("title") : null, r });
+      }
+      for (const { name, text, title, r } of keys) {
+        check(`confirm key ${tag}: "${name}" is whole, not cut`, text === name && !!r && r.sw <= r.cw + 0.5 && r.sh <= r.ch + 0.5, JSON.stringify(r));
+        check(`confirm key ${tag}: "${name}" is in its title`, title === name, String(title));
+        if (vp.phone) check(`confirm key ${tag}: "${name}" stays in the 96px column, at most two lines`, !!r && r.w <= 96.5 && Math.round(r.ch / r.lh) <= 2, JSON.stringify(r));
+      }
+      if (vp.phone) check(`confirm key ${tag}: "${KEYS[0]}" and "${KEYS[1]}" read apart (the longer one wraps to its second line)`, keys[0].r && keys[1].r && Math.round(keys[0].r.ch / keys[0].r.lh) === 1 && Math.round(keys[1].r.ch / keys[1].r.lh) === 2, `${keys[0].r?.ch} / ${keys[1].r?.ch}`);
+      await pg.locator(".dr dt.k").filter({ hasText: KEYS[0] }).first().scrollIntoViewIfNeeded();
+      await shot(pg, `confirm-key-${tag}`);
       await ctx.close();
     }
 
