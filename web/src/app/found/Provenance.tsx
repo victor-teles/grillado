@@ -21,7 +21,7 @@ export function Provenance({ session, head, edited }: { session: SessionView; he
       setState("failed");
     }
   };
-  return (
+  const meta = (
     <p className="sub fp" data-testid="plan-meta">
       {head.split(" · ").map((x, i) => (
         <span key={i}>{x}</span>
@@ -29,7 +29,6 @@ export function Provenance({ session, head, edited }: { session: SessionView; he
       <span>
         Imported from {sourceWithArticle(src.app, src.kind)}, {day(info?.date ?? src.importedAt)}
       </span>
-      {session.agentNote ? <span data-testid="agent-note">{session.agentNote}</span> : null}
       {edited ? <span>edited</span> : null}
       {info?.state === "gone" ? <span>Source no longer on disk</span> : info?.state === "changed" ? null : src.compacted ? <span>Part of the session was compacted</span> : null}
       {info?.state === "changed" ? (
@@ -45,5 +44,16 @@ export function Provenance({ session, head, edited }: { session: SessionView; he
         </>
       ) : null}
     </p>
+  );
+  // The agent it runs on, when the import's own isn't installed (demo finding MUST 2): its own quiet line, never a wrapped part of the meta.
+  return session.agentNote ? (
+    <>
+      {meta}
+      <p className="sub fp-agent" data-testid="agent-note">
+        {session.agentNote}
+      </p>
+    </>
+  ) : (
+    meta
   );
 }

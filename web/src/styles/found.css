@@ -62,6 +62,7 @@ html[data-kbd] .imp>span{transition:none}
 .sub.fp{display:flex;flex-wrap:wrap;column-gap:15px}
 .sub.fp>span{position:relative}
 .sub.fp>span+span::before{content:"·";position:absolute;left:-10px}
+.sub.fp-agent{margin:2px 0 0;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
 .fp-ch{color:var(--foreground);font-weight:500}
 .fp-up{border:0;background:none;padding:0 2px;margin:0 -2px;font:inherit;color:var(--foreground);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair);cursor:pointer;border-radius:4px}
 @media (hover:hover){.fp-up:hover{text-decoration-color:currentColor}}

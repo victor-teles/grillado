@@ -312,6 +312,18 @@ try {
       const b = cov.locator("b").first();
       const bt = (await b.textContent()) ?? "";
       check("slices say which decisions they cover, by title (the R·n code only in the title attribute)", /^Covers \S/.test(await cov.textContent()) && !/R\d+·\d/.test(await cov.textContent()) && /^R\d+·\d+$/.test((await b.getAttribute("title")) ?? "") && bt.length > 3, `${await cov.textContent()} | ${await b.getAttribute("title")}`);
+      const cut = await b.evaluate((e) => {
+        const st = getComputedStyle(e);
+        const row = e.closest(".ir").getBoundingClientRect();
+        // A long title: lengthen this chip's text and see it end in an ellipsis inside its row.
+        const was = e.textContent;
+        e.textContent = `${was} ${"and a much longer decision title ".repeat(4)}`;
+        const r = e.getBoundingClientRect();
+        const out = { ellipsis: st.textOverflow === "ellipsis", nowrap: st.whiteSpace === "nowrap", over: e.scrollWidth > e.clientWidth, inside: r.right <= row.right + 0.5, h: Math.round(r.height) };
+        e.textContent = was;
+        return out;
+      });
+      check("a long decision title in Covers ends in an ellipsis on one line, inside the row", cut.ellipsis && cut.nowrap && cut.over && cut.inside && cut.h <= 20, JSON.stringify(cut));
     }
     await shot(pg, "d-sheet", theme);
     await axe(pg, `${theme} desktop: the sheet`);
