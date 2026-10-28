@@ -4,6 +4,7 @@
 //           in one quiet line, and plates without a picker or an "isn't installed" card first.
 //   NTH 1   "Is it done?": a long answer truncates and its "Your call" tag never does; on a phone the tag goes under it.
 //   NTH 2   Decisions are named by their short title, never the internal R·n code (that stays in title attributes).
+// And review-pr27 nice 1: reloading a session page never flashes Home while its GET is in flight.
 // Desktop (1440) and 320, light and dark. One server and one browser at a time; only processes started here are killed.
 //   node e2e/demo-findings.mjs                 checks only
 //   SHOTS=dir node e2e/demo-findings.mjs       also writes the frames to dir
@@ -246,6 +247,43 @@ try {
       }
       await ctx.close();
     }
+
+  // ---------------------------------------------------------------- review-pr27 nice 1: a reload at /s/:id never shows Home
+  // Every frame from the first paint is sampled; half the reloads hold the session GET 400 ms so the loading frame is seen.
+  for (const [vp, theme] of [[VIEWS[0], "light"], [VIEWS[1], "dark"]]) {
+    const tag = `${vp.tag}-${theme}`;
+    const { ctx, pg } = await page(srv, vp, theme);
+    await pg.addInitScript(() => {
+      const w = (window.__fr = { home: 0, busy: 0, frames: 0 });
+      const tick = () => {
+        w.frames++;
+        if (document.getElementById("idea-label") || document.querySelector(".composer")) w.home++;
+        if (document.querySelector("[data-testid=session-loading][aria-busy=true]")) w.busy++;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    let hold = false;
+    await pg.route(/\/api\/sessions\/[^/?]+(\?.*)?$/, async (route) => {
+      if (hold && route.request().method() === "GET") await new Promise((r) => setTimeout(r, 400));
+      await route.continue();
+    });
+    await pg.goto(sessionUrl(srv.url));
+    await pg.getByTestId("plan").waitFor({ timeout: 10000 });
+    const seen = [];
+    for (let i = 0; i < 16; i++) {
+      hold = i % 2 === 1;
+      await pg.reload();
+      await pg.getByTestId("plan").waitFor({ timeout: 10000 });
+      await pg.waitForTimeout(100);
+      seen.push({ hold, ...(await pg.evaluate(() => window.__fr)) });
+    }
+    const homes = seen.filter((x) => x.home > 0);
+    check(`review-pr27 nice 1 ${tag}: 16 reloads of a session page never paint Home`, homes.length === 0, JSON.stringify(homes.slice(0, 3)));
+    const held = seen.filter((x) => x.hold);
+    check(`review-pr27 nice 1 ${tag}: while the session loads, an empty busy session frame shows instead`, held.every((x) => x.busy > 0), JSON.stringify(held.map((x) => x.busy)));
+    await ctx.close();
+  }
 } finally {
   await browser.close();
   await srv.stop();

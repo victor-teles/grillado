@@ -132,7 +132,12 @@ export function App() {
   let body: React.ReactNode;
   let showAgent = true;
   let home = false;
-  if (!ready.length && !session) {
+  if (sessionId && !session && !picking) {
+    // A session URL whose GET is still in flight (a reload, a link): an empty, busy session frame, never Home,
+    // the picker or "no agent" for a frame first (review-pr27 nice 1).
+    showAgent = false;
+    body = <main className="smain" aria-busy="true" data-testid="session-loading" />;
+  } else if (!ready.length && !session) {
     showAgent = false;
     body = <NoAgent state={app} onRescan={async () => setApp(await api.rescan())} />;
   } else if (picking || (app.needsPicker && !session)) {
