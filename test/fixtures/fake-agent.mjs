@@ -4,7 +4,7 @@
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
 // leak-once | slow | broken-version | long), FAKE_GROK_FORMAT (legacy: grok 1.0.67's one-line envelope), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
-// FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
+// FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25), FAKE_GATE (stream only once this file exists),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
 // FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS, FAKE_SPLIT_LOG (a file that gets one line per split run), FAKE_GROUP (empty | missing | dup | invent).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -378,6 +378,8 @@ async function claudeStream(reply, text) {
   const line = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
   const ev = (event) => line({ type: "stream_event", event, session_id: "fake", uuid: "u" });
   const mode = process.env.FAKE_STREAM ?? "";
+  // FAKE_GATE: hold everything until this file exists, so a test can look at "before the first delta" for as long as it needs.
+  if (process.env.FAKE_GATE) for (const end = Date.now() + 60_000; !existsSync(process.env.FAKE_GATE) && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));
   line({ type: "system", subtype: "init", session_id: "fake", tools: ["StructuredOutput"] });
   ev({ type: "message_start", message: { id: "m1", role: "assistant", content: [] } });
   ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
