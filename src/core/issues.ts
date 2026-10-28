@@ -149,7 +149,7 @@ export function decisionId(s: Session, key: string): string {
 // written only here: option B (A plus the full plan in a closed <details>) or C (minimal) is a swap of these three.
 
 /** The end of every body: where it came from, and the hidden marker that finds it again. */
-const footer = (s: Session, key: string) => `\n\nFrom Grillado plan '${planTitle(s)}'\n${marker(s.id, key)}\n`;
+const footer = (s: Session, key: string) => `\n\nFrom Grillado plan ‘${planTitle(s)}’\n${marker(s.id, key)}\n`;
 
 /** The parent: Problem, Solution, the decisions (question, then answer), Out of scope. */
 function parentText(s: Session, md: string): { text: string; sections: string[] } {

@@ -47,7 +47,7 @@ describe("items", () => {
     expect(p.body).not.toContain("```decision");
     expect(p.body).not.toContain("User stories");
     expect(readMarker(p.body)).toEqual({ plan: s.id, key: PARENT_KEY });
-    expect(p.body).toContain(`\n\nFrom Grillado plan 'Recipe box'\n<!-- grillado:plan=${s.id} item=plan -->\n`);
+    expect(p.body).toContain(`\n\nFrom Grillado plan ‘Recipe box’\n<!-- grillado:plan=${s.id} item=plan -->\n`);
     expect(p.covers).toEqual(["storage", "sync"]);
   });
 

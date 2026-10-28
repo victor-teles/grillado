@@ -38,7 +38,10 @@ process.on("exit", () => {
 const bin = mkdtempSync(path.join(WORK, "bin-"));
 // The agent's knobs (FAKE_SPLIT_DELAY_MS…) live in a file too, so one server can see a slow split.
 const ACTL = path.join(bin, "agent-ctl.sh");
-const actl = (env = {}) => writeFileSync(ACTL, Object.entries(env).map(([k, v]) => `export ${k}=${v}\n`).join(""));
+// Every split the agent runs is logged, so the e2e can tell that opening the sheet ran nothing (BIG-3 B).
+const SPLIT_LOG = path.join(bin, "splits.log");
+const splits = () => (existsSync(SPLIT_LOG) ? readFileSync(SPLIT_LOG, "utf8").split("\n").filter(Boolean).length : 0);
+const actl = (env = {}) => writeFileSync(ACTL, Object.entries({ FAKE_SPLIT_LOG: SPLIT_LOG, ...env }).map(([k, v]) => `export ${k}=${v}\n`).join(""));
 actl();
 for (const id of ["claude", "codex", "pi"]) {
   writeFileSync(path.join(bin, id), `#!/bin/sh\n. "${ACTL}"\nexec "${NODE}" "${path.join(ROOT, "test/fixtures/fake-agent.mjs")}" ${id} "$@"\n`);
@@ -96,9 +99,9 @@ const freePort = () =>
       s.close(() => resolve(port));
     });
   });
-/** BIG-3's switch as built (a placeholder until Victor answers): the e2e follows whichever value it has. */
+/** BIG-3: option B, false (DECISIONS #186; Victor chose B on 2026-10-28). The e2e follows whichever value it has. */
 const SPLIT_ON_OPEN = /const SPLIT_ON_OPEN = (true|false);/.exec(readFileSync(path.join(ROOT, "web/src/app/issues/IssuesSheet.tsx"), "utf8"))?.[1] === "true";
-console.log(`BIG-3 placeholder: SPLIT_ON_OPEN = ${SPLIT_ON_OPEN}`);
+console.log(`BIG-3: SPLIT_ON_OPEN = ${SPLIT_ON_OPEN}`);
 async function server({ cwd = proj, config } = {}) {
   const home = mkdtempSync(path.join(WORK, "home-"));
   if (config) {
@@ -196,6 +199,49 @@ const smallTargets = (pg, scope) =>
       }
     return [...new Set(out)];
   }, scope);
+/**
+ * Review r2 must: hit areas, measured by tapping. Every control in the scope is scrolled into view and probed
+ * with elementFromPoint: through its centre, top to bottom and left to right, it must own ≥44px (the 40px tabs
+ * ≥40px), and no point of its own box may land on another control (a hit area covering it).
+ */
+const hitAudit = (pg, scope) =>
+  pg.evaluate((scope) => {
+    const SEL = "button,a[href],[role=checkbox],[role=option],[role=tab],textarea,input,select,[tabindex='0']";
+    const owner = (x, y) => document.elementFromPoint(x, y)?.closest(SEL) ?? null;
+    const name = (el) => `${el.tagName.toLowerCase()}[${(el.getAttribute("aria-label") ?? el.textContent ?? el.getAttribute("placeholder") ?? "").trim().replace(/\s+/g, " ").slice(0, 24)}]`;
+    const out = [];
+    const scrolled = [...document.querySelectorAll(".ish-b")].map((e) => [e, e.scrollTop]);
+    const wy = window.scrollY;
+    const all = [...document.querySelectorAll(scope)].flatMap((r) => [...r.querySelectorAll(SEL)]);
+    for (const el of all) {
+      if (el.closest(".sr-only") || el.closest("[aria-hidden=true]")) continue;
+      el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(el).visibility === "hidden") continue;
+      const need = el.getAttribute("role") === "tab" ? 39.5 : 43.5;
+      // A link that wraps has several boxes: probe through the first one.
+      const b = el.getClientRects()[0] ?? r;
+      const cx = b.left + b.width / 2;
+      const cy = b.top + b.height / 2;
+      let v = 0;
+      let h = 0;
+      for (let y = Math.floor(b.top - 40); y <= b.bottom + 40; y++) if (owner(cx, y + 0.5) === el) v++;
+      for (let x = Math.floor(b.left - 40); x <= b.right + 40; x++) if (owner(x + 0.5, cy) === el) h++;
+      if (v < need || h < need) out.push(`${name(el)} owns ${h}×${v}`);
+      for (let y = r.top + 1; y < r.bottom; y += 2)
+        for (let x = r.left + 1; x < r.right; x += 2) {
+          const o = owner(x, y);
+          if (o && o !== el && !o.contains(el) && !el.contains(o)) {
+            out.push(`${name(o)} covers ${name(el)} at y${Math.round(y - r.top)}`);
+            y = r.bottom;
+            break;
+          }
+        }
+    }
+    for (const [e, y] of scrolled) e.scrollTop = y;
+    window.scrollTo(0, wy);
+    return [...new Set(out)];
+  }, scope);
 const planUrl = (app, id) => `${new URL(app.url).origin}/s/${id}${new URL(app.url).search}`;
 const errors = [];
 
@@ -236,15 +282,25 @@ try {
     check("the how-line names gh and promises nothing is sent yet", /^Runs gh as @\S+ on this computer\. Nothing is sent before you click\.$/.test(await foot(pg).locator(".iac-n").last().textContent()));
     check("no public line on a private repo", (await sheet(pg).locator(".pub").count()) === 0);
 
-    // §3 the split. BIG-3 is a placeholder until Victor answers (QUESTIONS.md): this follows SPLIT_ON_OPEN.
+    // §3 the split. BIG-3: option B, "Split only when I ask" (DECISIONS #186). This follows SPLIT_ON_OPEN.
     const src = sheet(pg).locator(".ipv-src").first();
     if (SPLIT_ON_OPEN) {
       await sheet(pg).getByText(/^Split by Claude Code into/).waitFor({ timeout: 15000 });
-      check("BIG-3 placeholder (SPLIT_ON_OPEN = true): opening split the plan with the agent", /^Split by Claude Code into/.test(await src.textContent()), await src.textContent());
+      check("BIG-3 A (SPLIT_ON_OPEN = true): opening split the plan with the agent", /^Split by Claude Code into/.test(await src.textContent()), await src.textContent());
     } else {
-      check("BIG-3 placeholder (SPLIT_ON_OPEN = false): opening didn’t run the agent, the list is the user stories or the parent", /^(One issue per user story|Only the parent issue)/.test(await src.textContent()), await src.textContent());
-      await src.getByRole("button", { name: "Split with Claude Code" }).click();
+      const before = splits();
+      const ask = sheet(pg).locator(".iask");
+      await ask.waitFor({ timeout: 8000 });
+      await pg.waitForTimeout(1500);
+      check("BIG-3 B: opening the sheet runs no split (the agent wasn’t called)", splits() === before, `${before} → ${splits()}`);
+      check("BIG-3 B: nothing says it is splitting", (await sheet(pg).getByText(/is splitting the plan/).count()) === 0);
+      check("BIG-3 B: the list shows right away, no skeleton (this plan has no user stories, so the parent alone)", (await sheet(pg).locator(".ir.sk").count()) === 0 && (await sheet(pg).locator(".ir:not(.sk)").count()) === 1, String(await sheet(pg).locator(".ir:not(.sk)").count()));
+      check("BIG-3 B: the split is offered", /^Right now it’s only the parent issue\. Claude Code can split the plan into slices that each cover their decisions\.\s*Split with Claude Code$/.test(await ask.textContent()), await ask.textContent());
+      const sbtn = ask.getByRole("button", { name: "Split with Claude Code" });
+      check("BIG-3 B: “Split with Claude Code” is a real button (soft)", (await sbtn.getAttribute("class"))?.includes("btn soft"), await sbtn.getAttribute("class"));
+      await sbtn.click();
       await sheet(pg).getByText(/^Split by Claude Code into/).waitFor({ timeout: 15000 });
+      check("BIG-3 B: clicking Split runs the agent once", splits() === before + 1, `${before} → ${splits()}`);
     }
     const rows = sheet(pg).locator(".ir:not(.sk)");
     const n = await rows.count();
@@ -258,14 +314,14 @@ try {
     await x.click();
     const kb = await rows.nth(1).locator(".ir-body pre").textContent();
     check("Body opens the exact body", (await x.getAttribute("aria-expanded")) === "true" && kb.includes("grillado:plan="));
-    check("BIG-1 A: a child is its slice, “**Covers:** R1·1 question answer”, then where it came from", /\n\n\*\*Covers:\*\* R\d·\d \S/.test(kb) && /\n\nFrom Grillado plan '[^']+'\n<!-- grillado:plan=[\w-]+ item=[\w-]+ -->\s*$/.test(kb), kb);
+    check("BIG-1 A: a child is its slice, “**Covers:** R1·1 question answer”, then where it came from", /\n\n\*\*Covers:\*\* R\d·\d \S/.test(kb) && /\n\nFrom Grillado plan ‘[^’]+’\n<!-- grillado:plan=[\w-]+ item=[\w-]+ -->\s*$/.test(kb), kb);
     await shot(pg, "d-body", theme);
     await x.click();
     const px = rows.nth(0).locator(".ir-x");
     await px.click();
     const pb = await rows.nth(0).locator(".ir-body pre").textContent();
     const pos = (h) => pb.indexOf(h);
-    check("BIG-1 A: the parent is Problem, Solution, the decisions, Out of scope, then where it came from", pos("## Problem\n") === 0 && pos("## Decisions\n- **") > 0 && ["## Problem", "## Solution", "## Decisions", "## Out of scope"].map(pos).filter((i) => i >= 0).every((i, k, a) => !k || a[k - 1] < i) && !pb.includes("User stories") && /\n\nFrom Grillado plan '[^']+'\n<!-- grillado:plan=[\w-]+ item=plan -->\s*$/.test(pb), pb);
+    check("BIG-1 A: the parent is Problem, Solution, the decisions, Out of scope, then where it came from", pos("## Problem\n") === 0 && pos("## Decisions\n- **") > 0 && ["## Problem", "## Solution", "## Decisions", "## Out of scope"].map(pos).filter((i) => i >= 0).every((i, k, a) => !k || a[k - 1] < i) && !pb.includes("User stories") && /\n\nFrom Grillado plan ‘[^’]+’\n<!-- grillado:plan=[\w-]+ item=plan -->\s*$/.test(pb), pb);
     await shot(pg, "d-parentbody", theme);
     await px.click();
 
@@ -490,6 +546,8 @@ try {
       if (phone) {
         const small = await smallTargets(pg, "[data-testid=issues-strip],[data-testid^=issue-chips-]");
         check(`${theme} ${vp.w}: the strip and chips are 44px targets`, small.length === 0, small.join("; "));
+        const hitS = await hitAudit(pg, "[data-testid=issues-strip],[data-testid^=issue-chips-]");
+        check(`${theme} ${vp.w}: tapping the strip and chips, each owns 44px and none covers another`, hitS.length === 0, hitS.join("; "));
       }
       await openSheet(pg);
       const box = await sheet(pg).boundingBox();
@@ -506,10 +564,22 @@ try {
       if (phone) {
         const small = await smallTargets(pg, "[data-testid=issues-sheet]");
         check(`${theme} ${vp.w}: the sheet's targets are 44px (links, titles, Split again, the repo link)`, small.length === 0, small.join("; "));
+        const hit = await hitAudit(pg, "[data-testid=issues-sheet]");
+        check(`${theme} ${vp.w}: tapping the sheet, every control owns 44px and none covers another`, hit.length === 0, hit.join("; "));
         await sheet(pg).getByRole("tab", { name: "Linear" }).click();
         await sheet(pg).getByLabel("Linear API key").waitFor();
         const smallL = await smallTargets(pg, "[data-testid=issues-sheet]");
         check(`${theme} ${vp.w}: Linear's targets are 44px (the settings link)`, smallL.length === 0, smallL.join("; "));
+        const hitL = await hitAudit(pg, "[data-testid=issues-sheet]");
+        check(`${theme} ${vp.w}: tapping Linear, the key field, Connect and the settings link each own 44px`, hitL.length === 0, hitL.join("; "));
+        check(`${theme} ${vp.w}: the Linear key field is 16px (#172)`, (await sheet(pg).getByLabel("Linear API key").evaluate((e) => getComputedStyle(e).fontSize)) === "16px");
+        await sheet(pg).getByLabel("Linear API key").fill("lin_api_bad");
+        await sheet(pg).getByRole("button", { name: "Connect" }).click();
+        await sheet(pg).getByRole("alert").filter({ hasText: "That key didn’t work." }).waitFor({ timeout: 8000 });
+        const hitB = await hitAudit(pg, "[data-testid=issues-sheet]");
+        check(`${theme} ${vp.w}: tapping a bad key, the field, Connect and the settings link each own 44px`, hitB.length === 0, hitB.join("; "));
+        await shot(pg, `${tag}-linear-bad`, theme);
+        await sheet(pg).getByLabel("Linear API key").fill("");
         await shot(pg, `${tag}-linear`, theme);
         await sheet(pg).getByRole("tab", { name: "GitHub" }).click();
         await sheet(pg).getByRole("button", { name: "Repository" }).click();
@@ -525,6 +595,8 @@ try {
         await sheet(pg).locator(".ifix").waitFor({ timeout: 8000 });
         const small = await smallTargets(pg, "[data-testid=issues-sheet]");
         check(`${theme} ${vp.w}: the gh fix-it's targets are 44px (Copy, cli.github.com)`, small.length === 0, small.join("; "));
+        const hitF = await hitAudit(pg, "[data-testid=issues-sheet]");
+        check(`${theme} ${vp.w}: tapping the gh fix-it, Copy and cli.github.com each own 44px`, hitF.length === 0, hitF.join("; "));
         await shot(pg, `${tag}-fix-missing`, theme);
         ctl();
         await pg.keyboard.press("Escape");
@@ -549,21 +621,68 @@ try {
     actl({ FAKE_SPLIT_DELAY_MS: 2500 });
     await pg.reload();
     await pg.getByTestId("plan").waitFor();
+    const before = splits();
     await openSheet(pg);
-    if (!SPLIT_ON_OPEN) await sheet(pg).locator(".ipv-src").first().getByRole("button", { name: "Split with Claude Code" }).click();
+    if (!SPLIT_ON_OPEN) {
+      const ask = sheet(pg).locator(".iask");
+      await ask.waitFor({ timeout: 8000 });
+      await pg.waitForTimeout(1500);
+      check("BIG-3 B, no user stories: opening runs no split", splits() === before, `${before} → ${splits()}`);
+      check("BIG-3 B, no user stories: the parent issue alone is listed", (await sheet(pg).locator(".ir:not(.sk)").count()) === 1, String(await sheet(pg).locator(".ir:not(.sk)").count()));
+      check("BIG-3 B, no user stories: the offer says it's the parent alone", /^Right now it’s only the parent issue\. Claude Code can split the plan into slices/.test(await ask.textContent()), await ask.textContent());
+      await shot(pg, "r3-nostories-ask", theme);
+      await ask.getByRole("button", { name: "Split with Claude Code" }).click();
+    }
     await sheet(pg).getByText(/is splitting the plan/).waitFor({ timeout: 8000 });
     const alt = sheet(pg).locator(".ipv-src").first().getByRole("button").last();
     check("no user stories: while splitting, the way out is “Use the parent issue alone”", (await alt.textContent()) === "Use the parent issue alone", await alt.textContent());
     await shot(pg, "r2-split-nostories", theme);
     await alt.click();
-    await sheet(pg).locator(".ipv-src", { hasText: /^Only the parent issue/ }).waitFor({ timeout: 8000 });
+    await sheet(pg).locator(".iask", { hasText: /only the parent issue/ }).waitFor({ timeout: 8000 });
     await pg.keyboard.press("Escape");
     await sheet(pg).waitFor({ state: "detached" });
 
     writeFileSync(file, `${noStories}\n\n## User stories\n\n- As a plant owner, I get a reminder on watering day.\n- As a plant owner, I can snooze a reminder for a day.\n`);
     await pg.reload();
     await pg.getByTestId("plan").waitFor();
+    const before2 = splits();
     await openSheet(pg);
+    if (!SPLIT_ON_OPEN) {
+      // Frame d-q-split-ask: the story issues right away, and the split offered.
+      const ask = sheet(pg).locator(".iask");
+      await ask.waitFor({ timeout: 8000 });
+      await pg.waitForTimeout(1500);
+      check("BIG-3 B, with stories: opening runs no split", splits() === before2, `${before2} → ${splits()}`);
+      check("BIG-3 B, with stories: the parent and one issue per story show right away", (await sheet(pg).locator(".ir:not(.sk)").count()) === 3 && (await sheet(pg).locator(".ir.sk").count()) === 0, String(await sheet(pg).locator(".ir:not(.sk)").count()));
+      check("BIG-3 B, with stories: the split is offered as in d-q-split-ask", /^Right now it’s one issue per user story\. Claude Code can split the plan into thinner slices that each cover their decisions\.\s*Split with Claude Code$/.test(await ask.textContent()), await ask.textContent());
+      check("BIG-3 B, with stories: “Split with Claude Code” is a soft button", (await ask.getByRole("button", { name: "Split with Claude Code" }).getAttribute("class"))?.includes("btn soft"));
+      await shot(pg, "d-split-ask", theme);
+      await pg.setViewportSize({ width: 320, height: 640 });
+      await pg.waitForTimeout(400);
+      await ask.scrollIntoViewIfNeeded();
+      const bb = await ask.getByRole("button", { name: "Split with Claude Code" }).boundingBox();
+      const ab = await ask.boundingBox();
+      check("BIG-3 B at 320: “Split with Claude Code” stacks under the text, full width, 44px", bb.height >= 44 && Math.abs(bb.width - (ab.width - 28)) < 2, JSON.stringify({ bb, ab }));
+      await shot(pg, "m320-split-ask", theme);
+      await pg.setViewportSize({ width: 1440, height: 900 });
+      await pg.waitForTimeout(400);
+      // r2 nice 3: by keyboard, Split → the way out → back, focus always lands on a visible control.
+      actl({ FAKE_SPLIT_DELAY_MS: 2500 });
+      const focused = () => pg.evaluate(() => { const a = document.activeElement; return `${a?.tagName.toLowerCase()}:${a?.textContent?.trim()}:${a?.matches(":focus-visible")}`; });
+      await ask.getByRole("button", { name: "Split with Claude Code" }).focus();
+      await pg.keyboard.press("Enter");
+      await sheet(pg).getByText(/is splitting the plan/).waitFor({ timeout: 8000 });
+      await pg.waitForTimeout(100);
+      check("keyboard Split: focus moves to the way out, with its ring", (await focused()) === "button:Use the user stories instead:true", await focused());
+      await pg.keyboard.press("Enter");
+      await ask.waitFor({ timeout: 8000 });
+      await pg.waitForFunction(() => document.activeElement?.textContent?.trim() === "Split with Claude Code", null, { timeout: 3000 }).catch(() => {});
+      await pg.waitForTimeout(300);
+      check("keyboard way out: focus lands on “Split with Claude Code”, with its ring (not the page, not the sheet)", (await focused()) === "button:Split with Claude Code:true", await focused());
+      await pg.waitForTimeout(2600);
+      check("the way out stopped the split: still one issue per user story", (await sheet(pg).locator(".iask", { hasText: /one issue per user story/ }).count()) === 1);
+      actl();
+    }
     if (SPLIT_ON_OPEN) {
       await sheet(pg).getByText(/is splitting the plan/).waitFor({ timeout: 8000 });
       const use = sheet(pg).locator(".ipv-src").first().getByRole("button", { name: "Use the user stories instead" });
@@ -571,7 +690,7 @@ try {
       await use.click();
     }
     actl();
-    await sheet(pg).locator(".ipv-src", { hasText: /^One issue per user story/ }).waitFor({ timeout: 8000 });
+    await sheet(pg).locator(".iask", { hasText: /one issue per user story/ }).waitFor({ timeout: 8000 });
     const rows = sheet(pg).locator(".ir:not(.sk)");
     check("r2: the parent and one issue per story", (await rows.count()) === 3, String(await rows.count()));
     await rows.nth(1).locator("textarea").fill("Watering-day reminder");

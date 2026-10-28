@@ -14,11 +14,11 @@ import { ICOPY, TNAME, labelsLine, plural } from "./copy";
 import { ListBox, type Opt, Select } from "./Pick";
 
 /**
- * BIG-3, whether the split runs by itself. PLACEHOLDER until Victor answers BIG-3 (QUESTIONS.md): this is
- * option A as framed, the split starts when the sheet opens, once per plan version (the server caches it),
- * and never after an export. `false` is option B: only when asked, from "Split with {agent}".
+ * BIG-3, whether the split runs by itself: option B, "Split only when I ask" (DECISIONS #186; Victor chose B on
+ * 2026-10-28). The sheet opens on one issue per user story (or the parent alone), and the agent runs only from
+ * "Split with {agent}" (frame d-q-split-ask). `true` would be option A: split on open, once per plan version.
  */
-const SPLIT_ON_OPEN = true;
+const SPLIT_ON_OPEN = false;
 
 const PARENT = "plan";
 const REPO = /^[\w.-]+\/[\w.-]+$/;
@@ -207,7 +207,23 @@ export function IssuesSheet(p: {
     };
   }, [st, destKey]);
 
+  // Starting a split, or taking its way out, removes the control that had focus: hand focus on to what
+  // replaces it (the way out while it splits, then "Split with {agent}" or the destination tab).
+  const askBtn = useRef<HTMLButtonElement>(null);
+  const wayBtn = useRef<HTMLButtonElement>(null);
+  const [refocus, setRefocus] = useState<"way" | "after" | null>(null);
+  useEffect(() => {
+    if (!refocus) return;
+    setRefocus(null);
+    const a = document.activeElement;
+    // (the #179 effect may have parked it on the destination tab meanwhile)
+    if (a && a !== document.body && a !== sheet.current && !a.closest("[role=tablist]")) return;
+    (refocus === "way" ? wayBtn.current : (askBtn.current ?? firstFocus.current))?.focus({ preventScroll: true });
+  }, [refocus]);
   const split = async (fallback = false) => {
+    // The way out removes the link that had focus: give it back to something visible once the list is back.
+    const back = !!sheet.current?.contains(document.activeElement) && document.activeElement !== sheet.current;
+    if (back) setRefocus(fallback ? "after" : "way");
     setAskSplit(false);
     setSplitFailed(false);
     setSplitting(!fallback);
@@ -221,6 +237,7 @@ export function IssuesSheet(p: {
       setErr(errOf(e));
     } finally {
       setSplitting(false);
+      if (back) setRefocus("after");
     }
   };
 
@@ -832,8 +849,8 @@ export function IssuesSheet(p: {
       source = (
         <p className="ipv-src" role="status">
           {p.agentName} is splitting the plan into slices…<span className="dt">·</span>
-          <button type="button" className="lnk" onClick={() => void split(true)}>
-            {pv.fallback === "none" ? "Use the parent issue alone" : "Use the user stories instead"}
+          <button ref={wayBtn} type="button" className="lnk" onClick={() => void split(true)}>
+            {pv.fallback === "none" ? "Use the parent issue alone" : pv.fallback === "todos" ? "Use the plan’s to-dos instead" : "Use the user stories instead"}
           </button>
         </p>
       );
@@ -880,11 +897,15 @@ export function IssuesSheet(p: {
     else if (pv.source === "todos") source = <p className="ipv-src">From the plan’s {plural(kids.length, "to-do")}</p>;
     else
       source = (
-        <p className="ipv-src">
-          {pv.source === "stories" ? `One issue per user story` : "Only the parent issue"}
-          <span className="dt">·</span>
-          {splitLink(`Split with ${p.agentName}`)}
-        </p>
+        <div className="iask">
+          <span>
+            {pv.source === "stories" ? "Right now it’s one issue per user story." : "Right now it’s only the parent issue."} {p.agentName} can split the
+            plan into {pv.source === "stories" ? "thinner slices" : "slices"} that each cover their decisions.
+          </span>
+          <button ref={askBtn} type="button" className="btn soft sm" onClick={() => (editedTitles && !askSplit ? setAskSplit(true) : void split())}>
+            Split with {p.agentName}
+          </button>
+        </div>
       );
   }
 

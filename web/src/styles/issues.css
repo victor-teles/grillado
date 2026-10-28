@@ -200,7 +200,7 @@ html[data-kbd] .ish,html[data-kbd] .ilist,html[data-kbd] .ir-x svg,html[data-kbd
   .isw button{height:40px}
   .isw{padding:2px}
   .isel,.in5{height:44px;font-size:16px}
-  .ikey .in5{font-size:15px}
+  .ikey .in5{font-size:16px}
   .ikey .btn{height:44px}
   .igrid{grid-template-columns:1fr}
   .ichip{height:32px;position:relative}
@@ -213,7 +213,7 @@ html[data-kbd] .ish,html[data-kbd] .ilist,html[data-kbd] .ir-x svg,html[data-kbd
   .ir-ti,.ir-tt{min-height:44px;padding:12px 8px;font-size:16px;line-height:20px}
   .icb{margin-top:11px}
   .ir-x{height:32px;position:relative}
-  .ir-x::after{content:"";position:absolute;inset:-6px -4px}
+  .ir-x::after{content:"";position:absolute;inset:0 -4px -12px}
   .ist{margin-left:0}
   .ir-meta{gap:4px 14px}
   .ish .cbtn{height:36px;position:relative}
@@ -300,7 +300,24 @@ html[data-kbd] :is(.ish,.ish *,.ischrim,.istrip,.istrip *,.ilks,.ilks *),html[da
 /* Phones and touch: 44px hit areas on the sheet's text links, the look unchanged (#172). */
 @media (max-width:640px),(pointer:coarse){
   .ish .lnk{position:relative}
-  .ish .lnk::after{content:"";position:absolute;top:-14px;bottom:-14px;left:min(-4px,calc(50% - 22px));right:min(-4px,calc(50% - 22px))}
+  /* Review r2: they grow down and sideways only, so they never cover the field or button above a hint line. */
+  .ish .lnk::after{content:"";position:absolute;top:-4px;bottom:-24px;left:min(-4px,calc(50% - 22px));right:min(-4px,calc(50% - 22px))}
 }
+@media (max-width:640px){
+  /* the intro's link: 4px under the sticky header, not clipped by it */
+  .ish-b{padding-top:4px}
+  /* the checkbox's 44px reaches left, into the row's padding, not into the title */
+  .icb::after{inset:-13px -4px -13px -22px}
+  /* cli.github.com's hit area reaches 24px down: room for it above Check again */
+  .ifix-o{margin-bottom:14px}
+  /* Split again sits right above the list: its hit area stays centred, as before */
+  .ish .ipv-src .lnk::after{top:-14px;bottom:-14px}
+}
+/* 320: 4px more between the checkbox and the title, so the checkbox's 44px fits on screen without covering it */
+@media (max-width:360px){.ir{gap:12px}}
 .ipv-src.stale{margin-top:-6px}
 .ish:focus{outline:none}
+
+/* BIG-3 B: the split is offered, not run (frame d-q-split-ask) */
+.iask{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border-radius:12px;background:var(--sel);font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+@media (max-width:640px){.iask{grid-template-columns:1fr}.iask .btn{height:44px}}

@@ -6,7 +6,7 @@
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
 // FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
-// FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS.
+// FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS, FAKE_SPLIT_LOG (a file that gets one line per split run).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -313,6 +313,7 @@ function splitReply() {
   return { type: "slices", slices };
 }
 
+if (isSplit && process.env.FAKE_SPLIT_LOG) appendFileSync(process.env.FAKE_SPLIT_LOG, `${name}\n`);
 if (isSplit && process.env.FAKE_SPLIT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_SPLIT_DELAY_MS)));
 if (isImport && process.env.FAKE_IMPORT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_IMPORT_DELAY_MS)));
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
