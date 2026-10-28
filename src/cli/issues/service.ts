@@ -3,7 +3,7 @@
 import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import path from "node:path";
 import { findBanned } from "../../core/filter.ts";
-import { type IssueItem, type IssueLink, PARENT_KEY, type PlanIssues, type Tracker, contentHash } from "../../core/issues.ts";
+import { type IssueItem, type IssueLink, PARENT_KEY, type PlanIssues, type Tracker, contentHash, sameAsSent } from "../../core/issues.ts";
 import { type Session, userText } from "../../core/session.ts";
 import { type Store, withLock, writeAtomic } from "../store.ts";
 import { type IssueTracker, type RemoteIssue, TrackerError, saidAfter } from "./tracker.ts";
@@ -191,7 +191,7 @@ export async function runExport(s: Session, req: ExportRequest, hooks: { save: (
             await tracker.attach(have, parent);
             setLink(it.key, { ...have, unattached: undefined });
           }
-          if (mine === have.contentHash) {
+          if (sameAsSent(it, have.contentHash)) {
             row(it.key, { status: "unchanged", ...shown(have) });
             return true;
           }

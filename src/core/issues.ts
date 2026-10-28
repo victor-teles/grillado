@@ -23,6 +23,9 @@ export interface IssueItem {
   sections: string[];
   /** The body was cut to fit the tracker. */
   cut?: boolean;
+  /** The hash of this item as builds before #28 sent it (its Covers line led with R·n codes), when that differs:
+   *  an issue sent then still matches, so it isn't "changed" just because the codes left (review-pr28 must 3). */
+  legacyHash?: string;
 }
 
 /** A slice proposed by {agent}, before it becomes an item. */
@@ -163,10 +166,17 @@ function parentText(s: Session, md: string): { text: string; sections: string[] 
   return { text: parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, "")), sections };
 }
 
-/** A child: its slice's first paragraph, "**Covers:** question answer" (no internal R·n code), then the rest of the slice. */
-function childText(s: Session, x: Slice, covers: string[]): string {
+/** "R2·2": a decision's id as the plan page showed it before #28 (round, then its place in the round). */
+function decisionId(s: Session, key: string): string {
+  const r = s.rounds.find((x) => x.questions.some((q) => q.key === key));
+  return r ? `R${r.n}·${r.questions.findIndex((q) => q.key === key) + 1}` : "";
+}
+
+/** A child: its slice's first paragraph, "**Covers:** question answer" (no internal R·n code), then the rest of the slice.
+ *  `legacy`: the same with the R·n codes, as sent before #28, only to recognise those issues. */
+function childText(s: Session, x: Slice, covers: string[], legacy = false): string {
   const [head, ...rest] = (cleanText(x.body) || x.title).split(/\n{2,}/);
-  const line = covers.map((k) => `${s.decisions[k].title.trim()} ${s.decisions[k].answer.trim()}`.trim()).join(" · ");
+  const line = covers.map((k) => `${legacy ? `${decisionId(s, k)} ` : ""}${s.decisions[k].title.trim()} ${s.decisions[k].answer.trim()}`.trim()).join(" · ");
   return [head, line ? `**Covers:** ${line}` : "", ...rest].filter(Boolean).join("\n\n");
 }
 // ---------------------------------------------------------------- end of BIG-1
@@ -202,9 +212,11 @@ export function parentItem(s: Session, md: string, tracker: Tracker): IssueItem 
 export function childItem(s: Session, x: Slice, tracker: Tracker): IssueItem {
   const known = new Set(Object.keys(s.decisions));
   const covers = [...new Set(x.covers.filter((k) => known.has(k)))];
-  const text = childText(s, x, covers);
-  const { body, cut } = fitBody(text, footer(s, x.key), BODY_LIMIT[tracker], `the parent issue “${planTitle(s)}”`, TRACKER_NAME[tracker]);
-  return { key: x.key, title: x.title.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE), body, covers, sections: x.sections, ...(cut ? { cut } : {}) };
+  const fit = (text: string) => fitBody(text, footer(s, x.key), BODY_LIMIT[tracker], `the parent issue “${planTitle(s)}”`, TRACKER_NAME[tracker]);
+  const { body, cut } = fit(childText(s, x, covers));
+  const title = x.title.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE);
+  const old = fit(childText(s, x, covers, true)).body;
+  return { key: x.key, title, body, covers, sections: x.sections, ...(cut ? { cut } : {}), ...(old !== body ? { legacyHash: contentHash(title, old) } : {}) };
 }
 
 /** Distinct keys: a repeated slug gets -2, -3; never the parent's. */
@@ -328,6 +340,9 @@ export interface Planned {
   failed?: string;
 }
 
+/** The item is what was sent last time: today's text, or (for an issue sent before #28) the same text with R·n codes. */
+export const sameAsSent = (it: IssueItem, hash: string) => contentHash(it.title, it.body) === hash || it.legacyHash === hash;
+
 /** What each item would do. `remote` is the tracker's current title/body hash per linked key (null = 404), when checked. */
 export function planChanges(items: IssueItem[], issues: PlanIssues | undefined, remote: Record<string, string | null> = {}): Planned[] {
   const links: Record<string, IssueLink> = { ...(issues?.items ?? {}), ...(issues?.parent ? { [PARENT_KEY]: issues.parent } : {}) };
@@ -336,8 +351,7 @@ export function planChanges(items: IssueItem[], issues: PlanIssues | undefined, 
     const failed = issues?.failed?.[it.key];
     if (!link) return { key: it.key, change: "new", ...(failed ? { failed } : {}) };
     if (remote[it.key] === null) return { key: it.key, change: "missing", link };
-    const mine = contentHash(it.title, it.body);
-    if (mine === link.contentHash) return { key: it.key, change: "unchanged", link };
+    if (sameAsSent(it, link.contentHash)) return { key: it.key, change: "unchanged", link };
     const theirs = remote[it.key];
     if (theirs !== undefined && theirs !== link.contentHash) return { key: it.key, change: "edited", link, ...(failed ? { failed } : {}) };
     return { key: it.key, change: "update", link, ...(failed ? { failed } : {}) };

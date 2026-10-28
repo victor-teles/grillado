@@ -14,6 +14,7 @@ import type { ProviderId } from "../src/core/providers/types.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
 import { type LinearMock, STORY_MD, fakeGh, isWrite, linearMock, storySession } from "./issues-fixture.ts";
 import { draftSession } from "./mcp-fixture.ts";
+import { buildItems, contentHash, fallbackSlices } from "../src/core/issues.ts";
 
 const servers: GrilladoServer[] = [];
 let mock: LinearMock | undefined;
@@ -148,6 +149,34 @@ describe("export", () => {
     expect(gh.state().issues.length).toBe(4);
     const stats = JSON.parse(readFileSync(path.join(store.dir, "stats.json"), "utf8")).issues;
     expect(stats).toMatchObject({ runs: 2, cleanRuns: 2, created: 4, github: 2, plans: [s.id] });
+  });
+
+  // review-pr28 must 3: a plan exported before #28 ("**Covers:** R1·1 question answer") reads unchanged after it,
+  // and an export over it writes nothing. Store and fake gh are seeded as that export left them, before the server reads them.
+  test("issues sent with the old R·n Covers line read unchanged, and an export leaves them as sent", async () => {
+    const { store, gh, call, done } = await start();
+    const s = storySession(store);
+    const q = (key: string, title: string) => ({ key, label: "", title, body: "", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }], recommendedOptionId: "a", dependsOn: [] });
+    const round = (n: number, questions: unknown[]) => ({ n, questions, summary: "", askedAt: s.createdAt, answeredAt: s.createdAt }) as any;
+    s.rounds = [round(1, [q("storage", "Where do recipes live?")]), round(2, [q("other", "Who cooks?"), q("sync", "Sync between devices?")])];
+    const { items } = buildItems(s, STORY_MD, "github", fallbackSlices(s, STORY_MD).slices);
+    const old = (b: string) => b.replace("**Covers:** Where do recipes live?", "**Covers:** R1·1 Where do recipes live?").replace("**Covers:** Sync between devices?", "**Covers:** R2·2 Sync between devices?");
+    expect(items.filter((it) => old(it.body) !== it.body).length).toBe(2);
+    const url = (n: number) => `https://github.com/victor-teles/grillado/issues/${n}`;
+    writeFileSync(path.join(gh.dir, "state.json"), JSON.stringify({
+      next: items.length + 1, creates: items.length, failed: [], labels: [{ name: "bug", color: "d73a4a" }],
+      issues: items.map((it, i) => ({ id: 9001 + i, number: i + 1, title: it.title, body: old(it.body), labels: [], state: "open", parent: i ? 1 : null })),
+    }));
+    const link = (i: number) => ({ id: String(9001 + i), number: i + 1, url: url(i + 1), contentHash: contentHash(items[i].title, old(items[i].body)) });
+    s.issues = { tracker: "github", target: "victor-teles/grillado", labels: [], parent: link(0), items: Object.fromEntries(items.slice(1).map((it, i) => [it.key, link(i + 1)])), exportedAt: new Date().toISOString() };
+    store.save(s);
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.changes.map((c: any) => c.change)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+    const before = gh.calls().length;
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: items.map((it) => it.key) });
+    expect((await done(s.id)).run.rows.map((x: any) => x.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+    expect(gh.calls().slice(before).filter((c) => isWrite(c.args))).toEqual([]);
+    expect(gh.state().issues.map((x) => x.body)).toEqual(items.map((it) => old(it.body)));
   });
 
   test("Retry failed sends only the failed ones", async () => {
