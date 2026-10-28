@@ -1,7 +1,7 @@
 // v1.3 item 1 · Found in this project (handoff §1–§4, §7). The one component and the one mount
 // point for the group: Home renders <Found> once, so moving the group (Q1) is a one-line change.
 import { isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { reasonCode, reasonText, sourceLabel } from "../../../../src/core/activity.ts";
+import { reasonText, sourceLabel } from "../../../../src/core/activity.ts";
 import { ApiError, api, foundListeners } from "../api";
 import { IBranch, ICheck, IRetry, IX } from "../icons";
 import type { FoundRow, FoundView } from "../types";
@@ -39,7 +39,7 @@ function importReason(err: unknown, agent: string): { reason: string; retry: "im
   if (err.status === 0) return { reason: "Grillado isn’t running", retry: "import" };
   switch (code) {
     case "agent":
-      return { reason: reasonText(reasonCode(String(err.data.reason ?? "")), agent), retry: "import" };
+      return { reason: reasonText(String(err.data.reason ?? ""), agent), retry: "import" };
     case "unreadable":
       return { reason: "Couldn’t read the source", retry: "import" };
     case "busy":
@@ -405,7 +405,7 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
     const running = on.agent.running === r.id;
     const waiting = on.agent.waiting.includes(r.id);
     const failedCode = on.agent.failed[r.id];
-    const failed = ph?.p === "failed" ? ph : !ph && failedCode ? { reason: reasonText(reasonCode(failedCode), agent), retry: "import" as const } : null;
+    const failed = ph?.p === "failed" ? ph : !ph && failedCode ? { reason: reasonText(failedCode, agent), retry: "import" as const } : null;
     let nm: React.ReactNode = titleOf(r);
     let segs = restMeta(r, branch);
     let act: React.ReactNode = null;

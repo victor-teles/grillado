@@ -1,10 +1,11 @@
 // In-session screens: dispatcher, problem banners, confirm (+ reopen dialogs), plating.
+import { failureCode, reasonText } from "../../../src/core/reason.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { COPY } from "./copy";
 import { confirmCounts, countText, plural, stillOpen } from "./counts";
-import { IAlert, IClock, IKey, ISq, IWifi } from "./icons";
+import { IAlert, IClock, IKey, ISq, ITerm } from "./icons";
 import { PlanView } from "./Plan";
 import { FiringUp, RoundView, SessionBody, Strip, WaitingView } from "./Round";
 import type { AppState, Decision, DecisionNode, SessionView, TreeState } from "./types";
@@ -59,7 +60,8 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
   const provider = app.providers.find((p) => p.id === session.provider);
   const name = provider?.displayName ?? session.provider;
   const others = app.providers.filter((p) => p.status === "ready" && p.id !== session.provider);
-  const code = session.error?.code ?? "unknown";
+  // The shared normalisation (core/reason.ts), so any code the server sends picks a card.
+  const code = failureCode(session.error?.code);
   const retry = () => quiet(act("retry"));
   const sw = others.length ? (
     <button type="button" className="btn quiet" onClick={onSwitch}>
@@ -77,7 +79,15 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
     rate_limit: { icon: <IClock s={16} />, title: `${name} needs a short break`, body: "It hit its usage limit. Try again in a few minutes, or switch agents.", retry: "Retry" },
     timeout: { icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "Nothing came back in time. Your answers are saved.", retry: "Retry" },
     malformed: { icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
-    not_found: { icon: <IWifi s={16} />, title: `Can't reach ${name}`, body: "The command couldn't be started. Grillado keeps your answers and retries when you ask.", retry: "Retry" },
+    // Like a missing gh (#165): say it isn't installed and how to install it (review-pr22 #3).
+    not_found: {
+      icon: <ITerm s={16} />,
+      title: reasonText("not_found", name),
+      body: `Grillado runs your own ${name}. Install it, then retry. Your answers are kept.`,
+      // The command gets its own row, a well that wraps between words, so a long one (Grok's curl) never runs off a phone (review-pr22 r3 #1, r4 #1).
+      cmd: provider?.installHint,
+      retry: "Retry",
+    },
     unknown: { icon: <IAlert s={16} />, title: "Can't reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
   }[code];
   // v1.2: one neutral surface; the tone is only on the icon (warning-ink, muted for a rate limit).
@@ -90,6 +100,7 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
       <div>
         {copy.title ? <p className="t">{copy.title}</p> : null}
         <p>{copy.body}</p>
+        {"cmd" in copy && copy.cmd ? <CopyButton kind="well" text={copy.cmd} label={`Copy ${copy.cmd}`} /> : null}
       </div>
       <div className="acts">
         {code === "auth" ? null : sw}
@@ -348,7 +359,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
 
 function Plating({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
   const busy = session.busy;
-  const elapsed = useSince(session.updatedAt, busy);
+  const elapsed = useSince(session.runAt ?? session.updatedAt, busy);
   const groups = groupDecisions(session);
   const n = Object.keys(session.decisions).length;
   const base = `Plating your plan from ${n} ${n === 1 ? "decision" : "decisions"}…`;

@@ -109,9 +109,25 @@ describe("groups (#52), copy log (#60), live region (#61)", () => {
   });
   test("Copy log is Markdown plain text with the current agent name", () => {
     const [e] = fold(run("r1", "apply", 0, { suggestions: [{ id: "s1", section: "Sync" }] }, [["Read your comment and {agent}’s reply", 3], ["{agent} wrote 1 suggestion", 4200]]));
-    expect(copyText(e, { agent: "Claude Code", statusOf: () => "accepted" })).toMatch(/^Applied feedback on "Hosting" · Claude Code · Oct 26, \d+:\d\d [AP]M · 4\.2 s\n- Read your comment and Claude Code's reply · 3 ms\n- Claude Code wrote 1 suggestion · 4\.2 s\nResult: 1 suggestion \(Sync: accepted\)$/);
+    expect(copyText(e, { agent: "Claude Code", statusOf: () => "accepted" })).toMatch(/^Applied feedback on "Hosting" · Claude Code · Oct 26, \d+:\d\d [AP]M · 4\.2 s\n- Read your comment and Claude Code’s reply · 3 ms\n- Claude Code wrote 1 suggestion · 4\.2 s\nResult: 1 suggestion \(Sync: accepted\)$/);
     const [f] = fold(run("r2", "apply", 0, { status: "failed", reason: "rate" }));
     expect(copyText(f, { agent: "Claude Code" }).split("\n").at(-1)).toBe("Result: failed — Claude Code hit its usage limit. Nothing was changed.");
+ 
+  });
+  test("a failed diagrams run that kept suggestions says so, like the bar (review-pr22 #1)", () => {
+    for (const [n, words] of [[1, "1 suggestion kept"], [2, "2 suggestions kept"]] as const) {
+      const [f] = fold(run(`d${n}`, "diagrams", 0, { status: "failed", reason: "rate_limit", result: { diagrams: n, skipped: 0 } }, [["{agent} drew a diagram for ‘Problem’", 5], ["Read the plan's sections", 2]]));
+      expect(meta(f, { agent: "Claude Code" })).toMatch(new RegExp(`Claude Code hit its usage limit · ${words}$`));
+      expect(meta(f, { agent: "Claude Code" })).not.toContain("nothing was changed");
+      const log = copyText(f, { agent: "Claude Code" });
+      expect(log.split("\n").at(-1)).toBe(`Result: failed — Claude Code hit its usage limit. ${words[0].toUpperCase()}${words.slice(1)}.`);
+      // One apostrophe style: the curly ’ in the steps too.
+      expect(log).toContain("- Read the plan’s sections");
+      expect(log).toContain("‘Problem’");
+      expect(log).not.toMatch(/\w'\w/);
+    }
+    const [z] = fold(run("d0", "diagrams", 0, { status: "failed", reason: "rate_limit", result: { diagrams: 0, skipped: 0 } }));
+    expect(meta(z, { agent: "Claude Code" })).toMatch(/hit its usage limit · nothing was changed$/);
   });
   test("live messages are run-level", () => {
     const lines = run("r1", "apply", 0, { suggestions: [{ id: "s1" }] }, [["x", 4400]]);
