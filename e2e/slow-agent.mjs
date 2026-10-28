@@ -20,7 +20,7 @@ const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const NOTE = "Rounds can take a few minutes.";
 const TITLE = "Grok is running slow";
-const BODY = "It hasn’t answered yet, so Grillado stopped waiting. Your answers are saved.";
+const BODY = "Nothing came back in time. Your answers are saved.";
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail = "") {
@@ -145,7 +145,7 @@ try {
       await card.waitFor({ timeout: 15000 });
       const text = await card.innerText();
       check(`${at}: the timeout card says “${TITLE}”`, text.includes(TITLE) && text.includes(BODY), text.replace(/\s+/g, " "));
-      check(`${at}: and never that the reply failed`, !/didn.t come through|Nothing came back|fail/i.test(text));
+      check(`${at}: and never that the reply failed`, !/didn.t come through|fail|stopped responding/i.test(text));
       check(`${at}: the card is the quiet kind (clock, info tone)`, (await card.getAttribute("data-tone")) === "info");
       check(`${at}: Retry is there`, await card.getByRole("button", { name: "Retry" }).isVisible());
       const focused = () => pg.evaluate(() => `${document.activeElement?.tagName}:${document.activeElement?.textContent?.trim()}`);
@@ -155,10 +155,23 @@ try {
       await pg.mouse.move(0, 0);
       await shot("3-timeout");
       if (theme === "dark") await axe(pg, `${at}: timeout card`);
-      s.mode({});
+      // A real failure (an unreadable reply on Retry): the error card, focus on its Retry.
+      s.mode({ FAKE_MODE: "garbage" });
       await card.getByRole("button", { name: "Retry" }).click();
+      const errCard = pg.locator("[data-testid=problem]:not([data-code=timeout])");
+      await errCard.waitFor({ timeout: 30000 });
+      const et = (await errCard.innerText()).replace(/\s+/g, " ");
+      check(`${at}: an unreadable reply shows the error card, with curly apostrophes`, !/'/.test(et), et);
+      await pg.waitForFunction(() => document.activeElement?.textContent?.trim() === "Retry", null, { timeout: 3000 }).catch(() => {});
+      check(`${at}: after the error, focus moves to Retry (review-pr26 #4)`, (await focused()) === "BUTTON:Retry", await focused());
+      check(`${at}: error card fits`, (await fits(pg, ["[data-testid=problem]", "[data-testid=problem] button"])).length === 0);
+      await pg.mouse.move(0, 0);
+      await shot("4-error");
+      if (theme === "light") await axe(pg, `${at}: error card`);
+      s.mode({});
+      await errCard.getByRole("button", { name: "Retry" }).click();
       await pg.getByRole("button", { name: /Yes, plate it/ }).waitFor({ timeout: 15000 });
-      check(`${at}: Retry carries on to the confirm step`, (await card.count()) === 0);
+      check(`${at}: Retry carries on to the confirm step`, (await pg.locator("[data-testid=problem]").count()) === 0);
 
       await ctx.close();
       await s.stop();
