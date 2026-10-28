@@ -557,6 +557,7 @@ export class GrilladoServer {
       issuesRun: this.issues?.runView(s.id),
       // Grillado's own cache, not the browser's business.
       issueSplit: undefined,
+      issueTitles: undefined,
     };
   }
 

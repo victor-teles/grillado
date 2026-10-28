@@ -36,8 +36,12 @@ process.on("exit", () => {
 
 // ---------------------------------------------------------------- fakes
 const bin = mkdtempSync(path.join(WORK, "bin-"));
+// The agent's knobs (FAKE_SPLIT_DELAY_MS…) live in a file too, so one server can see a slow split.
+const ACTL = path.join(bin, "agent-ctl.sh");
+const actl = (env = {}) => writeFileSync(ACTL, Object.entries(env).map(([k, v]) => `export ${k}=${v}\n`).join(""));
+actl();
 for (const id of ["claude", "codex", "pi"]) {
-  writeFileSync(path.join(bin, id), `#!/bin/sh\nexec "${NODE}" "${path.join(ROOT, "test/fixtures/fake-agent.mjs")}" ${id} "$@"\n`);
+  writeFileSync(path.join(bin, id), `#!/bin/sh\n. "${ACTL}"\nexec "${NODE}" "${path.join(ROOT, "test/fixtures/fake-agent.mjs")}" ${id} "$@"\n`);
   chmodSync(path.join(bin, id), 0o755);
 }
 // gh: the fake, with its knobs in a file so one server can see gh missing, logged out, public…
@@ -92,10 +96,17 @@ const freePort = () =>
       s.close(() => resolve(port));
     });
   });
-async function server() {
+/** BIG-3's switch as built (a placeholder until Victor answers): the e2e follows whichever value it has. */
+const SPLIT_ON_OPEN = /const SPLIT_ON_OPEN = (true|false);/.exec(readFileSync(path.join(ROOT, "web/src/app/issues/IssuesSheet.tsx"), "utf8"))?.[1] === "true";
+console.log(`BIG-3 placeholder: SPLIT_ON_OPEN = ${SPLIT_ON_OPEN}`);
+async function server({ cwd = proj, config } = {}) {
   const home = mkdtempSync(path.join(WORK, "home-"));
+  if (config) {
+    mkdirSync(path.join(home, ".grillado"), { recursive: true });
+    writeFileSync(path.join(home, ".grillado", "config.json"), JSON.stringify(config));
+  }
   const env = { PATH: `${bin}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, FAKE_GH_DIR: GHDIR, GRILLADO_LINEAR_URL: LINEAR_URL };
-  const child = spawn(NODE, [CLI, "--no-open", "--no-scan", "--port", String(await freePort())], { env, cwd: proj, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [CLI, "--no-open", "--no-scan", "--port", String(await freePort())], { env, cwd, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {
@@ -164,6 +175,27 @@ async function openSheet(pg) {
   await sheet(pg).locator(".ir:not(.sk)").first().waitFor({ timeout: 10000 });
   await settle(pg);
 }
+/** Targets under 44px, counting a ::after hit area (#172). The 40px destination tabs are as spec'd. */
+const smallTargets = (pg, scope) =>
+  pg.evaluate((scope) => {
+    const out = [];
+    for (const root of document.querySelectorAll(scope))
+      for (const el of root.querySelectorAll("button,a[href],[role=checkbox],[role=option],textarea,input,[tabindex='0']")) {
+        if (el.getAttribute("role") === "tab" || el.closest(".sr-only")) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height || getComputedStyle(el).visibility === "hidden") continue;
+        let w = r.width;
+        let h = r.height;
+        const a = getComputedStyle(el, "::after");
+        if (a.content && a.content !== "none" && a.position === "absolute") {
+          const px = (v) => (v === "auto" ? 0 : parseFloat(v) || 0);
+          w = Math.max(w, r.width - px(a.left) - px(a.right));
+          h = Math.max(h, r.height - px(a.top) - px(a.bottom));
+        }
+        if (w < 43.5 || h < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}[${(el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 28)}] ${w.toFixed(0)}×${h.toFixed(0)}`);
+      }
+    return [...new Set(out)];
+  }, scope);
 const planUrl = (app, id) => `${new URL(app.url).origin}/s/${id}${new URL(app.url).search}`;
 const errors = [];
 
@@ -204,11 +236,16 @@ try {
     check("the how-line names gh and promises nothing is sent yet", /^Runs gh as @\S+ on this computer\. Nothing is sent before you click\.$/.test(await foot(pg).locator(".iac-n").last().textContent()));
     check("no public line on a private repo", (await sheet(pg).locator(".pub").count()) === 0);
 
-    // §3 the split: only on request (BIG-3, Victor: no agent run on open; SPLIT_ON_OPEN)
+    // §3 the split. BIG-3 is a placeholder until Victor answers (QUESTIONS.md): this follows SPLIT_ON_OPEN.
     const src = sheet(pg).locator(".ipv-src").first();
-    check("opening didn’t run the agent: the list is the user stories or the parent", /^(One issue per user story|Only the parent issue)/.test(await src.textContent()), await src.textContent());
-    await src.getByRole("button", { name: "Split with Claude Code" }).click();
-    await sheet(pg).getByText(/^Split by Claude Code into/).waitFor({ timeout: 15000 });
+    if (SPLIT_ON_OPEN) {
+      await sheet(pg).getByText(/^Split by Claude Code into/).waitFor({ timeout: 15000 });
+      check("BIG-3 placeholder (SPLIT_ON_OPEN = true): opening split the plan with the agent", /^Split by Claude Code into/.test(await src.textContent()), await src.textContent());
+    } else {
+      check("BIG-3 placeholder (SPLIT_ON_OPEN = false): opening didn’t run the agent, the list is the user stories or the parent", /^(One issue per user story|Only the parent issue)/.test(await src.textContent()), await src.textContent());
+      await src.getByRole("button", { name: "Split with Claude Code" }).click();
+      await sheet(pg).getByText(/^Split by Claude Code into/).waitFor({ timeout: 15000 });
+    }
     const rows = sheet(pg).locator(".ir:not(.sk)");
     const n = await rows.count();
     check("split: the parent plus slices", n >= 2, String(n));
@@ -216,7 +253,7 @@ try {
     await shot(pg, "d-sheet", theme);
     await axe(pg, `${theme} desktop: the sheet`);
 
-    // Body disclosure: exactly what is sent (BIG-1, Victor: option A, the spec's wording).
+    // Body disclosure: exactly what is sent (BIG-1: option A, the spec's wording, DECISIONS #185).
     const x = rows.nth(1).locator(".ir-x");
     await x.click();
     const kb = await rows.nth(1).locator(".ir-body pre").textContent();
@@ -266,6 +303,12 @@ try {
     check("the card lists labels and the one it creates", /labels bug, v1\.3 · also creates the label v1\.3$/.test(what), what);
     await shot(pg, "d-labels", theme);
     check("nothing was written to GitHub before the confirm", ghCalls().filter(isWrite).length === 0, JSON.stringify(ghCalls().filter(isWrite)));
+    // Closing with the pointer fades out over 160ms before the sheet goes (keyboard mode closes at once).
+    await sheet(pg).getByRole("button", { name: "Close" }).click();
+    const out = await sheet(pg).evaluate((el) => ({ leaving: el.hasAttribute("data-leaving"), dur: getComputedStyle(el).transitionDuration, scrim: getComputedStyle(document.querySelector(".ischrim")).transitionDuration })).catch(() => null);
+    check("close fades the sheet and the backdrop out over 160ms", out?.leaving && out.dur.split(",")[0].trim() === "0.16s" && out.scrim === "0.16s", JSON.stringify(out));
+    await sheet(pg).waitFor({ state: "detached" });
+    await openSheet(pg);
     await pg.keyboard.press("Escape");
     await sheet(pg).waitFor({ state: "detached" });
     check("Esc closes the sheet, focus back on ⋯", (await active(pg)) === "BUTTON:Plan actions", await active(pg));
@@ -338,6 +381,8 @@ try {
     await openSheet(pg);
     await pg.getByRole("dialog", { name: "Update issues" }).waitFor();
     check("update mode says where the issues already are", /^Already in victor-teles\/grillado #1/.test(await sheet(pg).locator(".ish-d").textContent()));
+    const stale = sheet(pg).getByTestId("split-stale");
+    check("an agent split older than the plan says so, with Split again", (await stale.count()) === 1 && (await stale.textContent()).replace(/\s*·\s*/g, " · ") === "The plan changed since this split · Split again", await stale.textContent().catch(() => "(none)"));
     const par = sheet(pg).getByTestId("issue-row-plan");
     check("the parent edited in GitHub is skipped by default", (await par.locator(".ist").textContent()) === "Edited in GitHub · skip");
     check("the deleted one will be recreated", (await sheet(pg).getByText("Missing in GitHub · will recreate").count()) === 1);
@@ -414,7 +459,17 @@ try {
     await sheet(pg).waitFor();
     const moving = await pg.evaluate(() => document.getAnimations().filter((a) => a.playState === "running" && (a.effect?.target?.closest?.(".ish") || a.effect?.target?.classList?.contains("ish"))).length);
     check("data-kbd: the sheet opens with no transition", moving === 0, String(moving));
-    check("keyboard open: focus on the destination tab", (await active(pg)) === "tab:GitHub", await active(pg));
+    const kbdMoving = () =>
+      pg.evaluate(() => {
+        const els = [...document.querySelectorAll(".ish,.ish *,.ischrim,.istrip,.istrip *,.ilks,.ilks *,.copy-md")];
+        const bad = els.filter((el) => getComputedStyle(el).transitionDuration.split(",").some((d) => parseFloat(d) > 0));
+        return { n: els.length, bad: [...new Set(bad.map((el) => `${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}`))] };
+      });
+    const km = await kbdMoving();
+    check("data-kbd: every element in the sheet, the strip, the chips and Copy Markdown has a 0s transition", km.n > 20 && km.bad.length === 0, `${km.n} checked; moving: ${km.bad.join(", ")}`);
+    await pg.waitForFunction(() => document.activeElement?.getAttribute("role") === "tab", null, { timeout: 3000 }).catch(() => {});
+    const kf = await active(pg);
+    check("keyboard open: focus on the destination tab", kf === "tab:GitHub", kf);
     await pg.keyboard.press("Escape");
     await ctx.close();
   }
@@ -432,6 +487,10 @@ try {
       await pg.getByTestId("plan").waitFor({ timeout: 15000 });
       await pg.getByTestId("issues-strip").waitFor({ timeout: 8000 });
       await shot(pg, `${tag}-strip`, theme);
+      if (phone) {
+        const small = await smallTargets(pg, "[data-testid=issues-strip],[data-testid^=issue-chips-]");
+        check(`${theme} ${vp.w}: the strip and chips are 44px targets`, small.length === 0, small.join("; "));
+      }
       await openSheet(pg);
       const box = await sheet(pg).boundingBox();
       if (phone) {
@@ -445,8 +504,12 @@ try {
       await shot(pg, `${tag}-sheet`, theme);
       await axe(pg, `${theme} ${vp.w}: the sheet`);
       if (phone) {
+        const small = await smallTargets(pg, "[data-testid=issues-sheet]");
+        check(`${theme} ${vp.w}: the sheet's targets are 44px (links, titles, Split again, the repo link)`, small.length === 0, small.join("; "));
         await sheet(pg).getByRole("tab", { name: "Linear" }).click();
         await sheet(pg).getByLabel("Linear API key").waitFor();
+        const smallL = await smallTargets(pg, "[data-testid=issues-sheet]");
+        check(`${theme} ${vp.w}: Linear's targets are 44px (the settings link)`, smallL.length === 0, smallL.join("; "));
         await shot(pg, `${tag}-linear`, theme);
         await sheet(pg).getByRole("tab", { name: "GitHub" }).click();
         await sheet(pg).getByRole("button", { name: "Repository" }).click();
@@ -455,9 +518,108 @@ try {
       }
       await pg.keyboard.press("Escape");
       await sheet(pg).waitFor({ state: "detached" });
+      if (phone) {
+        // The fix-it screens: Copy and the cli.github.com link.
+        ctl({ GH_MISSING: 1 });
+        await openSheet(pg);
+        await sheet(pg).locator(".ifix").waitFor({ timeout: 8000 });
+        const small = await smallTargets(pg, "[data-testid=issues-sheet]");
+        check(`${theme} ${vp.w}: the gh fix-it's targets are 44px (Copy, cli.github.com)`, small.length === 0, small.join("; "));
+        await shot(pg, `${tag}-fix-missing`, theme);
+        ctl();
+        await pg.keyboard.press("Escape");
+        await sheet(pg).waitFor({ state: "detached" });
+      }
       await ctx.close();
     }
   }
+  // ============================================================== review round 2 (PR #25)
+  // Must 2, Designer's repro: export from the user stories with one title edited, then reword a story and
+  // add one. The stories are read from the plan again, so both changes show (they froze before).
+  {
+    const theme = "dark";
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: SHOTS ? 2 : 1 });
+    await ctx.addInitScript((t) => localStorage.setItem("grillado-theme", t), theme);
+    const pg = await ctx.newPage();
+    pg.on("pageerror", (e) => errors.push(String(e)));
+    const id = await plate(pg, app.url, "A plant watering reminder");
+    const file = path.join(app.dir, "sessions", id, "plan.md");
+    const noStories = readFileSync(file, "utf8").replace(/\n## User stories\n[\s\S]*?(?=\n## |$)/, "\n").trimEnd();
+    writeFileSync(file, `${noStories}\n`);
+    actl({ FAKE_SPLIT_DELAY_MS: 2500 });
+    await pg.reload();
+    await pg.getByTestId("plan").waitFor();
+    await openSheet(pg);
+    if (!SPLIT_ON_OPEN) await sheet(pg).locator(".ipv-src").first().getByRole("button", { name: "Split with Claude Code" }).click();
+    await sheet(pg).getByText(/is splitting the plan/).waitFor({ timeout: 8000 });
+    const alt = sheet(pg).locator(".ipv-src").first().getByRole("button").last();
+    check("no user stories: while splitting, the way out is “Use the parent issue alone”", (await alt.textContent()) === "Use the parent issue alone", await alt.textContent());
+    await shot(pg, "r2-split-nostories", theme);
+    await alt.click();
+    await sheet(pg).locator(".ipv-src", { hasText: /^Only the parent issue/ }).waitFor({ timeout: 8000 });
+    await pg.keyboard.press("Escape");
+    await sheet(pg).waitFor({ state: "detached" });
+
+    writeFileSync(file, `${noStories}\n\n## User stories\n\n- As a plant owner, I get a reminder on watering day.\n- As a plant owner, I can snooze a reminder for a day.\n`);
+    await pg.reload();
+    await pg.getByTestId("plan").waitFor();
+    await openSheet(pg);
+    if (SPLIT_ON_OPEN) {
+      await sheet(pg).getByText(/is splitting the plan/).waitFor({ timeout: 8000 });
+      const use = sheet(pg).locator(".ipv-src").first().getByRole("button", { name: "Use the user stories instead" });
+      check("with user stories: the way out is “Use the user stories instead”", (await use.count()) === 1);
+      await use.click();
+    }
+    actl();
+    await sheet(pg).locator(".ipv-src", { hasText: /^One issue per user story/ }).waitFor({ timeout: 8000 });
+    const rows = sheet(pg).locator(".ir:not(.sk)");
+    check("r2: the parent and one issue per story", (await rows.count()) === 3, String(await rows.count()));
+    await rows.nth(1).locator("textarea").fill("Watering-day reminder");
+    await pg.waitForFunction(() => !document.querySelector("[data-testid=issues-confirm]")?.disabled, null, { timeout: 8000 });
+    await go(pg).click();
+    await sheet(pg).locator(".iac[data-k=done]").waitFor({ timeout: 20000 });
+    check("r2: exported with the edited title", (await sum(pg)) === "3 created · victor-teles/grillado", await sum(pg));
+    await sheet(pg).getByRole("button", { name: "Done" }).click();
+    await sheet(pg).waitFor({ state: "detached" });
+
+    writeFileSync(file, readFileSync(file, "utf8").replace("I can snooze a reminder for a day.", "I can snooze a reminder for a day or a week.").trimEnd() + "\n- As a flatmate, I see whose turn it is to water.\n");
+    await pg.reload();
+    await pg.getByTestId("plan").waitFor();
+    await openSheet(pg);
+    await pg.getByRole("dialog", { name: "Update issues" }).waitFor();
+    const info = await rows.evaluateAll((rs) => rs.map((r) => ({ t: r.querySelector(".ir-ti")?.value ?? r.querySelector(".ir-tt")?.textContent ?? "", st: r.querySelector(".ist")?.textContent ?? "" })));
+    const row = (re) => info.find((x) => re.test(x.t));
+    check("r2: the edited title stays, unchanged", row(/^Watering-day reminder$/)?.st.startsWith("Unchanged"), JSON.stringify(info));
+    check("r2: the reworded story will update its issue", row(/or a week/)?.st === "Will update", JSON.stringify(info));
+    check("r2: the new story is offered", row(/whose turn/)?.st === "New", JSON.stringify(info));
+    check("r2: the button sends them (not “Nothing changed since the export”)", (await go(pg).textContent()) === "Create 1 and update 1 in victor-teles/grillado", await go(pg).textContent());
+    await shot(pg, "r2-stories-after-edit", theme);
+    await pg.keyboard.press("Escape");
+    await sheet(pg).waitFor({ state: "detached" });
+    await ctx.close();
+  }
+
+  // Must 4 (#179): focus lands on the saved destination's tab, which arrives after the first paint.
+  for (const saved of ["linear", "github"]) {
+    const where = { linear: "Linear", github: "GitHub" }[saved];
+    const app2 = await server({ config: { issues: { last: saved === "linear" ? "github" : "linear", byProject: { [proj]: saved, [realpathSync(proj)]: saved } } } });
+    try {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      const pg = await ctx.newPage();
+      pg.on("pageerror", (e) => errors.push(String(e)));
+      await plate(pg, app2.url, "A reading list");
+      await openSheet(pg);
+      await pg.waitForTimeout(600);
+      const sel = await sheet(pg).locator("[role=tab][aria-selected=true]").textContent();
+      check(`#179 saved ${where}: the sheet opens on it, focus on its tab`, sel.trim() === where && (await active(pg)) === `tab:${where}`, `${sel} · ${await active(pg)}`);
+      if (saved === "linear") await shot(pg, "r2-focus-linear", "dark");
+      await pg.keyboard.press("Escape");
+      await ctx.close();
+    } finally {
+      await app2.stop();
+    }
+  }
+
   check("no page errors", errors.length === 0, errors.join(" | "));
 } finally {
   await app.stop();

@@ -101,9 +101,10 @@ export interface Session extends CommentState {
    * `plan`, so a plan rewritten after a reopen keeps its links and re-exports update instead of duplicating.
    */
   issues?: PlanIssues;
-  /** {agent}'s last split, cached per plan text (v1.3 item 2). */
-  /** `titles`: the titles as last sent, by item key (edited in the sheet), until the plan changes or is split again. */
-  issueSplit?: { planHash: string; source: SplitSource; slices: Slice[]; at: string; titles?: Record<string, string> };
+  /** {agent}'s last split, cached per plan text (v1.3 item 2). The story/to-do fallback is never cached. */
+  issueSplit?: { planHash: string; source: SplitSource; slices: Slice[]; at: string };
+  /** Titles edited in the sheet, as last sent, by item key (v1.3 item 2). Kept apart from the split. */
+  issueTitles?: Record<string, string>;
   plan?: {
     title: string;
     markdown: string;

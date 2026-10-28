@@ -91,6 +91,10 @@ export interface IssuesState {
 }
 export interface Preview {
   source: SplitSource;
+  /** What "Use … instead" gives: the stories, the to-dos, or the parent alone. */
+  fallback?: SplitSource;
+  /** {agent}'s split was made from an older version of the plan. */
+  stale?: boolean;
   dropped: number;
   items: IssueItem[];
   changes: Planned[];

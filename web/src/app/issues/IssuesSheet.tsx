@@ -14,10 +14,11 @@ import { ICOPY, TNAME, labelsLine, plural } from "./copy";
 import { ListBox, type Opt, Select } from "./Pick";
 
 /**
- * BIG-3, whether the split runs by itself (Victor, via the PO, 2026-10-28): only when asked, from "Split with
- * {agent}". `true` is option A: it starts when the sheet opens, once per plan version (the server caches it).
+ * BIG-3, whether the split runs by itself. PLACEHOLDER until Victor answers BIG-3 (QUESTIONS.md): this is
+ * option A as framed, the split starts when the sheet opens, once per plan version (the server caches it),
+ * and never after an export. `false` is option B: only when asked, from "Split with {agent}".
  */
-const SPLIT_ON_OPEN = false;
+const SPLIT_ON_OPEN = true;
 
 const PARENT = "plan";
 const REPO = /^[\w.-]+\/[\w.-]+$/;
@@ -227,7 +228,8 @@ export function IssuesSheet(p: {
   useEffect(() => {
     if (!autoSplit.current || !pv || !st || run) return;
     autoSplit.current = false;
-    if (!st.split && pv.source !== "agent" && pv.source !== "todos") void split();
+    // Once exported, the issues' split stays until "Split again" (the agent would re-key them).
+    if (!st.split && !st.issues && pv.source !== "agent" && pv.source !== "todos") void split();
   }, [pv, st]);
 
   const items = pv?.items ?? [];
@@ -383,17 +385,33 @@ export function IssuesSheet(p: {
   }, [run?.state, run?.startedAt]);
 
   // ---------------------------------------------------------------- shell: focus, keys, Copy Markdown
+  // Closing fades out (160ms) before the sheet goes; keyboard mode closes at once.
+  const [leaving, setLeaving] = useState(false);
+  const leave = () => {
+    if (leaving) return;
+    if (kbd()) return p.onClose();
+    setLeaving(true);
+    setTimeout(p.onClose, 160);
+  };
   const firstFocus = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     document.documentElement.classList.add("ish-open");
     requestAnimationFrame(() => (run?.state === "done" ? primary.current : firstFocus.current)?.focus({ preventScroll: true }));
     return () => document.documentElement.classList.remove("ish-open");
   }, []);
+  // #179: the saved destination comes with the state, after the first focus; focus follows it while still on the switch.
+  useEffect(() => {
+    if (!st || run?.state === "done") return;
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (!a || a === document.body || a === sheet.current || a.closest("[role=tablist]")) firstFocus.current?.focus({ preventScroll: true });
+    });
+  }, [st]);
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
       if (openList) setOpenList("");
-      else p.onClose();
+      else leave();
     } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       if (!run) void confirm();
@@ -412,6 +430,20 @@ export function IssuesSheet(p: {
       }
     }
   };
+  // A link that goes away when used (Use … instead, Split again) drops focus to the page: the sheet still owns Esc and Tab.
+  const keysRef = useRef(keys);
+  keysRef.current = keys;
+  useEffect(() => {
+    const lost = (e: KeyboardEvent) => {
+      if (e.target !== document.body || (e.key !== "Escape" && e.key !== "Tab")) return;
+      if (e.key === "Tab") {
+        e.preventDefault();
+        sheet.current?.focus({ preventScroll: true });
+      } else keysRef.current(e as unknown as React.KeyboardEvent);
+    };
+    document.addEventListener("keydown", lost);
+    return () => document.removeEventListener("keydown", lost);
+  }, []);
   // Phones: a swipe down on the grab or the header closes.
   const y0 = useRef<number | null>(null);
   const [dy, setDy] = useState(0);
@@ -420,7 +452,7 @@ export function IssuesSheet(p: {
         onTouchStart: (e: React.TouchEvent) => (y0.current = e.touches[0].clientY),
         onTouchMove: (e: React.TouchEvent) => y0.current !== null && setDy(Math.max(0, e.touches[0].clientY - y0.current)),
         onTouchEnd: () => {
-          if (dy > 80) p.onClose();
+          if (dy > 80) leave();
           y0.current = null;
           setDy(0);
         },
@@ -801,7 +833,7 @@ export function IssuesSheet(p: {
         <p className="ipv-src" role="status">
           {p.agentName} is splitting the plan into slices…<span className="dt">·</span>
           <button type="button" className="lnk" onClick={() => void split(true)}>
-            Use the user stories instead
+            {pv.fallback === "none" ? "Use the parent issue alone" : "Use the user stories instead"}
           </button>
         </p>
       );
@@ -829,7 +861,16 @@ export function IssuesSheet(p: {
         </p>
       );
     else if (pv.source === "agent")
-      source = (
+      source = pv.stale ? (
+        <>
+          <p className="ipv-src">Split by {p.agentName} into {plural(kids.length, "slice")}</p>
+          <p className="ipv-src stale" data-testid="split-stale">
+            The plan changed since this split
+            <span className="dt">·</span>
+            {splitLink("Split again")}
+          </p>
+        </>
+      ) : (
         <p className="ipv-src">
           Split by {p.agentName} into {plural(kids.length, "slice")}
           <span className="dt">·</span>
@@ -1087,7 +1128,7 @@ export function IssuesSheet(p: {
         </p>
         <p className="iac-n">{ICOPY.running}</p>
         <div className="iac-b">
-          <button type="button" className="btn soft" onClick={p.onClose}>
+          <button type="button" className="btn soft" onClick={leave}>
             Hide
           </button>
         </div>
@@ -1104,7 +1145,7 @@ export function IssuesSheet(p: {
           Nothing else was created. {runT} said: {rowOf(PARENT)?.message}
         </p>
         <div className="iac-b">
-          <button type="button" className="btn quiet" onClick={p.onClose}>
+          <button type="button" className="btn quiet" onClick={leave}>
             Close
           </button>
           <button ref={primary} type="button" className="btn primary" onClick={() => void retry(true)}>
@@ -1127,7 +1168,7 @@ export function IssuesSheet(p: {
           <span className="m">{run.name}</span>
         </p>
         <div className="iac-b">
-          <button type="button" className="btn quiet" onClick={p.onClose}>
+          <button type="button" className="btn quiet" onClick={leave}>
             Close
           </button>
           <button ref={primary} type="button" className="btn primary" onClick={() => void retry()}>
@@ -1153,7 +1194,7 @@ export function IssuesSheet(p: {
               Open parent issue <IExt s={14} />
             </a>
           ) : null}
-          <button ref={primary} type="button" className="btn primary" onClick={p.onClose}>
+          <button ref={primary} type="button" className="btn primary" onClick={leave}>
             Done
           </button>
         </div>
@@ -1176,7 +1217,7 @@ export function IssuesSheet(p: {
         {errLine}
         <div className="iac-b">
           {p.phone ? null : (
-            <button type="button" className="btn quiet" onClick={p.onClose}>
+            <button type="button" className="btn quiet" onClick={leave}>
               Cancel
             </button>
           )}
@@ -1191,21 +1232,23 @@ export function IssuesSheet(p: {
   const issuesRef = s.issues?.parent ? (s.issues.parent.identifier ?? `#${s.issues.parent.number}`) : "";
   return (
     <>
-      <div className="cscrim ischrim" onClick={p.onClose} />
+      <div className="cscrim ischrim" data-leaving={leaving || undefined} onClick={leave} />
       <div
         ref={sheet}
         className="ish"
+        data-leaving={leaving || undefined}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid="issues-sheet"
+        tabIndex={-1}
         onKeyDown={keys}
         style={dy ? { transform: `translateY(${dy}px)`, transition: "none" } : undefined}
       >
         {p.phone ? <div className="grab" {...swipe} /> : null}
         <header className="ish-h" {...swipe}>
           <b id={titleId}>{linked ? ICOPY.titleUpdate : ICOPY.titleCreate}</b>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={p.onClose}>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={leave}>
             <IX s={18} />
           </button>
         </header>

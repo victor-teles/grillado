@@ -207,6 +207,29 @@ describe("what the sheet reads", () => {
     expect(pre.json.changes.every((c: any) => c.change === "unchanged")).toBe(true);
   });
 
+  test("review r2: after a title edit, story edits and new stories still show (the fallback isn't frozen)", async () => {
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    const keys = json.items.map((it: any) => it.key);
+    // The sheet sends every row's title; only the edited one is kept.
+    const sent = Object.fromEntries(json.items.map((it: any) => [it.key, it.title]));
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: keys, titles: { ...sent, [keys[1]]: "Photo import" } });
+    await done(s.id);
+    store.writePlan(s.id, STORY_MD.replace("I find a recipe by ingredient.", "I find a recipe by ingredient or by tag.").replace("- As a cook, I see my recipes on a second phone [R2:sync].\n", "- As a cook, I see my recipes on a second phone [R2:sync].\n- As a cook, I share a recipe with a friend.\n"));
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.source).toBe("stories");
+    const by = (k: string) => pre.json.changes.find((c: any) => c.key === k)?.change;
+    const titles = pre.json.items.map((it: any) => it.title);
+    expect(pre.json.items.find((it: any) => it.key === keys[1])?.title).toBe("Photo import");
+    expect(by(keys[1])).toBe("unchanged");
+    // The reworded story keeps its key (the slug of its start), so its issue is updated; the new one is offered.
+    expect(by(keys[2])).toBe("update");
+    expect(titles).toContain("As a cook, I find a recipe by ingredient or by tag");
+    expect(titles).toContain("As a cook, I share a recipe with a friend");
+    expect(pre.json.changes.filter((c: any) => c.change === "new").length).toBe(1);
+  });
+
   test("an item taken out of the plan is listed as removed, with its title from the tracker", async () => {
     const { store, call, done } = await start();
     const s = storySession(store);
