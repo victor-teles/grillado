@@ -120,6 +120,19 @@ export function useIssues(p: {
       {n}
     </span>
   );
+  /** A state and its action as one part, "3 changed since export · Update issues": on a phone they wrap together,
+   *  never leaving the action alone on a line (review-pr28 nice 2). */
+  const pair = (a: ReactNode, b: ReactNode, k: string) =>
+    sg(
+      <>
+        {a}
+        <span className="dt in" aria-hidden="true">
+          ·
+        </span>
+        {b}
+      </>,
+      k,
+    );
   const link = (gone = false) =>
     linked?.parent ? (
       gone ? (
@@ -153,34 +166,37 @@ export function useIssues(p: {
   else if (linked?.parent && !p.draft) {
     const parts: ReactNode[] = [];
     if (parentGone) {
-      parts.push(<span key="m" className="bad">Missing in {T}</span>);
+      // Right after the struck-through #1, with no "·" before it; joined to Recreate like the pairs below.
       parts.push(
-        sg(
+        <span className="sg" key="m">
+          <span className="bad">Missing in {T}</span>
+          <span className="dt in" aria-hidden="true">
+            ·
+          </span>
           <button type="button" className="lnk2" onClick={show}>
             Recreate
-          </button>,
-          "r",
-        ),
+          </button>
+        </span>,
       );
     } else if (failed.length) {
       parts.push(sg(`${kids} of ${plural(kids + failed.filter((k) => !linked.items[k]).length, "sub-issue")}`, "n"));
-      parts.push(sg(<span className="bad">{failed.length} failed</span>, "f"));
       parts.push(
-        sg(
+        pair(
+          <span className="bad">{failed.length} failed</span>,
           <button type="button" className="lnk2" onClick={show}>
             Retry failed
           </button>,
-          "r",
+          "f",
         ),
       );
     } else if (changed) {
-      parts.push(sg(`${changed} changed since export`, "c"));
       parts.push(
-        sg(
+        pair(
+          `${changed} changed since export`,
           <button type="button" className="lnk2" onClick={show}>
             Update issues
           </button>,
-          "u",
+          "c",
         ),
       );
     } else {
