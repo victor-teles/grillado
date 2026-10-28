@@ -87,7 +87,7 @@ describe("validation and repair (AC5–AC7)", () => {
     const s = createSession({ idea: "an app", provider: "claude" });
     const a = scripted([{ type: "ask_round", questions: "x" }, { nope: true }]);
     expect(await nextRound(s, a, opts())).toBe(false);
-    expect(s.error).toMatchObject({ code: "malformed", message: "The agent's reply didn't come through." });
+    expect(s.error).toMatchObject({ code: "malformed", message: "The agent’s reply didn’t come through." });
     expect(s.rounds).toHaveLength(0);
   });
 

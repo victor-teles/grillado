@@ -45,5 +45,11 @@ for (const term of [...BANNED, ...fragments]) {
 }
 await client.close();
 
+// review-pr26 r2 n1: on-screen strings use ’, never a straight ' between letters (strings only, never comments or code).
+const { straightApostrophes } = await import("./apostrophes.mjs");
+const straight = straightApostrophes();
+for (const h of straight) console.error(`check-banned: straight apostrophe on screen: ${h} (use ’)`);
+bad += straight.length;
+
 if (bad) process.exit(1);
-console.log(`check-banned: dist/web and the MCP tools clean (${BANNED.length} terms, ${fragments.length} prompt fragments)`);
+console.log(`check-banned: dist/web and the MCP tools clean (${BANNED.length} terms, ${fragments.length} prompt fragments); no straight apostrophes in on-screen strings`);

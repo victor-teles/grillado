@@ -174,6 +174,9 @@ button:disabled{cursor:default}
 .bar>p[role=alert],.bar .err{max-width:640px;width:100%;margin:0 auto 10px;font-size:var(--t-meta);line-height:16px;color:var(--destructive-ink)}
 .bar .spacer{flex:1}
 .status{display:flex;align-items:center;gap:10px;color:var(--muted-foreground);margin-bottom:24px;min-height:28px}
+.status[data-has-note]{margin-bottom:2px}
+.wait-note{margin:0 0 24px}
+.status:has(.ember)+.wait-note{padding-left:16px}
 .status .ember{width:6px;height:6px;border-radius:50%;background:var(--gr-ember);flex:none}
 .sk{display:grid;gap:10px;margin-top:8px}
 .sk i{display:block;height:12px;border-radius:6px;background:var(--sel)}
@@ -705,6 +708,8 @@ html:not([data-kbd]) .q [data-slot=agent-question-option]:has(:focus-visible){ou
 @media (hover:none) and (pointer:coarse){
   .q [data-slot=agent-question-option] kbd,.dz-opt .n{display:none!important}
   .dz .dz-n{display:block!important}
+  /* A thumb-sized target for the problem card's Retry and the 60 s Stop (review-pr26 r2 n2). */
+  .banner .btn,.status button{min-height:44px}
 }
 /* The tree root (the idea) may take two lines. */
 .tn.idea{height:auto;min-height:30px;white-space:normal;align-items:flex-start;padding-top:5px;padding-bottom:5px}

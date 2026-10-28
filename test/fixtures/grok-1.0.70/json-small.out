@@ -1,0 +1,33 @@
+{
+  "text": "{\"type\":\"ok\",\"note\":\"hi\"}",
+  "stopReason": "end_turn",
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "requestId": "00000000-0000-0000-0000-000000000001",
+  "cwd": "/tmp/grillado-run-XXXXXX",
+  "thought": "Preparing a JSON reply with type \"ok\" and note \"hi\".",
+  "usage": {
+    "input_tokens": 12952,
+    "cache_read_input_tokens": 1152,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 96,
+    "reasoning_tokens": 85,
+    "total_tokens": 14200
+  },
+  "num_turns": 1,
+  "total_cost_usd": 0.027056,
+  "total_cost_usd_ticks": 270560000,
+  "modelUsage": {
+    "grok-4.7-build": {
+      "inputTokens": 12952,
+      "outputTokens": 96,
+      "cacheReadInputTokens": 1152,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.027056
+    }
+  },
+  "structuredOutput": {
+    "type": "ok",
+    "note": "hi"
+  }
+}

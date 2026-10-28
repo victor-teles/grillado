@@ -10,6 +10,7 @@ import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, int
 import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, deleteThread, finishRun, pending, pruneSuggestions, refind, resolveThread, restoreThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
+import { DEFAULT_TIMEOUT_MS } from "../core/providers/base.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
 import {
   type Answer,
@@ -42,6 +43,7 @@ import { type McpLaunch, mcpLaunch } from "./launch.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
 import { type AgentRun, type FoundService, type ImportResult, type Writer, storeWriter } from "./found.ts";
 import { stripInvocation } from "../core/found/extract.ts";
+import { STOPPED } from "../core/reason.ts";
 import { ImportError } from "../core/found/import.ts";
 import type { Store } from "./store.ts";
 import { IssuesRoutes, type IssuesOptions } from "./issues/routes.ts";
@@ -137,7 +139,7 @@ export class GrilladoServer {
           if (!adapter) return null;
           const c = new AbortController();
           signal.addEventListener("abort", () => c.abort(), { once: true });
-          const r = await splitPlan(s, md, exported, adapter, { ...this.runOptions(s, c), onProgress: undefined });
+          const r = await splitPlan(s, md, exported, adapter, { ...this.runOptions(s, c, adapter), onProgress: undefined });
           return r.ok ? { ok: true, slices: r.value.slices } : { ok: false, code: r.code };
         },
         group: async (s, md, todos, signal) => {
@@ -145,7 +147,7 @@ export class GrilladoServer {
           if (!adapter) return null;
           const c = new AbortController();
           signal.addEventListener("abort", () => c.abort(), { once: true });
-          const r = await groupTodos(s, md, todos, adapter, { ...this.runOptions(s, c), onProgress: undefined });
+          const r = await groupTodos(s, md, todos, adapter, { ...this.runOptions(s, c, adapter), onProgress: undefined });
           return r.ok ? { ok: true, slices: r.value } : { ok: false, code: r.code };
         },
       },
@@ -643,7 +645,7 @@ export class GrilladoServer {
       if (!adapter) return { ok: false, code: "not_found" };
       const cwd = mkdtempSync(path.join(os.tmpdir(), "grillado-import-"));
       try {
-        const r = await decisionsFromAnswers(stripInvocation(x.idea), x.pairs ?? [], adapter, { cwd, timeoutMs: this.opts.timeoutMs ?? 180_000, signal });
+        const r = await decisionsFromAnswers(stripInvocation(x.idea), x.pairs ?? [], adapter, { cwd, timeoutMs: this.timeoutFor(adapter), signal });
         return r.ok ? { ok: true, decisions: r.value.decisions } : { ok: false, code: r.code };
       } finally {
         rmSync(cwd, { recursive: true, force: true });
@@ -680,7 +682,7 @@ export class GrilladoServer {
     const base = storeWriter(this.opts.store);
     return {
       load: (id) => {
-        if (this.inflight.has(id) || this.addPlanRuns.has(id)) throw new ImportError("busy", "The agent is working on this plan. Update it when it's done.");
+        if (this.inflight.has(id) || this.addPlanRuns.has(id)) throw new ImportError("busy", "The agent is working on this plan. Update it when it’s done.");
         return this.sessions.get(id) ?? this.opts.store.load(id);
       },
       create: (s, md) => base.create(s, md),
@@ -748,10 +750,16 @@ export class GrilladoServer {
     return dir;
   }
 
-  private runOptions(s: Session, controller: AbortController) {
+  /** GRILLADO_TIMEOUT_MS wins; otherwise the provider's own default (Grok is slower than the rest). */
+  private timeoutFor(adapter: ProviderAdapter | undefined) {
+    return this.opts.timeoutMs ?? adapter?.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  /** `adapter` is the one that will run: the session's own, or the one picked for a split. */
+  private runOptions(s: Session, controller: AbortController, adapter = this.opts.adapters.find((x) => x.id === s.provider)) {
     return {
       cwd: this.agentCwd(s),
-      timeoutMs: this.opts.timeoutMs ?? 180_000,
+      timeoutMs: this.timeoutFor(adapter),
       model: this.opts.model,
       signal: controller.signal,
       onProgress: (label: string) => {
@@ -1208,7 +1216,7 @@ export class GrilladoServer {
   private selectProvider(res: http.ServerResponse, body: any) {
     const id = body?.id as ProviderId;
     const p = this.providers.find((x) => x.id === id);
-    if (!p || p.detection.status !== "ready") return this.json(res, 400, { error: "That agent isn't available." });
+    if (!p || p.detection.status !== "ready") return this.json(res, 400, { error: "That agent isn’t available." });
     this.selected = id;
     if (body?.remember) this.opts.store.writeConfig({ ...this.opts.store.readConfig(), defaultProvider: id });
     this.broadcast({ type: "app" });
@@ -1269,7 +1277,7 @@ export class GrilladoServer {
       case "provider": {
         const id = body?.id as ProviderId;
         if (!PROVIDER_IDS.includes(id) || this.providers.find((p) => p.id === id)?.detection.status !== "ready")
-          throw new Error("That agent isn't available.");
+          throw new Error("That agent isn’t available.");
         this.abort(s);
         s.provider = id;
         this.selected = id;
@@ -1279,7 +1287,7 @@ export class GrilladoServer {
       }
       case "stop": {
         this.abort(s);
-        setError(s, "unknown", "Stopped. Retry when you're ready.");
+        setError(s, "unknown", STOPPED);
         this.changed(s);
         break;
       }
@@ -1362,7 +1370,7 @@ export class GrilladoServer {
       }
       case "plan-conflict": {
         // The copy that lost a "changed on disk" conflict is kept next to plan.md.
-        if (!s.plan) throw new Error("There's no plan yet.");
+        if (!s.plan) throw new Error("There’s no plan yet.");
         if (typeof body?.markdown !== "string" || body.markdown.length > 500_000) throw new Error("Expected the plan as Markdown text.");
         const file = this.opts.store.writeConflict(s.id, body.markdown);
         // Which version won is the file event you audit later ("did I overwrite it?", #84 MF4).
@@ -1374,7 +1382,7 @@ export class GrilladoServer {
       }
       case "reveal": {
         // "Show file location": open the session folder in the OS file manager, when there is one.
-        if (!s.plan) throw new Error("There's no plan yet.");
+        if (!s.plan) throw new Error("There’s no plan yet.");
         const dir = path.dirname(this.opts.store.planPath(s.id));
         const opened = canOpenBrowser();
         if (opened) openBrowser(dir);

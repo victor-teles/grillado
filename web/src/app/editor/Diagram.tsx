@@ -233,7 +233,7 @@ export function Diagram({ code, onEdit, bare = false }: { code: string; onEdit?:
   const { title } = accOf(code);
   const kind = kindName(code);
   const explained = res && !res.ok ? explainDiagramError(code, res.error) : null;
-  const said = useSaid(explained ? `This diagram can't be drawn. ${explained.message}` : "");
+  const said = useSaid(explained ? `This diagram can’t be drawn. ${explained.message}` : "");
   const state = res === null ? "loading" : res.ok ? "ok" : "error";
   const ok = res?.ok ? res.svg : null;
 
@@ -247,7 +247,7 @@ export function Diagram({ code, onEdit, bare = false }: { code: string; onEdit?:
         <div className="eh">
           <IAlert s={16} />
           <div>
-            <b>This diagram can't be drawn</b>
+            <b>This diagram can’t be drawn</b>
             <span>{explained?.message}</span>
           </div>
           {onEdit ? (

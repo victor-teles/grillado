@@ -270,7 +270,7 @@ export function SaveStatus({
   useEffect(() => {
     if (save.state === "error" && !conflict && !answerChange) {
       failedRef.current = true;
-      setAnnounce("Couldn't save");
+      setAnnounce("Couldn’t save");
     } else if (save.state === "saved" && failedRef.current) {
       failedRef.current = false;
       setAnnounce("Saved again");
@@ -289,7 +289,7 @@ export function SaveStatus({
           ? "Edited · saving soon"
           : state === "saving"
             ? "Saving…"
-            : "Couldn't save to plan.md";
+            : "Couldn’t save to plan.md";
   return (
     <span className="ped-save" data-save={state} data-fresh={fresh ? "" : undefined} data-testid="save-status">
       {fresh ? <ICheck s={14} /> : null}

@@ -372,7 +372,7 @@ export class FoundService {
         cache.entries[file] = { mtimeMs: st.mtimeMs, size: st.size, extract, ...(extract?.cwd ? { cwd: extract.cwd } : {}), seen };
         keep(extract);
       } catch (err: any) {
-        found.push({ file, extract: null, mtimeMs: st.mtimeMs, error: err?.code === "EACCES" ? "No permission to read it." : "Couldn't read it." });
+        found.push({ file, extract: null, mtimeMs: st.mtimeMs, error: err?.code === "EACCES" ? "No permission to read it." : "Couldn’t read it." });
       }
     };
     const here = (cwd?: string) => !!cwd && isUnder(project.root, cwd);
@@ -660,7 +660,7 @@ export class FoundService {
   private async doImport(id: string, provider: ProviderId, w: Writer, agent: AgentRun | undefined, t: number): Promise<ImportResult> {
     if (!this.found.has(id)) await this.scan();
     const hit = this.found.get(id);
-    if (!hit || !this.project) throw new ImportError("unknown", "That source isn't in this project's scan any more. Look again.");
+    if (!hit || !this.project) throw new ImportError("unknown", "That source isn’t in this project’s scan any more. Look again.");
     const { row } = hit;
     let st;
     let text;
@@ -668,20 +668,20 @@ export class FoundService {
       st = await stat(row.path);
       text = (await readHead(row.path, row.kind === "plan" ? this.budget.planBytes : this.budget.transcriptBytes, st.size)).text;
     } catch {
-      throw new ImportError("unreadable", "Couldn't read this source.");
+      throw new ImportError("unreadable", "Couldn’t read this source.");
     }
     const plansDir = path.join(this.claudeDir, "plans");
     let x: Extract | null =
       row.app === "claude" ? parseClaude(text, { plansDir }) : row.app === "codex" ? parseCodex(text) : parsePlanFile(row.relPath ?? path.basename(row.path), text, row.app);
     if (x && x.kind === "session" && !x.plan && x.planRefs.length) x = await withPlanFile(x, plansDir, this.budget.planBytes);
-    if (!x) throw new ImportError("not_qualified", "This source doesn't hold a plan any more.");
+    if (!x) throw new ImportError("not_qualified", "This source doesn’t hold a plan any more.");
     const inProgress = x.kind === "session" && this.now() - st.mtimeMs < IN_PROGRESS_MS;
     const prev = this.readSources().sources[hit.fp];
     let existing = prev ? w.load(prev.planId) : null;
     if (existing && prev!.contentHash === contentHash(x)) return { planId: existing.id, result: "unchanged" };
     let agentDecisions: AgentDecision[] | undefined;
     if (x.qualifies === "freetext" && !inProgress) {
-      if (!agent) throw new ImportError("needs_agent", "Turning this session's answers into decisions needs an agent run.");
+      if (!agent) throw new ImportError("needs_agent", "Turning this session’s answers into decisions needs an agent run.");
       const fx = x;
       this.agentFailed.delete(id);
       const r = await this.inAgentSlot(id, t, async (signal) => {
@@ -691,7 +691,7 @@ export class FoundService {
       });
       if (!r.ok) {
         this.agentFailed.set(id, r.code);
-        throw new ImportError("agent", "The agent couldn't turn the answers into decisions. Nothing was saved.", r.code);
+        throw new ImportError("agent", "The agent couldn’t turn the answers into decisions. Nothing was saved.", r.code);
       }
       agentDecisions = r.decisions;
       // The plan may have changed hands while the agent worked.

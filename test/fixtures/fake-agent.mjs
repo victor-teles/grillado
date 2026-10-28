@@ -2,7 +2,7 @@
 // A stand-in for the claude / codex / grok / pi CLIs. It speaks each CLI's output format and plays
 // a small deterministic interview, so tests and the e2e run exercise the real adapters end to end.
 // Env: FAKE_MODE (ok | auth | rate | garbage | garbage-once | dependent-once | plan-early-once |
-// leak-once | slow | broken-version | long), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
+// leak-once | slow | broken-version | long), FAKE_GROK_FORMAT (legacy: grok 1.0.67's one-line envelope), FAKE_COMMENT (leak-once | bad-edit-once | swap), FAKE_COMMENT_DELAY_MS,
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
 // FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
@@ -21,7 +21,8 @@ if (args[0] === "--version") {
     console.error("segfault-ish");
     process.exit(3);
   }
-  console.log(`${name} 9.9.9-fake`);
+  // The real Grok CLI 1.0.70 prints "grok 1.0.70 (f50904eaee6c)": the bracket holds a commit hash, not a name.
+  console.log(name === "grok" && process.env.FAKE_GROK_FORMAT !== "legacy" ? `${name} 9.9.9-fake (f50904eaee6c)` : `${name} 9.9.9-fake`);
   process.exit(0);
 }
 if (args[0] === "--help") {
@@ -354,9 +355,12 @@ if (name === "claude" && flag("--output-format") === "stream-json") {
   writeFileSync(flag("-o"), text);
   console.log('{"type":"thread.started"}');
 } else if (name === "grok") {
+  // Grok CLI 1.0.70: one pretty-printed envelope with structuredOutput. FAKE_GROK_FORMAT=legacy: the 1.0.67
+  // shape, one line with structured_output.
+  const legacy = process.env.FAKE_GROK_FORMAT === "legacy";
   const out = { text, stopReason: "end_turn", sessionId: "s" };
-  if (typeof reply !== "string") out.structured_output = reply;
-  console.log(JSON.stringify(out));
+  if (typeof reply !== "string") out[legacy ? "structured_output" : "structuredOutput"] = reply;
+  console.log(legacy ? JSON.stringify(out) : JSON.stringify(out, null, 2));
 } else if (name === "pi") {
   // pi has no schema flag: wrap in a fence to exercise extraction.
   const m = { role: "assistant", content: [{ type: "text", text: `Here you go:\n\`\`\`json\n${text}\n\`\`\`` }], stopReason: "stop" };

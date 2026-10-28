@@ -322,7 +322,7 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
     // A row still showing Stop isn't settled yet: wait for its Import.
     if (li.querySelector("[data-stop]")) return;
     focusAfter.current = null;
-    const target = li.querySelector<HTMLElement>("a, button") ?? li;
+    const target = li.querySelector<HTMLElement>("[data-retry]") ?? li.querySelector<HTMLElement>("a, button") ?? li;
     target.focus();
   });
 
@@ -367,6 +367,10 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
         if (stopped.current.delete(r.id)) focusAfter.current = r.id;
         return set(r.id, null);
       }
+      // Focus Try again when it was on the row (its Stop) or nowhere, so a failure never drops it to the page (review-pr26 #4).
+      const li = mount.current?.querySelector(`[data-row="${CSS.escape(r.id)}"]`);
+      const here = document.activeElement;
+      if (!here || here === document.body || li?.contains(here)) focusAfter.current = r.id;
       set(r.id, { p: "failed", ...importReason(err, agent) });
       setLive(`Couldn’t import ‘${titleOf(r)}’`);
     }
@@ -412,7 +416,7 @@ export function Found({ agent, initial, onOpen, onImported, onSettled }: { agent
     if (failed) {
       segs = [<span className="er">Couldn’t import</span>, failed.reason, "Nothing was saved"];
       act = (
-        <button type="button" className="btn quiet sm" onClick={() => (failed.retry === "rescan" ? void lookAgain() : void doImport(r))}>
+        <button type="button" className="btn quiet sm" data-retry onClick={() => (failed.retry === "rescan" ? void lookAgain() : void doImport(r))}>
           <IRetry s={14} />
           Try again
         </button>

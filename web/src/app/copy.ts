@@ -17,6 +17,12 @@ export const COPY = {
   agentChip: "Agent: {agent}",
   resolvedNewest: "Newest first",
   resolvedRounds: "Rounds {first}–{last}",
+  // Long runs (Grok CLI 1.0.70 rounds take minutes). For every agent: any of them can be slow on a big session.
+  roundWaitNote: "Rounds can take a few minutes.",
+  timeoutTitle: "{agent} is running slow",
+  stoppedTitle: "You stopped {agent}",
+  stoppedBody: "Your answers are saved. Retry when you’re ready.",
+  timeoutBody: "Nothing came back in time. Your answers are saved.",
 } as const;
 
 /** Fill `{name}` slots. Unknown slots are left as they are so a missing value is visible, not silent. */

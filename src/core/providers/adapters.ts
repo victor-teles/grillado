@@ -1,6 +1,6 @@
 import os from "node:os";
 import { classifyFailure, summarizeError } from "../classify.ts";
-import { type AdapterOptions, type AdapterSpec, createAdapter, failureFromProcess, lastJsonLine, readIfExists } from "./base.ts";
+import { type AdapterOptions, type AdapterSpec, createAdapter, failureFromProcess, lastJsonObject, readIfExists } from "./base.ts";
 import { runProcess } from "./process.ts";
 import { partialStringField } from "./partial-json.ts";
 import type { ProviderAdapter, ProviderEvent, ProviderId, RunFiles, RunRequest } from "./types.ts";
@@ -91,7 +91,7 @@ export const claudeSpec: AdapterSpec = {
     try {
       out = JSON.parse(res.stdout.trim());
     } catch {
-      out = lastJsonLine(res.stdout);
+      out = lastJsonObject(res.stdout);
     }
     if (!out) return res.exitCode === 0 ? { type: "result", raw: res.stdout } : failureFromProcess(res);
     if (out.is_error) {
@@ -158,7 +158,7 @@ export const GROK_DISALLOWED_TOOLS = [
 ];
 
 /**
- * Grok CLI (C3, v1.0.67 checked). `--tools ""` parses without error or warning, but the docs don't define an
+ * Grok CLI (C3, v1.0.67 and v1.0.70 checked). `--tools ""` parses without error or warning, but the docs don't define an
  * empty allowlist, so we also remove every built-in with --disallowed-tools (which wins over --tools),
  * disable web search and subagents, and run in the read-only sandbox.
  */
@@ -168,6 +168,8 @@ export const grokSpec: AdapterSpec = {
   bin: "grok",
   installHint: "curl -fsSL https://x.ai/cli/install.sh | bash",
   loginHint: "Run `grok login` in a terminal",
+  // Real 1.0.70 rounds took 115–220 s on a plain idea, past the 180 s default (PR #26 verification).
+  defaultTimeoutMs: 600_000,
   buildInvocation: (req, files) => ({
     args: [
       "--prompt-file",
@@ -197,13 +199,14 @@ export const grokSpec: AdapterSpec = {
     env: { GROK_MEMORY: "0" },
   }),
   parse: (res) => {
-    const out = lastJsonLine(res.stdout);
+    const out = lastJsonObject(res.stdout);
     if (!out) return res.exitCode === 0 && res.stdout.trim() ? { type: "result", raw: res.stdout } : failureFromProcess(res);
     if (out.type === "error" || out.is_error) {
       const message = String(out.message ?? out.result ?? out.error ?? "");
       return { type: "error", code: classifyFailure({ message, stderr: res.stderr }), message: summarizeError(message) };
     }
-    return { type: "result", raw: out.structured_output ?? out.text ?? out.result };
+    // Grok CLI 1.0.70 names it structuredOutput; earlier versions structured_output.
+    return { type: "result", raw: out.structuredOutput ?? out.structured_output ?? out.text ?? out.result };
   },
   // An unrelated npm package also installs `grok`; the official CLI documents --output-format.
   verify: async (bin, env) => {
@@ -218,7 +221,7 @@ export const piSpec: AdapterSpec = {
   displayName: "pi",
   bin: "pi",
   installHint: "npm i -g @mariozechner/pi-coding-agent",
-  loginHint: "Run `pi` in a terminal and use /login, or set your provider's API key",
+  loginHint: "Run `pi` in a terminal and use /login, or set your provider’s API key",
   buildInvocation: (req) => ({
     args: [
       "-p",

@@ -14,6 +14,8 @@ import {
   AgentQuestionTitle,
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
+import { COPY } from "./copy";
+import { waitLabel } from "./wait";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
 import { MobileStrip, SidePanel } from "./Tree";
@@ -22,7 +24,7 @@ import { type Answer, type DecisionNode, OTHER_OPTION, type Question, type Round
 type Act = (action: string, body?: unknown) => Promise<void>;
 /** The value Uai's AgentQuestionOther records. */
 const OTHER_VALUE = "other";
-export const SEND_FAILED = "The agent didn't get your answers. They're still here.";
+export const SEND_FAILED = "The agent didn’t get your answers. They’re still here.";
 
 /** Layout shared by every in-session screen: main column + side panel, mobile strip + sheet. */
 export function SessionBody({
@@ -246,7 +248,7 @@ function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; open
           <AgentQuestionOption key={o.id} value={o.id} label={o.label} description={o.description || undefined} recommended={o.id === q.recommendedOptionId} />
         ))}
         <AgentQuestionOther className="mini" description="" />
-        <AgentQuestionOption value={UNKNOWN_OPTION} label="I don't know" description="The agent picks one and marks it as a risk" className="mini unk" />
+        <AgentQuestionOption value={UNKNOWN_OPTION} label="I don’t know" description="The agent picks one and marks it as a risk" className="mini unk" />
       </AgentQuestionOptions>
     </AgentQuestionItem>
   );
@@ -255,7 +257,7 @@ function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; open
 function Nudge({ onReview, onDismiss }: { onReview: () => void; onDismiss: () => void }) {
   return (
     <div className="nudge" role="status" data-testid="nudge">
-      <p>You've kept every suggestion for 4 rounds. Anything you'd push back on?</p>
+      <p>You’ve kept every suggestion for 4 rounds. Anything you’d push back on?</p>
       <button type="button" className="btn quiet" onClick={onReview}>
         Review my picks
       </button>
@@ -268,12 +270,7 @@ function Nudge({ onReview, onDismiss }: { onReview: () => void; onDismiss: () =>
 
 // ---------------------------------------------------------------- waiting for the agent
 
-export function waitLabel(session: SessionView, elapsed: number, base: string) {
-  if (session.progress === "Taking another pass") return elapsed >= 60 ? "Still cooking. This one is taking a while" : "Taking another pass…";
-  if (elapsed >= 60) return "Still cooking. This one is taking a while";
-  if (elapsed >= 15) return "Still cooking…";
-  return base;
-}
+export { waitLabel } from "./wait";
 
 /** Static skeleton lines (v1.2: no shimmer): a heading, a line and three option rows. */
 export function SkeletonCard({ wide }: { wide?: boolean }) {
@@ -289,9 +286,10 @@ export function SkeletonCard({ wide }: { wide?: boolean }) {
 }
 
 /** One status line under the title. The ember dot is static; no elapsed timer (DECISIONS #21). */
-function StatusLine({ label, dot, onStop }: { label: string; dot?: boolean; onStop?: () => void }) {
+function StatusLine({ label, dot, onStop, note }: { label: string; dot?: boolean; onStop?: () => void; note?: string }) {
   return (
-    <div className="status" role="status" aria-live="polite">
+    <>
+    <div className="status" role="status" aria-live="polite" data-has-note={note ? true : undefined}>
       {dot ? <span className="ember" aria-hidden="true" /> : null}
       <span>{label}</span>
       {onStop ? (
@@ -301,6 +299,8 @@ function StatusLine({ label, dot, onStop }: { label: string; dot?: boolean; onSt
         </button>
       ) : null}
     </div>
+    {note ? <p className="meta wait-note" data-testid="wait-note">{note}</p> : null}
+    </>
   );
 }
 
@@ -326,7 +326,7 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
               {banner}
               <div className="intro">
                 <h1>{session.idea.split("\n")[0]}</h1>
-                {busy ? <StatusLine label={label} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <StatusLine label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
               </div>
               {busy ? <SkeletonCard wide /> : null}
             </div>
@@ -370,7 +370,7 @@ export function FiringUp({ session, act, banner }: { session: SessionView; act: 
               {banner}
               <div className="intro">
                 <h1>{idea}</h1>
-                {busy ? <StatusLine dot label={label} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <StatusLine dot label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
               </div>
               {busy ? (
                 <>

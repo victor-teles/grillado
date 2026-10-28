@@ -12,12 +12,17 @@ export interface Invocation {
   env?: Record<string, string>;
 }
 
+/** Per-run timeout for providers that don't set their own. */
+export const DEFAULT_TIMEOUT_MS = 180_000;
+
 export interface AdapterSpec {
   id: ProviderId;
   displayName: string;
   bin: string;
   installHint: string;
   loginHint: string;
+  /** Per-run timeout for this CLI; DEFAULT_TIMEOUT_MS when unset. */
+  defaultTimeoutMs?: number;
   /** Pure: request + file paths → argv. Asserted verbatim in tests (AC4). */
   buildInvocation(req: RunRequest, files: RunFiles): Invocation;
   /** Turn a finished process into a result or a classified error. */
@@ -50,6 +55,7 @@ export function createAdapter(spec: AdapterSpec, opts: AdapterOptions = {}): Pro
     bin: spec.bin,
     installHint: spec.installHint,
     loginHint: spec.loginHint,
+    defaultTimeoutMs: spec.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
 
     async detect(): Promise<Detection> {
       const e = env();
@@ -175,21 +181,52 @@ export function failureFromProcess(res: ProcessResult, message = ""): ProviderEv
   return { type: "error", code, message: summarizeError(message || res.stderr || res.stdout) };
 }
 
-/** Last stdout line that parses as a JSON object. */
-export function lastJsonLine(stdout: string): Record<string, unknown> | undefined {
-  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i].startsWith("{")) continue;
+/**
+ * The last JSON object a CLI printed on stdout. Two shapes count: an object on one line (stream events,
+ * Claude Code's and older Grok CLIs' envelopes), and a pretty-printed object that opens with `{` and closes
+ * with `}` at the start of a line (Grok CLI 1.0.70's `--output-format json`). The nested objects of a
+ * pretty-printed envelope are indented, so they never count, and a parsed envelope's own lines are skipped.
+ */
+export function lastJsonObject(stdout: string): Record<string, unknown> | undefined {
+  const lines = stdout.split(/\r?\n/);
+  const asObject = (text: string) => {
     try {
-      const v = JSON.parse(lines[i]);
-      if (v && typeof v === "object") return v;
-    } catch {}
+      const v = JSON.parse(text);
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  let last: Record<string, unknown> | undefined;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line.startsWith("{")) continue;
+    const one = asObject(line);
+    if (one) {
+      last = one;
+      continue;
+    }
+    if (!lines[i].startsWith("{")) continue;
+    const end = lines.findIndex((l, j) => j > i && l.startsWith("}"));
+    if (end === -1) continue;
+    const many = asObject(lines.slice(i, end + 1).join("\n"));
+    if (many) {
+      last = many;
+      i = end;
+    }
   }
-  return undefined;
+  return last;
 }
 
-/** The display name a CLI prints with its version ("2.1.3 (Claude Code)"), when it prints one. */
+/**
+ * The display name a CLI prints with its version ("2.1.3 (Claude Code)"), when it prints one. The brackets
+ * after a version also carry build metadata: a commit hash ("1.0.70 (f50904eaee6c)"), a date, a build number,
+ * a channel tag ("beta", "nightly"). A name is words of letters that start with a capital, so anything with a
+ * digit in it, or a lowercase tag, is never taken for one; neither is a hex word with no digits in it
+ * ("abcdef", "DEADBEEF"). The caller then falls back to the adapter's own display name.
+ */
 export function agentNameFrom(out: string): string | undefined {
-  const m = /\d+\.\d+\.\d+[\w.+-]*\s*\(([A-Za-z][\w .-]{0,30})\)/.exec(out);
-  return m?.[1].trim() || undefined;
+  const m = /\d+\.\d+\.\d+[\w.+-]*\s*\(\s*([A-Z][A-Za-z]*(?:[ .-][A-Za-z]+)*)\s*\)/.exec(out);
+  if (!m || m[1].length > 31 || /^[A-Fa-f]{6,}$/.test(m[1])) return undefined;
+  return m[1];
 }

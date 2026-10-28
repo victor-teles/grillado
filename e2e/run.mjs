@@ -494,7 +494,7 @@ try {
   check("valid Mermaid blocks render SVGs (under the app's CSP), ELK requests fall back to dagre", (await page.locator(".mmd[data-state=ok] .mmw > svg").count()) === 2);
   check("diagram figure is named by type and node count, its SVG hidden", /^flowchart diagram, 2 nodes$/.test((await page.locator(".mmd[data-state=ok]").first().getAttribute("aria-label")) ?? "") && (await page.locator(".mmd[data-state=ok] svg").first().getAttribute("aria-hidden")) === "true");
   await page.locator(".mmd[data-state=error]").waitFor({ timeout: 5000 });
-  check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .err5").textContent()) ?? "").includes("can't be drawn") && (await page.locator(".mmd[data-state=error] .src5").textContent()).includes("A -->"));
+  check("invalid Mermaid block shows its error and source", ((await page.locator(".mmd[data-state=error] .err5").textContent()) ?? "").includes("can’t be drawn") && (await page.locator(".mmd[data-state=error] .src5").textContent()).includes("A -->"));
   // Recording bug 3: breaking a diagram while editing autosaves the raw text (plan.md is the source of truth);
   // the live preview keeps the last good render, the rest of the plan is untouched, and fixing it renders again.
   {
@@ -936,7 +936,7 @@ try {
     await banner.waitFor({ timeout: 15_000 });
     check("auth error shown as 'Log in to …' (AC8)", (await banner.getAttribute("data-code")) === "auth" && /log in to Claude Code/i.test(await banner.textContent()) && (await banner.locator(".t").count()) === 0);
     await shot(pg, "auth-error");
-    check("auth banner offers retry", (await pg.getByRole("button", { name: "I've logged in, retry" }).count()) === 1);
+    check("auth banner offers retry", (await pg.getByRole("button", { name: "I’ve logged in, retry" }).count()) === 1);
     const authBody = banner.locator("p").first();
     check("auth banner is one sentence, no title, agent name templated (item 2 leftover 1)", ((await authBody.textContent()) ?? "").replace(/\s+/g, " ").trim() === "To keep going, log in to Claude Code: run claude in a terminal and use /login, then come back (your answers are saved)." && (await authBody.locator("code").textContent()) === "claude", await authBody.textContent());
     const inlCopy = authBody.getByRole("button", { name: "Copy claude" });
@@ -969,7 +969,7 @@ try {
       nudges.push(await pg.getByTestId("nudge").count());
       if (i === 4) {
         await shot(pg, "nudge");
-        check("nudge copy", (await pg.getByTestId("nudge").textContent()).includes("You've kept every suggestion for 4 rounds"));
+        check("nudge copy", (await pg.getByTestId("nudge").textContent()).includes("You’ve kept every suggestion for 4 rounds"));
         const nm = await pg.getByTestId("nudge").evaluate((el) => [getComputedStyle(el).marginTop, getComputedStyle(el).marginBottom].join(" "));
         check("nudge spacing 20px above, 24px below (v1.2 review)", nm === "20px 24px", nm);
         const axeN = await new AxeBuilder({ page: pg }).analyze();

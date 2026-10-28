@@ -1,9 +1,9 @@
 // In-session screens: dispatcher, problem banners, confirm (+ reopen dialogs), plating.
-import { failureCode, reasonText } from "../../../src/core/reason.ts";
+import { failureCode, isStopped, reasonText } from "../../../src/core/reason.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
-import { COPY } from "./copy";
+import { COPY, fmt } from "./copy";
 import { confirmCounts, countText, plural, stillOpen } from "./counts";
 import { IAlert, IClock, IKey, ISq, ITerm } from "./icons";
 import { PlanView } from "./Plan";
@@ -73,12 +73,13 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
     auth: {
       icon: <IKey s={16} />,
       title: "",
-      body: authSentence(name, provider?.loginHint ?? "Log in with the agent's own command"),
-      retry: "I've logged in, retry",
+      body: authSentence(name, provider?.loginHint ?? "Log in with the agent’s own command"),
+      retry: "I’ve logged in, retry",
     },
     rate_limit: { icon: <IClock s={16} />, title: `${name} needs a short break`, body: "It hit its usage limit. Try again in a few minutes, or switch agents.", retry: "Retry" },
-    timeout: { icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "Nothing came back in time. Your answers are saved.", retry: "Retry" },
-    malformed: { icon: <IAlert s={16} />, title: "The agent's reply didn't come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
+    // Slow, not failed (Grok 1.0.70 rounds run for minutes): the clock icon and the quiet tone, like a usage limit.
+    timeout: { icon: <IClock s={16} />, title: fmt(COPY.timeoutTitle, { agent: name }), body: COPY.timeoutBody, retry: "Retry" },
+    malformed: { icon: <IAlert s={16} />, title: "The agent’s reply didn’t come through", body: "We tried twice. Your answers are saved.", retry: "Retry" },
     // Like a missing gh (#165): say it isn't installed and how to install it (review-pr22 #3).
     not_found: {
       icon: <ITerm s={16} />,
@@ -88,14 +89,24 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
       cmd: provider?.installHint,
       retry: "Retry",
     },
-    unknown: { icon: <IAlert s={16} />, title: "Can't reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
+    unknown: { icon: <IAlert s={16} />, title: "Can’t reach the agent", body: session.error?.message || "Grillado keeps your answers and retries when you ask.", retry: "Retry" },
   }[code];
+  // The user's own Stop is not a failure: its own quiet card, keyed on the shared STOPPED message (review-pr26 r2 must 2).
+  const stopped = isStopped(session.error);
+  if (stopped) Object.assign(copy, { icon: <IClock s={16} />, title: fmt(COPY.stoppedTitle, { agent: name }), body: COPY.stoppedBody, retry: "Retry" });
+  // A run that fails leaves focus on the page (its Send or Stop is gone): put it on Retry, unless the user is elsewhere (review-pr26 #4).
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const errAt = session.error ? `${code}:${session.error.message ?? ""}` : "";
+  useEffect(() => {
+    const here = document.activeElement;
+    if (errAt && (!here || here === document.body)) retryRef.current?.focus();
+  }, [errAt]);
   // v1.2: one neutral surface; the tone is only on the icon (warning-ink, muted for a rate limit).
-  const tone = code === "rate_limit" ? "info" : "warn";
+  const tone = stopped || code === "rate_limit" || code === "timeout" ? "info" : "warn";
   return (
     // The card's own width decides the layout (a container query): beside the side rail at tablet widths it's narrow too (review-pr22 r4 N1).
     <div className="bnq">
-      <div className="banner" data-tone={tone} role="alert" data-testid="problem" data-code={code}>
+      <div className="banner" data-tone={tone} role="alert" data-testid="problem" data-code={code} data-stopped={stopped ? true : undefined}>
         <span className="ic" aria-hidden="true">
           {copy.icon}
         </span>
@@ -106,7 +117,7 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
         </div>
         <div className="acts">
           {code === "auth" ? null : sw}
-          <button type="button" className="btn primary" onClick={retry}>
+          <button type="button" className="btn primary" ref={retryRef} onClick={retry}>
             {copy.retry}
           </button>
         </div>
@@ -198,11 +209,11 @@ export function ReopenDialog({ session, d, act, onClose, onPreview }: { session:
     <Dialog labelId="ro-t" descId="ro-d" onClose={onClose} role="alertdialog">
       <h2 id="ro-t">Reopen “{name}”?</h2>
       <p id="ro-d">
-        You'll pick it again in the next round.
+        You’ll pick it again in the next round.
         {depNames.length ? (
           <>
             {" "}
-            {depNames.length === 1 ? "This decision depends on it, so it'll be asked again too: " : "These decisions depend on it, so they'll be asked again too: "}
+            {depNames.length === 1 ? "This decision depends on it, so it’ll be asked again too: " : "These decisions depend on it, so they’ll be asked again too: "}
             {depNames.map((d, i) => (
               <span key={d}>
                 {i ? (i === depNames.length - 1 ? " and " : ", ") : null}

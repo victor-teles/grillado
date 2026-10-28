@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
+import { until } from "./wait.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const CLI = realpathSync(path.join(ROOT, "dist/cli.js"));
@@ -513,6 +514,8 @@ try {
     await budget.getByRole("button", { name: "Import" }).click();
     await budget.getByRole("button", { name: "Try again" }).waitFor({ timeout: 5000 });
     check(`${theme} §3 failure: "Couldn't import · Couldn't read the source · Nothing was saved" + Try again, live "Couldn't import ‘…’"`, (await seen(budget.locator(".meta"))) === "Couldn’t import · Couldn’t read the source · Nothing was saved" && (await live(pg)) === `Couldn’t import ‘${BUDGET}’`, `${await seen(budget.locator(".meta"))} | ${await live(pg)}`);
+    await until(async () => (await active(pg)) === "BUTTON:Try again", "focus on Try again", 3000).catch(() => {});
+    check(`${theme} §3 failure: focus moves to its Try again, not the page (review-pr26 #4)`, (await active(pg)) === "BUTTON:Try again", await active(pg));
     await shot(pg, "3-import", t("d-import-failed"));
     await pg.unroute("**/api/found/import");
     await pg.unroute("**/api/found");
@@ -595,6 +598,8 @@ try {
     await fa.getByRole("button", { name: "Import" }).click();
     await fa.getByRole("button", { name: "Try again" }).waitFor({ timeout: 10000 });
     check(`${theme} §4 failure: "Couldn't import · Claude Code hit its usage limit · Nothing was saved"`, (await seen(fa.locator(".meta"))) === "Couldn’t import · Claude Code hit its usage limit · Nothing was saved" && (await fa.locator(".meta .er").count()) === 1, await seen(fa.locator(".meta")));
+    await until(async () => (await active(pg)) === "BUTTON:Try again", "focus on Try again", 3000).catch(() => {});
+    check(`${theme} §4 failure: focus moves to its Try again, not the page (review-pr26 #4)`, (await active(pg)) === "BUTTON:Try again", await active(pg));
     await shot(pg, "4-free-text", t("d-freefail"));
     await axe(pg, `${theme} desktop: free-text failure`);
     await pg.reload();

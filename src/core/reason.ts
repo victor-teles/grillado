@@ -1,5 +1,13 @@
 import type { FailureCode } from "./classify.ts";
 
+/** The message a session carries after the user pressed Stop; the UI keys its own card on it, never on wording it re-types. */
+export const STOPPED = "Stopped. Retry when you’re ready.";
+
+/** True when this error is the user's own Stop, not the agent failing. */
+export function isStopped(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  return !!error && failureCode(error.code) === "unknown" && error.message === STOPPED;
+}
+
 const CODES: readonly FailureCode[] = ["auth", "rate_limit", "timeout", "not_found", "malformed", "unknown"];
 /** Older activity entries stored their own short words for two codes; they still read the same. */
 const OLDER: Record<string, FailureCode> = { rate: "rate_limit", missing: "not_found" };
@@ -21,12 +29,12 @@ export function reasonText(code: string | null | undefined, agent: string): stri
     case "auth":
       return `${agent} isn’t signed in`;
     case "timeout":
-      return `${agent} took too long`;
+      return `${agent} is running slow`;
     case "not_found":
       return `${agent} isn’t installed`;
     case "malformed":
       return `${agent}’s reply didn’t come through`;
     case "unknown":
-      return `${agent} stopped responding`;
+      return `${agent} couldn’t finish this`;
   }
 }

@@ -20,15 +20,15 @@ type Code = keyof typeof WORDS;
 const fill = (t: string) => t.replaceAll("{agent}", A);
 
 describe("the one mapping (core/reason.ts)", () => {
-  test("every classify.ts code has its own words; nothing says 'stopped responding' but unknown", () => {
+  test("every classify.ts code has its own words; nothing says “couldn’t finish this” but unknown", () => {
     expect(reasonText("rate_limit", A)).toBe(WORDS.rate_limit);
     expect(reasonText("not_found", A)).toBe(WORDS.not_found);
     expect(reasonText("auth", A)).toBe(`${A} isn’t signed in`);
-    expect(reasonText("timeout", A)).toBe(`${A} took too long`);
+    expect(reasonText("timeout", A)).toBe(`${A} is running slow`);
     expect(reasonText("malformed", A)).toBe(`${A}’s reply didn’t come through`);
-    expect(reasonText("unknown", A)).toBe(`${A} stopped responding`);
-    expect(reasonText(undefined, A)).toBe(`${A} stopped responding`);
-    expect(reasonText("something new", A)).toBe(`${A} stopped responding`);
+    expect(reasonText("unknown", A)).toBe(`${A} couldn’t finish this`);
+    expect(reasonText(undefined, A)).toBe(`${A} couldn’t finish this`);
+    expect(reasonText("something new", A)).toBe(`${A} couldn’t finish this`);
   });
   test("entries logged with the older short words read the same", () => {
     expect([failureCode("rate"), failureCode("missing"), failureCode(null)]).toEqual(["rate_limit", "not_found", "unknown"]);
@@ -106,7 +106,7 @@ describe("each feature shows the words for usage-limit and not-found failures", 
     expect(e!.steps.filter((x) => x.state === "failed").map((x) => fill(x.label)).join("\n")).toContain(words);
     expect(copyText(e!, { agent: A })).toContain(`Result: failed — ${words}. Nothing was changed.`);
     expect(liveMessage(e!, A)).toContain(`${words}.`);
-    expect(JSON.stringify(e).replaceAll("{agent}", A)).not.toContain("stopped responding");
+    expect(JSON.stringify(e).replaceAll("{agent}", A)).not.toContain("couldn’t finish this");
   }
 
   test("a Retry after a failure starts its own turn: the waiting timer counts from the Retry (review-pr22 r3 #2)", async () => {

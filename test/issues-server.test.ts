@@ -10,6 +10,7 @@ import { issuesOf } from "../src/cli/mcp.ts";
 import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
+import type { ProviderId } from "../src/core/providers/types.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
 import { type LinearMock, STORY_MD, fakeGh, isWrite, linearMock, storySession } from "./issues-fixture.ts";
 import { draftSession } from "./mcp-fixture.ts";
@@ -37,12 +38,14 @@ function project() {
   return dir;
 }
 
-async function start(ghEnv: Record<string, string> = {}, agentEnv: Record<string, string> = {}) {
+async function start(ghEnv: Record<string, string> = {}, agentEnv: Record<string, string> = {}, o: { bins?: ProviderId[]; timeoutMs?: number; seen?: [string, number][] } = {}) {
   const gh = fakeGh(ghEnv);
   mock = await linearMock();
   const store = new Store(mkdtempSync(path.join(os.tmpdir(), "grillado-home-")));
-  const env = fakeEnv(fakeBinDir(["claude"]), agentEnv);
-  const server = new GrilladoServer({ adapters: createAdapters({ env }), store, webDir: webDir(), port: 0, strictPort: true, launchDir: project(), issues: { gh: { bin: gh.bin, env: gh.env }, linear: { url: mock.url, retryMs: 5 } } });
+  const env = fakeEnv(fakeBinDir(o.bins ?? ["claude"]), agentEnv);
+  // o.seen records every run's agent and timeout (review-pr26 r2 n4).
+  const adapters = createAdapters({ env }).map((a) => (o.seen ? { ...a, run: (req: any, signal: any) => (o.seen!.push([a.id, req.timeoutMs]), a.run(req, signal)) } : a));
+  const server = new GrilladoServer({ adapters, store, ...(o.timeoutMs ? { timeoutMs: o.timeoutMs } : {}), webDir: webDir(), port: 0, strictPort: true, launchDir: project(), issues: { gh: { bin: gh.bin, env: gh.env }, linear: { url: mock.url, retryMs: 5 } } });
   servers.push(server);
   await server.detect();
   await server.listen();
@@ -387,5 +390,42 @@ describe("Linear over HTTP", () => {
     expect(hits).toEqual([file]);
     expect((await call("POST", "/api/linear/disconnect")).json).toEqual({ connected: false });
     expect((await call("GET", "/api/linear/teams")).status).toBe(401);
+  });
+});
+
+describe("review-pr26 r2 n4: Split and grouping run on Grok get Grok's 600 s", () => {
+  const todoPlan = (store: Store) => {
+    const s = storySession(store, "# Budget\n\n## Tasks\n\n- [ ] Import bank CSVs\n- [ ] Tag each expense\n- [ ] Show the totals\n");
+    s.source = { app: "cursor", kind: "plan", path: "/nowhere/budget.plan.md", date: s.createdAt } as never;
+    s.decisions = {};
+    store.save(s);
+    return s;
+  };
+  test("a Claude Code plan split on Grok (the only agent here): 600 s; GRILLADO_TIMEOUT_MS still wins", async () => {
+    const seen: [string, number][] = [];
+    const { store, call } = await start({}, {}, { bins: ["grok"], seen });
+    const s = storySession(store);
+    expect(s.provider).toBe("claude");
+    expect((await call("POST", `/api/sessions/${s.id}/issues/split`, {})).json.source).toBe("agent");
+    expect(seen).toEqual([["grok", 600_000]]);
+    const seen2: [string, number][] = [];
+    const o = await start({}, {}, { bins: ["grok"], seen: seen2, timeoutMs: 45_000 });
+    const s2 = storySession(o.store);
+    await o.call("POST", `/api/sessions/${s2.id}/issues/split`, {});
+    expect(seen2).toEqual([["grok", 45_000]]);
+  });
+
+  test("an imported to-do plan grouped on Grok: 600 s; GRILLADO_TIMEOUT_MS still wins", async () => {
+    const seen: [string, number][] = [];
+    const { store, call } = await start({}, {}, { bins: ["grok"], seen });
+    const s = todoPlan(store);
+    const r = await call("POST", `/api/sessions/${s.id}/issues/split`, {});
+    expect(r.json.source).toBe("agent");
+    expect(r.json.decisions).toBe(0);
+    expect(seen).toEqual([["grok", 600_000]]);
+    const seen2: [string, number][] = [];
+    const o = await start({}, {}, { bins: ["grok"], seen: seen2, timeoutMs: 45_000 });
+    await o.call("POST", `/api/sessions/${todoPlan(o.store).id}/issues/split`, {});
+    expect(seen2).toEqual([["grok", 45_000]]);
   });
 });

@@ -52,7 +52,7 @@ describe("anchors", () => {
 
   test("a comment needs text in the plan and a body", () => {
     const s = plated();
-    expect(() => addComment(s, { quote: "not there", at: 0, text: "hi" })).toThrow("isn't in the plan");
+    expect(() => addComment(s, { quote: "not there", at: 0, text: "hi" })).toThrow("isn’t in the plan");
     expect(() => addComment(s, { quote: "Families", at: 0, text: "  " })).toThrow("Write a comment");
     // A selection may span blocks (handoff §2).
     expect(addComment(s, { quote: "Problem\nFamilies", at: 0, text: "x" }).quote).toBe("Problem\nFamilies");
