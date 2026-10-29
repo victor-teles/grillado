@@ -9,7 +9,7 @@ import { type CommentThread, checkEdits, plainQuote, threadSection } from "./com
 import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
 import { checkAddPlan, citeId } from "./addplan.ts";
-import { type Slice, fallbackSlices, groupedSlices, todoIds } from "./issues.ts";
+import { type Slice, fallbackSlices, groupedSlices, planDecisions, todoIds } from "./issues.ts";
 import {
   type AddPlanReply,
   AddPlanReplySchema,
@@ -393,7 +393,7 @@ export function buildSplitPrompt(s: Session, md: string, exported: { key: string
     `<plan>${md}</plan>`,
     "",
     "Its decisions, and slices already exported (JSON):",
-    `<state>${JSON.stringify({ decisions: Object.values(s.decisions).map((d) => ({ key: d.key, question: d.title, answer: d.answer })), exported })}</state>`,
+    `<state>${JSON.stringify({ decisions: planDecisions(s, md).map((d) => ({ key: d.key, question: d.title, answer: d.answer, ...(d.note ? { note: d.note } : {}) })), exported })}</state>`,
     "",
     splitAsk(s, md),
   ].join("\n");

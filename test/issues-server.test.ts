@@ -12,7 +12,7 @@ import { Store } from "../src/cli/store.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
 import type { ProviderId } from "../src/core/providers/types.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
-import { type LinearMock, STORY_MD, fakeGh, isWrite, linearMock, storySession } from "./issues-fixture.ts";
+import { type LinearMock, STORY_MD, block, fakeGh, isWrite, linearMock, storySession, withBlocks } from "./issues-fixture.ts";
 import { draftSession } from "./mcp-fixture.ts";
 import { buildItems, contentHash, fallbackSlices } from "../src/core/issues.ts";
 
@@ -177,6 +177,28 @@ describe("export", () => {
     expect((await done(s.id)).run.rows.map((x: any) => x.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
     expect(gh.calls().slice(before).filter((c) => isWrite(c.args))).toEqual([]);
     expect(gh.state().issues.map((x) => x.body)).toEqual(items.map((it) => old(it.body)));
+  });
+
+  // Dogfood friction 18 and review-pr29 must 1: a plan edited after it was written exports what the plan says, an
+  // override as the decision, over HTTP against the fake gh.
+  test("the issues sent to GitHub have the plan's answers, an override as the answer and other notes under theirs", async () => {
+    const { store, gh, call, done } = await start();
+    const OVR = "Overridden by the PO: SQLite, with a weekly export to a file";
+    const md = withBlocks(STORY_MD, block("R1·1", "storage", "Where do recipes live?", "SQLite on the device", OVR), block("R1·2", "cap", "Round cap?", "3 rounds", "Overridden by the PO: default 2 rounds"), block("R2·1", "sync", "Sync between devices?", "Not in v1", "Sharing a list by link comes first."));
+    const s = storySession(store, md);
+    s.decisions.cap = { key: "cap", round: 1, title: "Round cap?", answer: "3 rounds", kind: "option", accepted_recommendation: true, dependsOn: [] };
+    store.save(s);
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/split`, { use: "fallback" });
+    const want = `- **Where do recipes live?** ${OVR}\n- **Round cap?** Overridden by the PO: default 2 rounds\n- **Sync between devices?** Not in v1\n  _Note:_ Sharing a list by link comes first.\n`;
+    expect(json.items[0].body).toContain(want);
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: json.items.map((it: any) => it.key) });
+    expect((await done(s.id)).run.rows.every((x: any) => x.status === "created")).toBe(true);
+    const sent = gh.state().issues;
+    expect(sent[0].body).toContain(want);
+    for (const old of ["SQLite on the device", "3 rounds"]) expect(sent.some((x) => x.body.includes(old))).toBe(false);
+    expect(sent.find((x) => /^As a cook, I add/.test(x.title))!.body).toContain(`**Covers:** Where do recipes live? ${OVR}`);
+    const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
+    expect(pre.json.changes.every((c: any) => c.change === "unchanged")).toBe(true);
   });
 
   test("Retry failed sends only the failed ones", async () => {

@@ -3,6 +3,7 @@
 // would do; the trackers (src/cli/issues) do the talking, only after the user confirms.
 
 import { planSections } from "./diagrams.ts";
+import { blockKey, findDecisionBlocks, noteAdds, overrides } from "./decision-block.ts";
 import { textHash } from "./text-hash.ts";
 import type { Session } from "./session.ts";
 
@@ -23,9 +24,11 @@ export interface IssueItem {
   sections: string[];
   /** The body was cut to fit the tracker. */
   cut?: boolean;
-  /** The hash of this item as builds before #28 sent it (its Covers line led with R·n codes), when that differs:
-   *  an issue sent then still matches, so it isn't "changed" just because the codes left (review-pr28 must 3). */
-  legacyHash?: string;
+  /** This item's body as earlier builds sent it, when that differs: a child's Covers line led with R·n codes before #28
+   *  (review-pr28 must 3), and a parent had no notes before the plan became the source (dogfood friction 18). An issue
+   *  sent then still matches, so it isn't "changed" just because the format moved. A body, not a hash: the title can
+   *  still be renamed after the item is built. */
+  legacyBody?: string;
 }
 
 /** A slice proposed by {agent}, before it becomes an item. */
@@ -141,6 +144,41 @@ export const planTitle = (s: Session) => (s.plan?.title || s.idea.split("\n")[0]
 /** Settled decisions, in round order. */
 export const resolved = (s: Session) => Object.values(s.decisions).sort((a, b) => a.round - b.round);
 
+/** A settled decision as the plan states it. */
+export interface PlanDecision {
+  key: string;
+  round: number;
+  title: string;
+  answer: string;
+  /** The block's `note:`, when it says more than the answer (noteAdds). Never an override: that is the answer. */
+  note?: string;
+}
+
+/**
+ * The one source for what an export says about its decisions (dogfood friction 18): the plan is what gets edited after
+ * it's written, so the answer and note come from its ```decision block. The session's answer only stands in when the
+ * plan has no block for that decision (or the block can't be read, or has no answer). Which decisions, their order and
+ * their titles stay the session's, so a plan nobody edited exports exactly what it did before.
+ * A note that begins "Overridden" is the decision (the plan's own rule, DOGFOOD-1 r2; review-pr29 must 1): it becomes
+ * the answer, with no note line, so the parent, every Covers line and the split prompt say the override, never the
+ * recorded answer it replaced.
+ */
+export function planDecisions(s: Session, md: string): PlanDecision[] {
+  const blocks = new Map<string, { answer?: string; note?: string }>();
+  for (const b of findDecisionBlocks(md)) {
+    if (!b.parsed.ok || b.parsed.fields.status === "open") continue;
+    const k = blockKey(b.parsed);
+    if (k && !blocks.has(k)) blocks.set(k, b.parsed.fields);
+  }
+  return resolved(s).map((d) => {
+    const f = blocks.get(d.key);
+    if (f && overrides(f.note)) return { key: d.key, round: d.round, title: d.title.trim(), answer: f.note!.trim() };
+    const answer = f?.answer?.trim() || d.answer.trim();
+    const note = noteAdds(f?.note, answer) ? f!.note!.trim() : undefined;
+    return { key: d.key, round: d.round, title: d.title.trim(), answer, ...(note ? { note } : {}) };
+  });
+}
+
 // ---------------------------------------------------------------- BIG-1: what goes into the issue bodies
 // Victor's answer is option A, the spec's wording (frames d-q-body-a, d-gh-body, d-gh-parentbody). The bodies are
 // written only here: option B (A plus the full plan in a closed <details>) or C (minimal) is a swap of these three.
@@ -148,8 +186,11 @@ export const resolved = (s: Session) => Object.values(s.decisions).sort((a, b) =
 /** The end of every body: where it came from, and the hidden marker that finds it again. */
 const footer = (s: Session, key: string) => `\n\nFrom Grillado plan ‘${planTitle(s)}’\n${marker(s.id, key)}\n`;
 
-/** The parent: Problem, Solution, the decisions (question, then answer), Out of scope. */
-function parentText(s: Session, md: string): { text: string; sections: string[] } {
+/**
+ * The parent: Problem, Solution, the decisions (question, then answer, then the plan's note on the next line), Out of
+ * scope. `notes: false`: the same without the notes, as every parent before the notes was sent, only to recognise those.
+ */
+function parentText(s: Session, md: string, notes = true): { text: string; sections: string[] } {
   const parts: string[] = [];
   const sections: string[] = [];
   const section = (name: string) => {
@@ -160,7 +201,7 @@ function parentText(s: Session, md: string): { text: string; sections: string[] 
   };
   section("Problem");
   section("Solution");
-  const ds = resolved(s).map((d) => `- **${d.title.trim()}** ${d.answer.trim()}`);
+  const ds = planDecisions(s, md).map((d) => `- **${d.title}** ${d.answer}${notes && d.note ? `\n  _Note:_ ${d.note}` : ""}`);
   if (ds.length) parts.push(`## Decisions\n${ds.join("\n")}`);
   section("Out of scope");
   return { text: parts.join("\n\n") || cleanText(md.replace(/^# .*\n/, "")), sections };
@@ -174,9 +215,9 @@ function decisionId(s: Session, key: string): string {
 
 /** A child: its slice's first paragraph, "**Covers:** question answer" (no internal R·n code), then the rest of the slice.
  *  `legacy`: the same with the R·n codes, as sent before #28, only to recognise those issues. */
-function childText(s: Session, x: Slice, covers: string[], legacy = false): string {
+function childText(s: Session, ds: Map<string, PlanDecision>, x: Slice, covers: string[], legacy = false): string {
   const [head, ...rest] = (cleanText(x.body) || x.title).split(/\n{2,}/);
-  const line = covers.map((k) => `${legacy ? `${decisionId(s, k)} ` : ""}${s.decisions[k].title.trim()} ${s.decisions[k].answer.trim()}`.trim()).join(" · ");
+  const line = covers.map((k) => `${legacy ? `${decisionId(s, k)} ` : ""}${ds.get(k)!.title} ${ds.get(k)!.answer}`.trim()).join(" · ");
   return [head, line ? `**Covers:** ${line}` : "", ...rest].filter(Boolean).join("\n\n");
 }
 // ---------------------------------------------------------------- end of BIG-1
@@ -200,23 +241,27 @@ export function fitBody(text: string, end: string, limit: number, back: string, 
 
 /** The parent issue: the plan's title, its body (BIG-1, parentText) and where it came from. */
 export function parentItem(s: Session, md: string, tracker: Tracker): IssueItem {
+  const fit = (text: string) => fitBody(text, footer(s, PARENT_KEY), BODY_LIMIT[tracker], `the Grillado plan “${planTitle(s)}” (${s.id})`, TRACKER_NAME[tracker]);
   const { text, sections } = parentText(s, md);
-  const { body, cut } = fitBody(text, footer(s, PARENT_KEY), BODY_LIMIT[tracker], `the Grillado plan “${planTitle(s)}” (${s.id})`, TRACKER_NAME[tracker]);
-  return { key: PARENT_KEY, title: planTitle(s), body, covers: resolved(s).map((d) => d.key), sections, ...(cut ? { cut } : {}) };
+  const { body, cut } = fit(text);
+  const title = planTitle(s);
+  // Parents sent before the notes reached the body read unchanged until something else changes (dogfood friction 18).
+  const old = fit(parentText(s, md, false).text).body;
+  return { key: PARENT_KEY, title, body, covers: resolved(s).map((d) => d.key), sections, ...(cut ? { cut } : {}), ...(old !== body ? { legacyBody: old } : {}) };
 }
 
 /**
  * A child: its own text with the decisions it covers (BIG-1, childText). A cut points at the parent issue by name, not by
  * link, so the body (and its hash) doesn't change when the parent is recreated; the tracker links them.
  */
-export function childItem(s: Session, x: Slice, tracker: Tracker): IssueItem {
+export function childItem(s: Session, x: Slice, tracker: Tracker, ds: Map<string, PlanDecision>): IssueItem {
   const known = new Set(Object.keys(s.decisions));
   const covers = [...new Set(x.covers.filter((k) => known.has(k)))];
   const fit = (text: string) => fitBody(text, footer(s, x.key), BODY_LIMIT[tracker], `the parent issue “${planTitle(s)}”`, TRACKER_NAME[tracker]);
-  const { body, cut } = fit(childText(s, x, covers));
+  const { body, cut } = fit(childText(s, ds, x, covers));
   const title = x.title.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE);
-  const old = fit(childText(s, x, covers, true)).body;
-  return { key: x.key, title, body, covers, sections: x.sections, ...(cut ? { cut } : {}), ...(old !== body ? { legacyHash: contentHash(title, old) } : {}) };
+  const old = fit(childText(s, ds, x, covers, true)).body;
+  return { key: x.key, title, body, covers, sections: x.sections, ...(cut ? { cut } : {}), ...(old !== body ? { legacyBody: old } : {}) };
 }
 
 /** Distinct keys: a repeated slug gets -2, -3; never the parent's. */
@@ -312,7 +357,8 @@ function firstSentence(t: string): string {
 /** All items to send: the parent first, then up to the tracker's cap of children. */
 export function buildItems(s: Session, md: string, tracker: Tracker, slices: Slice[]): { items: IssueItem[]; dropped: number } {
   const cap = MAX_CHILDREN[tracker];
-  const kids = slices.slice(0, cap).map((x) => childItem(s, x, tracker));
+  const ds = new Map(planDecisions(s, md).map((d) => [d.key, d]));
+  const kids = slices.slice(0, cap).map((x) => childItem(s, x, tracker, ds));
   return { items: [parentItem(s, md, tracker), ...kids], dropped: Math.max(0, slices.length - cap) };
 }
 
@@ -341,7 +387,7 @@ export interface Planned {
 }
 
 /** The item is what was sent last time: today's text, or (for an issue sent before #28) the same text with R·n codes. */
-export const sameAsSent = (it: IssueItem, hash: string) => contentHash(it.title, it.body) === hash || it.legacyHash === hash;
+export const sameAsSent = (it: IssueItem, hash: string) => contentHash(it.title, it.body) === hash || (it.legacyBody !== undefined && contentHash(it.title, it.legacyBody) === hash);
 
 /** What each item would do. `remote` is the tracker's current title/body hash per linked key (null = 404), when checked. */
 export function planChanges(items: IssueItem[], issues: PlanIssues | undefined, remote: Record<string, string | null> = {}): Planned[] {

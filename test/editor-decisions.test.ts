@@ -162,6 +162,23 @@ describe("changing a decision inline (Q2)", () => {
     expect(s.plan!.markdown).toContain("answer: Just me");
   });
 
+  test("dogfood friction 20: Change keeps a person's note as written, but drops an override, since the Change is the newer decision (review-pr29 must 2)", () => {
+    const scope = (s: Session) => findDecisionBlocks(s.plan!.markdown).find((b) => b.parsed.ok && b.parsed.fields.key === "scope")!;
+    const kept = platedSession();
+    kept.plan!.markdown = updateDecisionBlock(kept.plan!.markdown, "scope", { note: "One household only, for now." });
+    expect(changeDecision(kept, "scope", { optionId: OTHER_OPTION, text: "Just me" })).toEqual([]);
+    const k = scope(kept).parsed;
+    expect(k.ok && k.fields).toMatchObject({ answer: "Just me", note: "One household only, for now." });
+
+    const dropped = platedSession();
+    dropped.plan!.markdown = updateDecisionBlock(dropped.plan!.markdown, "scope", { note: "Overridden by the PO: one household only, for now." });
+    expect(changeDecision(dropped, "scope", { optionId: OTHER_OPTION, text: "Just me" })).toEqual([]);
+    const f = scope(dropped);
+    expect(f.parsed.ok && f.parsed.fields.answer).toBe("Just me");
+    expect(f.parsed.ok && f.parsed.fields.note).toBeUndefined();
+    expect(dropped.plan!.markdown).not.toContain("Overridden");
+  });
+
   test("no stale restatement: cited prose and the block's note follow the new answer (recording bug 1)", () => {
     const s = createSession({ idea: "Notes", provider: "claude" });
     const qs = [question("scope"), question("platform")];
@@ -184,13 +201,13 @@ describe("changing a decision inline (Q2)", () => {
     expect(md).not.toMatch(/scope a/i);
     expect(md).toContain("- platform a [R1:platform]"); // other decisions untouched
 
-    // A paraphrased note can't be rewritten word for word: it's dropped, never left stale.
+    // A paraphrased note can't be rewritten word for word: it's kept as written (dogfood friction 20), never dropped.
     changeDecision(s, "platform", { optionId: "b" });
     const md2 = s.plan.markdown;
     expect(md2).toContain("- platform b [R1:platform]");
     expect(md2).toContain("We go with platform b for now [R1:platform].");
     expect(md2).toContain("Unrelated platform a mention."); // only sentences that cite the decision
-    expect(md2).not.toContain("Phones first");
+    expect(md2).toContain("note: Phones first, because that's where lists get used.");
     expect(decisionProblems(md2)).toEqual([]);
   });
 

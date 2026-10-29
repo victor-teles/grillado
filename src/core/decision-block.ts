@@ -300,3 +300,19 @@ export function userBlocks(md: string, settled: Record<string, unknown> = {}) {
   }
   return { asked, answered };
 }
+
+const noteNorm = (v: string) =>
+  v
+    .replace(/^\s*decided:\s*/i, "")
+    .replace(/[.!\s]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+/** A note worth showing: not just the answer said again ("Decided: Yes, one core flow."). The plan page and the exported issue use it. */
+export function noteAdds(note: string | undefined, answer: string | undefined): boolean {
+  return !!note?.trim() && noteNorm(note) !== noteNorm(answer ?? "");
+}
+
+/** A note that replaces its answer: the plan's own rule, "where a note: begins Overridden, that note wins" (DOGFOOD-1 r2). */
+export const overrides = (note: string | undefined) => /^\s*overridden\b/i.test(note ?? "");
