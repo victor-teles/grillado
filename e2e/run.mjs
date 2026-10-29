@@ -1002,6 +1002,9 @@ try {
     await pg.getByText("Launch to friends first?").first().waitFor({ timeout: 15_000 });
     const rcRe = await pg.getByTestId("round-counter").textContent();
     check("ROUNDS-REASK: a re-ask at the cap reads Round 6 of 6 · asking again", rcRe === "Round 6 of 6 · asking again", rcRe);
+    const subRe = await pg.locator(".intro p:not(.rmeta)").first().textContent();
+    check("REASK-SUB: a re-ask round's sub line", (subRe ?? "").startsWith("You reopened these, or something they depend on changed. Suggested picks"), subRe);
+    check("#39: no Send and wrap up on a re-ask at the cap", (await pg.getByRole("button", { name: "Send and wrap up" }).count()) === 0);
     await pg.keyboard.press("Enter");
     await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
     await pg.getByTestId("round-status").waitFor({ timeout: 15_000 });
@@ -1013,7 +1016,7 @@ try {
     await stop(s5, "SIGINT");
   }
 
-  // ---------------------------------------------------------------- mobile: ghost Wrap it up, early confirm lists Still open first
+  // ---------------------------------------------------------------- mobile: Send and wrap up, Wrap it up in ⋯, early confirm lists Still open first
   {
     const e6 = env(fakeBins(["claude"]), { FAKE_MODE: "long" });
     const s6 = startServer(["--no-open"], e6);
@@ -1024,14 +1027,16 @@ try {
     await pg.getByRole("textbox", { name: "What are you planning?" }).fill("A notes app");
     await pg.keyboard.press("Enter");
     await pg.getByText("Build it for yourself first?").waitFor({ timeout: 15_000 });
-    const wrapBtn = pg.locator(".bar").getByRole("button", { name: "Wrap it up" });
-    check("mobile bar hides Wrap it up before anything is settled", !(await wrapBtn.isVisible()));
+    // #39: Send and wrap up takes Wrap it up's slot on rounds 1 to N−1; bare Wrap it up is in ⋯ (#38).
+    const sendWrap = pg.locator(".bar").getByRole("button", { name: "Send and wrap up", exact: true });
+    check("#38: no bare Wrap it up in the round bar", (await pg.locator(".bar").getByRole("button", { name: "Wrap it up" }).count()) === 0);
+    const [wb, sb] = [await sendWrap.boundingBox(), await pg.getByRole("button", { name: "Send round" }).boundingBox()];
+    check("#39: mobile Send and wrap up on round 1, quiet, 44px, left of Send round on one line", wb && sb && wb.x + wb.width <= sb.x && Math.round(wb.height) === 44 && Math.abs(wb.y - sb.y) < 1 && !(await sendWrap.evaluate((b) => b.classList.contains("primary"))), JSON.stringify([wb, sb]));
     await pg.getByRole("button", { name: "Send round" }).click();
     await pg.getByText("Start with the capture flow?").waitFor({ timeout: 15_000 });
-    check("mobile bar shows Wrap it up once a decision is settled", await wrapBtn.isVisible());
-    const [wb, sb] = [await wrapBtn.boundingBox(), await pg.getByRole("button", { name: "Send round" }).boundingBox()];
-    check("mobile Wrap it up sits left of Send", wb && sb && wb.x + wb.width <= sb.x);
-    await wrapBtn.click();
+    check("#39: Send and wrap up is hidden on round N", (await sendWrap.count()) === 0);
+    await pg.getByRole("button", { name: "More" }).click();
+    await pg.getByRole("menuitem", { name: "Wrap it up" }).click();
     const earlyTitle = pg.getByRole("heading", { level: 1, name: /^Wrap up with \d+ still open\?$/ });
     await earlyTitle.waitFor({ timeout: 15_000 });
     check("early confirm title is 'Wrap up with n still open?' (Victor, v1.2 review)", /^Wrap up with \d+ still open\?$/.test(((await earlyTitle.textContent()) ?? "").trim()), await earlyTitle.textContent());
@@ -1042,6 +1047,8 @@ try {
     const sideSub = ((await pg.getByTestId("side-sub").first().textContent()) ?? "").trim();
     check("early confirm: the Decisions panel count matches the title", sideSub === `${confirmSettled} settled · ${confirmOpen} open`, `${sideSub} vs ${confirmLine}`);
     check("early confirm has no kicker above the title (C6)", (await pg.getByText(/Wrapping up early|Nothing left open/).count()) === 0);
+    const wrapSt = ((await pg.getByTestId("round-status").textContent()) ?? "").trim();
+    check("#38: a wrap on round N lands on the cap Confirm", wrapSt === "Round 2 of 2 is done." && (await pg.getByRole("button", { name: "Ask 1 more round" }).count()) === 1 && (await pg.getByRole("button", { name: /Keep going/ }).count()) === 0, wrapSt);
     check("early confirm lists Still open first", (await pg.locator(".dl h2").first().textContent()) === "Still open", await pg.locator(".dl h2").allTextContents().then((t) => t.join(",")));
     const axeM = await new AxeBuilder({ page: pg }).analyze();
     check("axe: early confirm (mobile)", axeM.violations.length === 0, axeM.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target}`).join(","));

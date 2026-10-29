@@ -445,3 +445,87 @@ describe("Ask 1 more round (#37)", () => {
     expect(b.runs()).toBe(0);
   });
 });
+
+describe("Wrap up early and Send and wrap up (#38, #39)", () => {
+  const stopped = (t: { store: Store }, sid: string) => {
+    const f = t.store.activityPath(sid);
+    return existsSync(f) ? readFileSync(f, "utf8").split("\n").filter((l) => l.includes('"stopped"')).length : 0;
+  };
+
+  test("Send and wrap up on round 1 saves the answers and opens Confirm with no agent run and no stopped entry", async () => {
+    const { roundStatus, capAction } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude");
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    const s1 = await t.idle(sid, "answering");
+    const answers = s1.rounds[0].questions.map((q: any) => ({ questionId: q.key, optionId: q.recommendedOptionId, accepted_recommendation: true }));
+    const r = await t.api("POST", `/api/sessions/${sid}/answers`, { round: 1, answers, wrap: true });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ status: "confirm", wrappedUp: true, busy: false });
+    expect(r.json.stop).toBeUndefined();
+    expect(t.runs()).toBe(1);
+    const saved = t.store.load(sid)!;
+    expect(Object.keys(saved.decisions).sort()).toEqual(answers.map((a: any) => a.questionId).sort());
+    expect(saved.rounds[0].answers).toHaveLength(answers.length);
+    expect(stopped(t, sid)).toBe(0);
+    // Below the cap: no status line, and Keep going is still the second button.
+    expect(roundStatus(r.json, "Claude Code")).toBeUndefined();
+    expect(capAction(r.json)).toBeNull();
+    expect((await t.api("POST", `/api/sessions/${sid}/keep-going`)).status).toBe(200);
+    await t.idle(sid, "answering");
+    expect(t.runs()).toBe(2);
+  });
+
+  test("wrap: true on round N is a plain Send round: the cap Confirm, still no agent run", async () => {
+    const t = await start("claude");
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    const s2 = await t.idle(sid, "answering");
+    const answers = s2.rounds[1].questions.map((q: any) => ({ questionId: q.key, optionId: q.recommendedOptionId, accepted_recommendation: true }));
+    expect((await t.api("POST", `/api/sessions/${sid}/answers`, { round: 2, answers, wrap: true })).status).toBe(200);
+    expect(await t.idle(sid, "confirm")).toMatchObject({ stop: "cap", wrappedUp: false });
+    expect(t.runs()).toBe(2);
+  });
+
+  test("Wrap it up during round N lands on the cap Confirm; unanswered questions stay open", async () => {
+    const { roundStatus, capAction } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude");
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    const open = (await t.idle(sid, "answering")).rounds[1].questions.map((q: any) => q.key);
+    const w = await t.api("POST", `/api/sessions/${sid}/wrap`);
+    expect(w.json).toMatchObject({ status: "confirm", wrappedUp: true, stop: "cap" });
+    expect(roundStatus(w.json, "Claude Code")).toBe("Round 2 of 2 is done.");
+    expect(capAction(w.json)).toEqual({ label: "Ask 1 more round", action: "ask-more" });
+    for (const k of open) expect(t.store.load(sid)!.decisions[k]).toBeUndefined();
+    expect((await t.api("POST", `/api/sessions/${sid}/keep-going`)).status).toBe(400);
+  });
+
+  test("Wrap it up during the extra round offers only the plan write", async () => {
+    const { roundStatus, capAction, capReached } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude", { extra: { FAKE_MODE: "long" } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    await t.idle(sid, "confirm");
+    expect((await t.api("POST", `/api/sessions/${sid}/ask-more`)).status).toBe(200);
+    await t.idle(sid, "answering");
+    const w = (await t.api("POST", `/api/sessions/${sid}/wrap`)).json;
+    expect(w).toMatchObject({ status: "confirm", stop: "cap", extra: true });
+    expect(roundStatus(w, "Claude Code")).toBe("You’ve used the extra round.");
+    expect(capAction(w)).toBeNull();
+    expect(capReached(w)).toBe(true);
+    for (const a of ["ask-more", "keep-going"]) expect((await t.api("POST", `/api/sessions/${sid}/${a}`)).status).toBe(400);
+  });
+
+  test("Wrap it up below the cap keeps Keep going and has no status line", async () => {
+    const { roundStatus } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude");
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.idle(sid, "answering");
+    const w = (await t.api("POST", `/api/sessions/${sid}/wrap`)).json;
+    expect(w).toMatchObject({ status: "confirm", wrappedUp: true });
+    expect(w.stop).toBeUndefined();
+    expect(roundStatus(w, "Claude Code")).toBeUndefined();
+    expect((await t.api("POST", `/api/sessions/${sid}/keep-going`)).status).toBe(200);
+  });
+});
