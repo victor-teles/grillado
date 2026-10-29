@@ -28,8 +28,9 @@ const q = (key: string, dependsOn: string[] = []) => ({
   recommendedOptionId: "a",
   dependsOn,
 });
+// The tree tests aren't about the round cap (#33): no cap, so every batch is kept.
 const ask = (s: Session, questions: ReturnType<typeof q>[], upcoming: { key: string; label: string; dependsOn: string[] }[] = []) =>
-  applyRound(s, RoundReplySchema.parse({ type: "ask_round", summary: "s", questions, upcoming }));
+  applyRound(s, RoundReplySchema.parse({ type: "ask_round", summary: "s", questions, upcoming }), Infinity);
 const answerAll = (s: Session, pick: (key: string) => "a" | "b" = () => "a") => {
   const r = currentRound(s)!;
   const answers: Answer[] = r.questions.map((x) => ({ questionId: x.key, optionId: pick(x.key), accepted_recommendation: pick(x.key) === "a" }));

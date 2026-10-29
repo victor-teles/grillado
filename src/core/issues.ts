@@ -406,3 +406,20 @@ export function planChanges(items: IssueItem[], issues: PlanIssues | undefined, 
   return out;
 }
 
+/**
+ * v1.3 item 2: the plan's tracker links, read-only (MCP get_plan and list_plans, Home's Recent;
+ * friction 26). There's no create_issues tool: issues are only created from the browser, after its
+ * preview and confirm.
+ */
+export function issuesOf(s: Session) {
+  const i = s.issues;
+  if (!i || (!i.parent && !Object.keys(i.items).length)) return null;
+  const link = (l: { number?: number; identifier?: string; url: string }) => ({ ...(l.number !== undefined ? { number: l.number } : {}), ...(l.identifier ? { identifier: l.identifier } : {}), url: l.url });
+  return {
+    tracker: i.tracker,
+    target: i.tracker === "linear" ? (i.targetName ?? i.target) : i.target,
+    parent: i.parent ? link(i.parent) : null,
+    items: Object.fromEntries(Object.entries(i.items).map(([k, l]) => [k, link(l)])),
+    exportedAt: i.exportedAt,
+  };
+}

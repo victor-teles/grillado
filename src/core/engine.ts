@@ -37,13 +37,17 @@ import {
   commentJsonSchema,
   editJsonSchema,
   planJsonSchema,
+  MAX_QUESTIONS,
   roundJsonSchema,
 } from "./schema.ts";
 import {
   type Decision,
   type Session,
+  DEFAULT_MAX_ROUNDS,
   applyRound,
   openQuestions,
+  owedKeys,
+  roundsSaved,
   renderPlanMarkdown,
   setError,
   userText,
@@ -95,14 +99,27 @@ function userState(s: Session) {
   return { userQuestions: asked.length ? asked : undefined, userDecisions: answered.length ? answered : undefined };
 }
 
-export function buildRoundPrompt(s: Session): string {
+/** The round budget (#35): rounds left of `max`, counted from saved batches; past it, only what's owed. */
+function budgetLines(s: Session, max: number): string[] {
+  const left = max - roundsSaved(s);
+  const most = `at most ${MAX_QUESTIONS} questions, one decision per question`;
+  if (left <= 0)
+    return [`The question rounds are used up. Ask only what the user sent back to be asked again: ${owedKeys(s).join(", ")}. Ask ${most}. Any other question is dropped.`];
+  const lines = [`Round budget: ${left} of ${max} question ${max === 1 ? "round" : "rounds"} left, counting this one. Ask ${most}. You may end early: reply frontier_empty once nothing that matters is left to ask.`];
+  if (left === 1) lines.push("This is the last question round. Ask what matters most for the plan; anything still open after it goes into the plan as an open question.");
+  return lines;
+}
+
+export function buildRoundPrompt(s: Session, max = DEFAULT_MAX_ROUNDS): string {
   const state = stateFor(s);
+  const pastCap = roundsSaved(s) >= max;
   const lines = [`Interview state (JSON):`, `<state>${JSON.stringify(state)}</state>`, ""];
   if (!state.decisions.length && !state.reopened) lines.push("This is the first round. Map the idea and ask the first frontier.");
-  else if (state.reopened) lines.push(`The user reopened: ${state.reopened.join(", ")}. Ask those again, plus anything newly unblocked.`);
+  else if (state.reopened) lines.push(`The user reopened: ${state.reopened.join(", ")}. Ask those again${pastCap ? "" : ", plus anything newly unblocked"}.`);
   else if (state.keepGoing)
     lines.push("The user wants to keep going: look for branches that were left shallow and ask the next frontier there.");
   else lines.push("Recompute the frontier from the settled decisions and ask the next round, or reply frontier_empty.");
+  lines.push(...budgetLines(s, max));
   if (state.userQuestions)
     lines.push(
       "The user added open questions to the plan (userQuestions). Ask each of them in this round with its key as the question key and its question copied word for word as the title. Never rewrite, shorten or merge them; you may add one short line of context, the options and your recommended answer.",
@@ -204,10 +221,11 @@ export async function runValidated<T>(
 }
 
 /** Ask for the next round and apply it to the session (or record the error). */
-export async function nextRound(s: Session, adapter: ProviderAdapter, opts: RunOptions): Promise<boolean> {
+export async function nextRound(s: Session, adapter: ProviderAdapter, opts: RunOptions, max = DEFAULT_MAX_ROUNDS): Promise<boolean> {
+  if (!s.rounds.length) s.roundsStartedAt ??= new Date().toISOString(); // #41: kept across retries
   const result = await runValidated<RoundReply>(
     adapter,
-    { kind: "round", systemPrompt: roundSystemPrompt(), userPrompt: buildRoundPrompt(s), jsonSchema: roundJsonSchema() },
+    { kind: "round", systemPrompt: roundSystemPrompt(), userPrompt: buildRoundPrompt(s, max), jsonSchema: roundJsonSchema() },
     // A plan during the interview is discarded (AC7): the round schema only admits ask_round | frontier_empty,
     // so an early plan fails validation and goes through the repair retry.
     RoundReplySchema,
@@ -220,7 +238,7 @@ export async function nextRound(s: Session, adapter: ProviderAdapter, opts: RunO
     setError(s, result.code, result.message);
     return false;
   }
-  applyRound(s, result.value);
+  applyRound(s, result.value, max);
   return true;
 }
 

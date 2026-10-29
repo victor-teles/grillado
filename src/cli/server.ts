@@ -1,3 +1,4 @@
+import { issuesOf } from "../core/issues.ts";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, statSync, unwatchFile, watch, watchFile } from "node:fs";
 import http from "node:http";
@@ -37,6 +38,8 @@ import {
   submitAnswers,
   userText,
   wrapUp,
+  setPlan,
+  planTiming,
 } from "../core/session.ts";
 import { textHash } from "../core/text-hash.ts";
 import { buildTree } from "../core/tree.ts";
@@ -72,6 +75,8 @@ export interface ServerOptions {
   issues?: IssuesOptions;
   /** `--max-rounds` (#32): this process's cap for every session and agent. Absent: DEFAULT_MAX_ROUNDS. */
   maxRounds?: number;
+  /** A line for the terminal running Grillado (main.ts prints it to stdout), e.g. the plan's timing (#41). */
+  log?: (line: string) => void;
 }
 
 export interface ProviderInfo {
@@ -535,6 +540,8 @@ export class GrilladoServer {
         decisions: Object.keys(s.decisions).length,
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
+        // Friction 26: Recent shows the plan's export ("Issues #31").
+        issues: issuesOf(s),
         // Imported (v1.3 item 1): where it came from, for Recent's "From Claude Code session" line.
         ...(s.source ? { source: { app: s.source.app, kind: s.source.kind }, ...(s.source.title ? { title: s.source.title } : {}) } : {}),
         from: s.from,
@@ -823,17 +830,19 @@ export class GrilladoServer {
       rec.step("Read the session", "{agent} is picking questions");
       const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is picking questions") };
       try {
-        const ok = await nextRound(s, this.adapterFor(s), opts);
+        const ok = await nextRound(s, this.adapterFor(s), opts, this.maxRounds);
         if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was picking questions" });
         if (!ok) return rec.end("failed", { reason: s.error?.code ?? null, last: reasonText(s.error?.code, "{agent}") });
         const r = s.rounds.length === n ? s.rounds[n - 1] : null;
         if (!r) {
-          rec.step("{agent} found nothing left to ask");
+          // Past the cap a reply with nothing owed in it is dropped (stop "cap"); otherwise the frontier is empty.
+          rec.step(s.stop === "cap" ? "{agent} asked only new questions, so the rounds are done" : "{agent} found nothing left to ask");
           return rec.end("done", { result: { questions: 0 } });
         }
         rec.step(`{agent} picked ${r.questions.length} ${r.questions.length === 1 ? "question" : "questions"}`);
         rec.step(`Round ${n} ready`);
-        rec.end("done", { result: { questions: r.questions.length }, asked: r.questions.map((q) => q.key) });
+        // The saved round decides whether it was a re-ask (it asked an owed decision), not the start guess.
+        rec.end("done", { result: { questions: r.questions.length, reask: !!r.reask }, asked: r.questions.map((q) => q.key) });
       } finally {
         rec.end("failed", { reason: "unknown", last: reasonText("unknown", "{agent}") });
       }
@@ -865,8 +874,9 @@ export class GrilladoServer {
       // The new plan overwrites plan.md; keep the user's edited version next to it.
       if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
       const file = this.opts.store.writePlan(s.id, out.markdown);
-      s.plan = { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions, createdAt: new Date().toISOString() };
-      s.status = "plated";
+      setPlan(s, { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions });
+      const timing = planTiming(s);
+      if (timing) this.opts.log?.(timing);
       this.watchPlan(s);
       const sections = planSections(out.markdown).map((x) => x.title);
       rec.step("Saved plan.md");

@@ -19,6 +19,8 @@ export interface RunTarget {
 
 export interface RunResult {
   questions?: number;
+  /** A round that asked an owed decision (#33): it settles the start line's `target.reask` guess. */
+  reask?: boolean;
   decisions?: number;
   sections?: number;
   diagrams?: number;
@@ -165,6 +167,10 @@ export function fold(lines: ActivityLine[], live?: Map<string, string>): Entry[]
       const e = runs.get(l.run);
       if (!e) continue;
       Object.assign(e, { status: l.status, ms: l.ms, endedAt: l.at, reason: l.reason ?? null, read: l.read, notDone: l.notDone, suggestions: l.suggestions, asked: l.asked, wrote: l.wrote, result: l.result });
+      if (e.kind === "round" && l.result?.reask !== undefined) {
+        const { reask: _, ...rest } = e.target ?? {};
+        e.target = l.result.reask ? { ...rest, reask: true } : rest;
+      }
       if (l.retryOf) e.retryOf = l.retryOf;
     } else if (l.type === "review") {
       const last = list[list.length - 1];

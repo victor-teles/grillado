@@ -5,6 +5,7 @@ import { IPlus, IRefresh, IUp } from "./icons";
 import type { AppState, ProviderId, ProviderView, SessionSummary } from "./types";
 import { fromEditor } from "../../../src/core/editor.ts";
 import { sourceLabel } from "../../../src/core/activity.ts";
+import { issuesText, statusText } from "./recent";
 import { Found } from "./found/Found";
 import { useFoundHandoff } from "./found/handoff";
 
@@ -306,6 +307,14 @@ export function Landing({
   );
 }
 
+/** The full status line as plain text, for hover where the desktop cap cuts it (review of #43). */
+function metaTitle(s: SessionSummary) {
+  const rest = `${statusText(s)} · ${when(s.updatedAt)}`;
+  if (s.source) return `From ${sourceLabel(s.source.app, s.source.kind).replace(/^Plan file$/, "plan file")} · ${rest}`;
+  if (s.from !== undefined) return `${fromEditor(s.from)} · ${s.queued ? "waiting for your answers" : rest}`;
+  return rest;
+}
+
 function when(iso: string) {
   const d = new Date(iso);
   const mins = Math.round((Date.now() - d.getTime()) / 60000);
@@ -317,14 +326,6 @@ function when(iso: string) {
   y.setDate(today.getDate() - 1);
   if (d.toDateString() === y.toDateString()) return "yesterday";
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
-}
-
-/** Plain text status for a recent session (v1.2: no badges). */
-function statusText(s: SessionSummary) {
-  if (s.status === "plated") return s.open ? `Wrapped early · ${s.open} open` : "Plated";
-  if (s.status === "confirm") return "Confirm";
-  if (s.status === "synthesizing") return "Plating";
-  return `Round ${Math.max(1, s.rounds)}`;
 }
 
 function Recent({
@@ -376,7 +377,7 @@ function Recent({
         {sessions.map((s) => (
           <li key={s.id} data-id={s.id}>
             <a
-              className="rrow"
+              className={issuesText(s.issues) ? "rrow stack" : "rrow"}
               href={`/s/${s.id}`}
               onClick={(e) => {
                 e.preventDefault();
@@ -384,7 +385,7 @@ function Recent({
               }}
             >
               <span className="nm">{s.title || s.idea.split("\n")[0]}</span>
-              <span className="meta">
+              <span className="meta" title={metaTitle(s)}>
                 {s.source ? (
                   // Imported from a source found in the project (v1.3 item 1 §6, #143).
                   <>
