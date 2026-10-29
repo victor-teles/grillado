@@ -168,7 +168,7 @@ describe("export", () => {
     expect(Date.parse(after.updatedAt)).toBeGreaterThan(Date.parse(old));
     expect(after.issues).toMatchObject({ tracker: "github", target: "victor-teles/grillado", parent: { number: 1, url: "https://github.com/victor-teles/grillado/issues/1" } });
     expect(Object.keys(after.issues.items)).toHaveLength(3);
-    expect(statusText(after)).toBe("Plated · Issues #1");
+    expect(statusText(after)).toBe("Issues #1 · Plated");
     const listed = summary(store.load(s.id)!);
     expect(listed.updatedAt).toBe(after.updatedAt);
     expect(listed.issues).toEqual(after.issues);
@@ -177,9 +177,9 @@ describe("export", () => {
   test("Recent names a Linear parent by its identifier, and counts issues sent without one", async () => {
     const { statusText } = await import("../web/src/app/recent.ts");
     const base = { id: "x", idea: "x", status: "plated" as const, rounds: 2, decisions: 3, updatedAt: "2026-10-29T13:00:00.000Z" };
-    expect(statusText({ ...base, issues: { parent: { identifier: "ENG-12" }, items: { a: {} } } })).toBe("Plated · Issues ENG-12");
-    expect(statusText({ ...base, open: 2, issues: { parent: null, items: { a: {}, b: {} } } })).toBe("Wrapped early · 2 open · 2 issues");
-    expect(statusText({ ...base, issues: { parent: null, items: { a: {} } } })).toBe("Plated · 1 issue");
+    expect(statusText({ ...base, issues: { parent: { identifier: "ENG-12" }, items: { a: {} } } })).toBe("Issues ENG-12 · Plated");
+    expect(statusText({ ...base, open: 2, issues: { parent: null, items: { a: {}, b: {} } } })).toBe("2 issues · Wrapped early · 2 open");
+    expect(statusText({ ...base, issues: { parent: null, items: { a: {} } } })).toBe("1 issue · Plated");
     expect(statusText({ ...base, issues: null })).toBe("Plated");
   });
 

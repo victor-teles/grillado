@@ -9,10 +9,10 @@ export function issuesText(i: SessionSummary["issues"]): string | undefined {
   return n ? `${n} ${n === 1 ? "issue" : "issues"}` : undefined;
 }
 
-/** Plain text status for a recent session (v1.2: no badges), with its export when it has one. */
+/** Plain text status for a recent session (v1.2: no badges). An export leads, so a capped line never hides it (review of #43). */
 export function statusText(s: SessionSummary) {
   const issues = issuesText(s.issues);
-  return issues ? `${stage(s)} · ${issues}` : stage(s);
+  return issues ? `${issues} · ${stage(s)}` : stage(s);
 }
 
 function stage(s: SessionSummary) {

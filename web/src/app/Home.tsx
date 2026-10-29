@@ -307,6 +307,14 @@ export function Landing({
   );
 }
 
+/** The full status line as plain text, for hover where the desktop cap cuts it (review of #43). */
+function metaTitle(s: SessionSummary) {
+  const rest = `${statusText(s)} · ${when(s.updatedAt)}`;
+  if (s.source) return `From ${sourceLabel(s.source.app, s.source.kind).replace(/^Plan file$/, "plan file")} · ${rest}`;
+  if (s.from !== undefined) return `${fromEditor(s.from)} · ${s.queued ? "waiting for your answers" : rest}`;
+  return rest;
+}
+
 function when(iso: string) {
   const d = new Date(iso);
   const mins = Math.round((Date.now() - d.getTime()) / 60000);
@@ -377,7 +385,7 @@ function Recent({
               }}
             >
               <span className="nm">{s.title || s.idea.split("\n")[0]}</span>
-              <span className="meta">
+              <span className="meta" title={metaTitle(s)}>
                 {s.source ? (
                   // Imported from a source found in the project (v1.3 item 1 §6, #143).
                   <>
