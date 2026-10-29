@@ -514,6 +514,8 @@ function GutCite({
   const pid = useId();
   const question = decision?.title ?? fallback;
   const { answer, yours } = citeAnswer(decision, fields);
+  // An override is a sentence; its full stop isn't doubled before ". Show decision".
+  const spoken = answer.replace(/\.$/, "");
   const show = (delay: number) => {
     clearTimeout(t.current);
     t.current = setTimeout(() => {
@@ -550,7 +552,7 @@ function GutCite({
         type="button"
         className={`gut-cite${on ? " on" : ""}${stale ? " st" : ""}`}
         // The visible text ("R3·1", or "R3·1 answer" in label mode) leads the name (WCAG 2.5.3).
-        aria-label={labelMode && answer ? `${id} ${answer}, decision: ${question}. Show decision` : `Decision ${id}: ${question}${answer ? ` ${answer}` : ""}. Show decision`}
+        aria-label={labelMode && answer ? `${id} ${spoken}, decision: ${question}. Show decision` : `Decision ${id}: ${question}${answer ? ` ${spoken}` : ""}. Show decision`}
         aria-describedby={peek ? pid : undefined}
         onClick={onJump}
       >
