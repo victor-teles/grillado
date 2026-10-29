@@ -222,6 +222,7 @@ export interface SessionView {
     markdown: string;
     path: string;
     openDecisions: string[];
+    listed?: string[];
     createdAt?: string;
     editedAt?: string;
     /** Decisions being asked again after an inline change; the plan is read-only meanwhile. */

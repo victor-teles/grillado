@@ -122,7 +122,10 @@ export interface Session extends CommentState {
     title: string;
     markdown: string;
     path: string;
+    /** What's open now, a saved copy of planOpenNow (PR46); readers derive it from the text instead. */
     openDecisions: string[];
+    /** The plan writer's open list as written (or [] on import), never changed afterwards (PR46 r3). */
+    listed?: string[];
     createdAt: string;
     editedAt?: string;
     /** Decisions being asked again after an inline change (Q2); the plan stays, marked, until the next plan. */
@@ -195,7 +198,7 @@ const touch = (s: Session) => {
 /** The agent's plan is saved: plated, stamped with when it was written, and the session is updated (#41). */
 export function setPlan(s: Session, plan: { title: string; markdown: string; path: string; openDecisions: string[] }): void {
   const at = new Date().toISOString();
-  s.plan = { ...plan, createdAt: at };
+  s.plan = { ...plan, listed: [...plan.openDecisions], createdAt: at };
   s.status = "plated";
   s.updatedAt = at;
 }

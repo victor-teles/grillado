@@ -8,7 +8,7 @@ import { decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment,
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
-import { syncPlanOpen } from "../core/floor.ts";
+import { dropReasonLine, planOpenNow, putReasonLine, reasonLineIn, syncPlanOpen } from "../core/floor.ts";
 import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, deleteThread, finishRun, pending, pruneSuggestions, refind, resolveThread, restoreThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
@@ -540,7 +540,8 @@ export class GrilladoServer {
         status: s.status,
         rounds: s.rounds.length,
         decisions: Object.keys(s.decisions).length,
-        open: s.plan?.openDecisions.length ?? 0,
+        // Read time, from plan.md as it is on disk (PR46 r3 M2): right even when Grillado wasn't running.
+        open: s.plan ? planOpenNow(s, this.opts.store.readPlan(s.id) ?? s.plan.markdown).length : 0,
         updatedAt: s.updatedAt,
         // Friction 26: Recent shows the plan's export ("Issues #31").
         issues: issuesOf(s),
@@ -729,9 +730,10 @@ export class GrilladoServer {
       // plan.md is the source of truth for the plan text: pick up edits made while we were down
       // (or by hand, in another editor).
       const md = s.plan ? this.opts.store.readPlan(id) : null;
-      if (s.plan && md !== null && md !== s.plan.markdown) s.plan.markdown = md;
-      // The open count follows the text that's on disk (PR46 M1).
-      if (s.plan) syncPlanOpen(s);
+      const adopted = !!s.plan && md !== null && md !== s.plan.markdown;
+      if (adopted) s.plan!.markdown = md!;
+      // The open count follows the text that's on disk (PR46 M1), and is saved (PR46 r3 M2).
+      if ((s.plan && syncPlanOpen(s)) || adopted) this.opts.store.save(s);
       const queued = s.queued;
       // A run that was cut off by a restart can't resume on its own (AC14): offer Retry.
       if (queued) delete s.queued;
@@ -955,8 +957,10 @@ export class GrilladoServer {
       this.changed(s);
       return;
     }
+    let reason: string | undefined;
     if (op === "undo") {
       const ids = (s.reviewUndo?.items ?? []).map((x) => x.id);
+      reason = s.reviewUndo?.reason;
       if (!undoReview(s)) throw new Error("Nothing to undo.");
       this.logReview(s, ids, "undone");
     } else if (op === "accept" || op === "reject") {
@@ -977,7 +981,16 @@ export class GrilladoServer {
     if (op !== "reject") {
       // plan.md only ever holds accepted text (N3).
       s.plan!.editedAt = new Date().toISOString();
+      const wasOpen = s.plan!.openDecisions.length;
       syncPlanOpen(s);
+      // N5 (PR46 r3): an accept that settles the last open item takes the reason line out too, and its
+      // Undo puts it back, so "## Open decisions" never holds only its reason line.
+      const line = op === "accept" && wasOpen && !s.plan!.openDecisions.length ? reasonLineIn(s.plan!.markdown) : undefined;
+      if (line) {
+        s.plan!.markdown = dropReasonLine(s.plan!.markdown);
+        if (s.reviewUndo) s.reviewUndo.reason = line;
+      }
+      if (reason && s.plan!.openDecisions.length) s.plan!.markdown = putReasonLine(s.plan!.markdown, reason);
       this.opts.store.writePlan(s.id, s.plan!.markdown);
     }
     this.changed(s);

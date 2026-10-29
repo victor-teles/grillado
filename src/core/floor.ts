@@ -61,7 +61,7 @@ export const notAskedLine = (label: string) => `- ${label}: not asked before the
 interface PlanOpenSession {
   rounds: FloorRound[];
   decisions: Record<string, unknown>;
-  plan?: { openDecisions: string[] } | null;
+  plan?: { openDecisions: string[]; listed?: string[] } | null;
 }
 
 const BLOCK = /^```decision\n([\s\S]*?)^```/gm;
@@ -79,8 +79,12 @@ export function openSectionText(md: string): string {
 /**
  * What the plan lists as open right now (M1, PR46): the question of every `status: open` block nobody
  * answered, then each stored item that isn't an asked question (the writer's own items and Grillado's
- * not-asked lines) while its text is still in the Open decisions section. plan.openDecisions, the plan
- * page, the sessions list and MCP get_plan all count this list, recomputed after every plan write.
+ * not-asked lines) while its text is still in the Open decisions section.
+ *
+ * The one source for the open count (PR46 r3): the plan text plus `plan.listed`, the writer's list as
+ * written, which nothing changes afterwards. So an item whose line goes away and comes back counts again.
+ * The plan page, the sessions list and MCP get_plan call this at read time on the text they show;
+ * plan.openDecisions is only its saved copy (older sessions without `listed` fall back to it).
  */
 export function planOpenNow(s: PlanOpenSession, md: string): string[] {
   const out: string[] = [];
@@ -93,26 +97,53 @@ export function planOpenNow(s: PlanOpenSession, md: string): string[] {
   }
   const asked = new Set(s.rounds.flatMap((r) => r.questions.map((q) => q.title)));
   const section = openSectionText(md).toLowerCase();
-  for (const o of s.plan?.openDecisions ?? []) {
+  for (const o of s.plan?.listed ?? s.plan?.openDecisions ?? []) {
     if (asked.has(o) || blockQuestions.has(o)) continue;
     if (section.includes(o.toLowerCase())) out.push(o);
   }
   return [...new Set(out)];
 }
 
-/** Recompute plan.openDecisions from the plan text (after any write to it). */
-export function syncPlanOpen(s: PlanOpenSession & { plan?: { openDecisions: string[]; markdown: string } | null }): void {
-  if (s.plan) s.plan.openDecisions = planOpenNow(s, s.plan.markdown);
+/**
+ * Refresh plan.openDecisions, the saved copy, from the plan text (after any write to it). A session saved
+ * before `listed` existed gets it once from openDecisions, before that list is first overwritten.
+ * Returns whether anything changed.
+ */
+export function syncPlanOpen(s: PlanOpenSession & { plan?: { openDecisions: string[]; listed?: string[]; markdown: string } | null }): boolean {
+  if (!s.plan) return false;
+  const backfill = !s.plan.listed;
+  if (backfill) s.plan.listed = [...s.plan.openDecisions];
+  const next = planOpenNow(s, s.plan.markdown);
+  const same = next.length === s.plan.openDecisions.length && next.every((o, i) => o === s.plan!.openDecisions[i]);
+  s.plan.openDecisions = next;
+  return backfill || !same;
+}
+
+const REASON = /^The interview stopped (?:early because you chose to wrap up|at the round cap, after round \d+ of \d+|after the extra round|before the cap because .+ had nothing left to ask)\.\n(?:\n)?/m;
+
+/** The Open decisions section split out of the plan: [before it and its heading, the section, the rest]. */
+function splitOpen(md: string): [string, string, string] | null {
+  const m = /^##\s+Open decisions\s*$/im.exec(md);
+  if (!m) return null;
+  const rest = md.slice(m.index + m[0].length);
+  const end = rest.search(/^##\s/m);
+  return [md.slice(0, m.index + m[0].length), end < 0 ? rest : rest.slice(0, end), end < 0 ? "" : rest.slice(end)];
+}
+
+/** The reason line in the Open decisions section, if there is one. */
+export function reasonLineIn(md: string): string | undefined {
+  return REASON.exec(splitOpen(md)?.[1] ?? "")?.[0].trim();
 }
 
 /** With nothing left open, the reason line explains nothing (N1, PR46): take it out of the section. */
 export function dropReasonLine(md: string): string {
-  const m = /^##\s+Open decisions\s*$/im.exec(md);
-  if (!m) return md;
-  const head = md.slice(0, m.index + m[0].length);
-  const rest = md.slice(m.index + m[0].length);
-  const end = rest.search(/^##\s/m);
-  const sec = end < 0 ? rest : rest.slice(0, end);
-  const tail = end < 0 ? "" : rest.slice(end);
-  return head + sec.replace(/^The interview stopped (?:early because you chose to wrap up|at the round cap, after round \d+ of \d+|after the extra round|before the cap because .+ had nothing left to ask)\.\n(?:\n)?/m, "") + tail;
+  const p = splitOpen(md);
+  return p ? p[0] + p[1].replace(REASON, "") + p[2] : md;
+}
+
+/** Put a dropped reason line back at the top of the section (Undo of the review that dropped it, N5). */
+export function putReasonLine(md: string, line: string): string {
+  const p = splitOpen(md);
+  if (!p || reasonLineIn(md)) return md;
+  return `${p[0]}\n\n${line}\n\n${p[1].replace(/^\n+/, "")}${p[2]}`;
 }
