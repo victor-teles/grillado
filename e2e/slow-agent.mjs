@@ -47,7 +47,8 @@ async function server(extra = {}) {
   const ctl = path.join(home, "ctl.json");
   writeFileSync(ctl, "{}");
   const e = { PATH: `${fakeBins(["grok"])}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, FAKE_CTL: ctl, ...extra };
-  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { env: e, stdio: ["ignore", "pipe", "pipe"] });
+  // A third question call times out below: the cap (#33) has to leave room for it.
+  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open", "--max-rounds", "3"], { env: e, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {
