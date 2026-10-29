@@ -193,7 +193,7 @@ function webDir() {
   return dir;
 }
 
-test("a wrap on round 2: the plan's open section, the sessions list, MCP and Confirm agree (frictions 21, 28)", async () => {
+test("a wrap on round 1, unanswered: the plan's open section, the sessions list, MCP and Confirm agree (frictions 21, 28)", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "grillado-floor-"));
   const env = fakeEnv(fakeBinDir(["claude"]), {});
   const store = new Store(path.join(dir, "home"));
@@ -209,12 +209,11 @@ test("a wrap on round 2: the plan's open section, the sessions list, MCP and Con
       return !s.busy && s.status === status ? s : undefined;
     });
   const sid = (await api("POST", "/api/sessions", { idea: "A grilling recipe app" })).json.id;
-  const r1 = await idle(sid, "answering");
-  await api("POST", `/api/sessions/${sid}/answers`, { round: 1, answers: r1.rounds[0].questions.map((x: any) => ({ questionId: x.key, optionId: x.recommendedOptionId, accepted_recommendation: true })) });
   await idle(sid, "answering");
   const c = (await api("POST", `/api/sessions/${sid}/wrap`)).json;
   const floor = stillOpen(c);
   expect(floor.some((f) => !f.asked)).toBe(true);
+  expect(floor.some((f) => f.asked)).toBe(true);
   expect(c.rounds.some((r: any) => (r.upcoming ?? []).length)).toBe(true);
   expect((await api("POST", `/api/sessions/${sid}/confirm`)).status).toBe(200);
   const done = await idle(sid, "plated");
