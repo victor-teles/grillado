@@ -292,7 +292,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
   const shown = fold ? all.slice(0, SHOW) : all;
   const row = (d: Decision) => (
     <div className="dr" key={d.key}>
-      <dt className="k">{nameOf(d)}</dt>
+      <dt className="k" title={nameOf(d)}>{nameOf(d)}</dt>
       <dd className="v">
         {/* The answer truncates; the tag never does (demo finding nice-to-have 1). */}
         <span className="va" title={d.answer}>{d.answer}</span>
