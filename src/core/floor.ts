@@ -123,7 +123,7 @@ const REASON = /^The interview stopped (?:early because you chose to wrap up|at 
 
 /** The Open decisions section split out of the plan: [before it and its heading, the section, the rest]. */
 function splitOpen(md: string): [string, string, string] | null {
-  const m = /^##\s+Open decisions\s*$/im.exec(md);
+  const m = /^##[ \t]+Open decisions[ \t]*$/im.exec(md);
   if (!m) return null;
   const rest = md.slice(m.index + m[0].length);
   const end = rest.search(/^##\s/m);
