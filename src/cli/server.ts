@@ -823,17 +823,19 @@ export class GrilladoServer {
       rec.step("Read the session", "{agent} is picking questions");
       const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is picking questions") };
       try {
-        const ok = await nextRound(s, this.adapterFor(s), opts);
+        const ok = await nextRound(s, this.adapterFor(s), opts, this.maxRounds);
         if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was picking questions" });
         if (!ok) return rec.end("failed", { reason: s.error?.code ?? null, last: reasonText(s.error?.code, "{agent}") });
         const r = s.rounds.length === n ? s.rounds[n - 1] : null;
         if (!r) {
-          rec.step("{agent} found nothing left to ask");
+          // Past the cap a reply with nothing owed in it is dropped (stop "cap"); otherwise the frontier is empty.
+          rec.step(s.stop === "cap" ? "{agent} asked nothing you sent back, so the rounds are done" : "{agent} found nothing left to ask");
           return rec.end("done", { result: { questions: 0 } });
         }
         rec.step(`{agent} picked ${r.questions.length} ${r.questions.length === 1 ? "question" : "questions"}`);
         rec.step(`Round ${n} ready`);
-        rec.end("done", { result: { questions: r.questions.length }, asked: r.questions.map((q) => q.key) });
+        // The saved round decides whether it was a re-ask (it asked an owed decision), not the start guess.
+        rec.end("done", { result: { questions: r.questions.length, reask: !!r.reask }, asked: r.questions.map((q) => q.key) });
       } finally {
         rec.end("failed", { reason: "unknown", last: reasonText("unknown", "{agent}") });
       }

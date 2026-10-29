@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** At most this many questions in one round, one decision each (#35, PO override). */
+export const MAX_QUESTIONS = 6;
+
 /** Machine-readable key for a decision, unique within a session (e.g. "storage-engine"). */
 const DecisionKey = z
   .string()
@@ -35,7 +38,7 @@ export const UpcomingSchema = z.object({
 /** What the agent returns for a round request. One flat object so every CLI's schema mode accepts it. */
 export const RoundReplySchema = z.object({
   type: z.enum(["ask_round", "frontier_empty"]),
-  questions: z.array(QuestionSchema).max(9),
+  questions: z.array(QuestionSchema).max(MAX_QUESTIONS),
   /** Decisions that open up later. Optional for the agent; used only to draw the tree. */
   // Lenient: a bad hint is dropped instead of failing the whole round.
   upcoming: z.preprocess(

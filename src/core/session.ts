@@ -224,16 +224,26 @@ export function validateRound(s: Session, reply: RoundReply): string | null {
   return null;
 }
 
-export function applyRound(s: Session, reply: RoundReply): void {
+/**
+ * Save the agent's round. Past the cap (`max` counted rounds) only what the user sent back may be
+ * asked: other questions are dropped, and with nothing left Confirm opens (#33, review of #42).
+ * A round that asks at least one owed decision is a re-ask, and re-asks don't count.
+ */
+export function applyRound(s: Session, reply: RoundReply, max = DEFAULT_MAX_ROUNDS): void {
   s.error = undefined;
   s.summary = reply.summary;
   s.keepGoing = false;
+  const owe = new Set(owedKeys(s));
+  const questions = roundsSaved(s) >= max ? reply.questions.filter((q) => owe.has(q.key)) : reply.questions;
   if (reply.type === "frontier_empty") {
     s.status = "confirm";
     s.stop = "empty";
+  } else if (!questions.length) {
+    s.status = "confirm";
+    s.stop = "cap";
   } else {
     s.stop = undefined;
-    const asked = new Set(reply.questions.map((q) => q.key));
+    const asked = new Set(questions.map((q) => q.key));
     // Keep only usable "upcoming" hints: not settled, not asked now, not duplicated.
     const seen = new Set<string>();
     const upcoming = (reply.upcoming ?? []).filter((u) => {
@@ -243,11 +253,11 @@ export function applyRound(s: Session, reply: RoundReply): void {
     });
     s.rounds.push({
       n: s.rounds.length + 1,
-      questions: reply.questions,
+      questions,
       upcoming,
       summary: reply.summary,
       askedAt: new Date().toISOString(),
-      ...(owed(s) ? { reask: true } : {}),
+      ...(questions.some((q) => owe.has(q.key)) ? { reask: true } : {}),
     });
     s.reopened = [];
     s.status = "answering";
@@ -380,10 +390,12 @@ export function wrapUp(s: Session): void {
 /** Rounds of questions when `--max-rounds` isn't given (#32, PO override): the same for every agent. */
 export const DEFAULT_MAX_ROUNDS = 2;
 
-/** Something the user sent back is waiting to be asked again: a reopened or a stale decision. */
-export const owed = (s: Session): boolean => s.reopened.length > 0 || Object.keys(s.stale ?? {}).length > 0;
+/** What the user sent back and is waiting to be asked again: reopened or stale decisions. */
+export const owedKeys = (s: Session): string[] => [...new Set([...s.reopened, ...Object.keys(s.stale ?? {})])];
 
-/** Rounds that count toward the cap (#33): saved question batches, except re-asks (`reask`). */
+export const owed = (s: Session): boolean => owedKeys(s).length > 0;
+
+/** Rounds that count toward the cap (#33): saved question batches, except re-asks (`reask`, rounds that asked an owed decision). */
 export const roundsSaved = (s: Session): number => s.rounds.filter((r) => !r.reask).length;
 
 /**
