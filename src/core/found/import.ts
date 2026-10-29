@@ -170,7 +170,7 @@ export function sessionFromSource(inp: ImportInput, now = new Date()): { session
   const md = fill(s, x, title, at);
   s.project = inp.project;
   s.source = sourceOf(inp, at, title, md ? textHash(md) : undefined);
-  if (md) s.plan = { title, markdown: md, path: "", openDecisions: [], createdAt: at };
+  if (md) s.plan = { title, markdown: md, path: "", openDecisions: [], listed: [], createdAt: at };
   return { session: s, markdown: md };
 }
 
@@ -199,7 +199,7 @@ export function updateFromSource(s: Session, inp: ImportInput, diskPlan: string 
   const keep = s.plan;
   const md = fill(s, x, title, at);
   s.source = sourceOf(inp, at, title, md ? textHash(md) : undefined);
-  if (md) s.plan = { ...(keep ?? { openDecisions: [], createdAt: at, path: "" }), title, markdown: md, editedAt: undefined, external: undefined, waiting: undefined };
+  if (md) s.plan = { ...(keep ?? { openDecisions: [], createdAt: at, path: "" }), title, markdown: md, openDecisions: [], listed: [], editedAt: undefined, external: undefined, waiting: undefined };
   else s.plan = undefined;
   s.updatedAt = at;
   return { markdown: md, conflict: null };

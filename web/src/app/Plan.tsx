@@ -13,6 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { useComments } from "./comments/Comments";
 import { useDiagrams } from "./diagrams/AddDiagrams";
 import { DecisionCard, listOf } from "./editor/DecisionCard";
+import { citeAnswer } from "./editor/decision-meta";
 import { jumpTo, offscreen } from "./editor/link";
 import { countText, planCounts } from "./counts";
 import { passages as findPassages } from "./editor/blocks";
@@ -89,6 +90,12 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
     return { anchor, text: fmt(COPY.reasking, { agent: agentName, questions: listOf(qs), n: `${n} ${n === 1 ? "passage" : "passages"}` }) };
   }, [waiting.join(" "), psg, staleKeys, touched, agentName, session.stale, session.decisions]);
   const external = useMemo(() => new Map((plan.external ?? []).map((e) => [e.key, e])), [plan.external]);
+  // Every block's fields by key: the gutter cite reads an Overridden note like its card (PR46 M2).
+  const blockFields = useMemo(() => {
+    const out = new Map<string, DecisionFields>();
+    for (const b of findDecisionBlocks(draft.text)) if (b.parsed.ok && b.parsed.fields.key) out.set(b.parsed.fields.key, b.parsed.fields);
+    return out;
+  }, [draft.text]);
   const ownBlocks = useMemo(() => {
     const out = new Map<string, DecisionFields>();
     for (const b of findDecisionBlocks(draft.text)) if (b.parsed.ok && b.parsed.fields.key && /^U\d+$/.test(b.parsed.fields.id)) out.set(b.parsed.fields.key, b.parsed.fields);
@@ -237,6 +244,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         key={k}
         id={label(k)}
         decision={session.decisions[k]}
+        fields={blockFields.get(k)}
         fallback={session.stale?.[k]?.title ?? k}
         agentName={agentName}
         on={on === k || litKey === k || cm.focusedSource === k}
@@ -480,6 +488,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
 function GutCite({
   id,
   decision,
+  fields,
   fallback,
   agentName,
   on,
@@ -490,6 +499,7 @@ function GutCite({
 }: {
   id: string;
   decision?: Decision;
+  fields?: DecisionFields;
   fallback: string;
   agentName: string;
   on: boolean;
@@ -503,7 +513,9 @@ function GutCite({
   const ref = useRef<HTMLSpanElement>(null);
   const pid = useId();
   const question = decision?.title ?? fallback;
-  const answer = decision?.answer ?? "";
+  const { answer, yours } = citeAnswer(decision, fields);
+  // An override is a sentence; its full stop isn't doubled before ". Show decision".
+  const spoken = answer.replace(/\.$/, "");
   const show = (delay: number) => {
     clearTimeout(t.current);
     t.current = setTimeout(() => {
@@ -540,7 +552,7 @@ function GutCite({
         type="button"
         className={`gut-cite${on ? " on" : ""}${stale ? " st" : ""}`}
         // The visible text ("R3·1", or "R3·1 answer" in label mode) leads the name (WCAG 2.5.3).
-        aria-label={labelMode && answer ? `${id} ${answer}, decision: ${question}. Show decision` : `Decision ${id}: ${question}${answer ? ` ${answer}` : ""}. Show decision`}
+        aria-label={labelMode && answer ? `${id} ${spoken}, decision: ${question}. Show decision` : `Decision ${id}: ${question}${answer ? ` ${spoken}` : ""}. Show decision`}
         aria-describedby={peek ? pid : undefined}
         onClick={onJump}
       >
@@ -558,7 +570,7 @@ function GutCite({
           {answer ? (
             <span className="a">
               {answer}
-              {decision && !decision.accepted_recommendation ? <span className="yc">{COPY.yourCall}</span> : null}
+              {yours ? <span className="yc">{COPY.yourCall}</span> : null}
             </span>
           ) : null}
           <span className="m">

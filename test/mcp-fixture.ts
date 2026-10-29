@@ -5,7 +5,7 @@ import path from "node:path";
 import { Store } from "../src/cli/store.ts";
 import { type Session, createSession } from "../src/core/session.ts";
 
-export const PLAN_MD = "# Recipe box\n\n## Storage\n\nRecipes live in SQLite on the device.\n\n## Sync\n\nNo sync in v1.\n";
+export const PLAN_MD = "# Recipe box\n\n## Storage\n\nRecipes live in SQLite on the device.\n\n## Sync\n\nNo sync in v1.\n\n## Open decisions\n\n- export\n";
 
 export function tempStore() {
   return new Store(mkdtempSync(path.join(os.tmpdir(), "grillado-mcp-")));

@@ -81,6 +81,8 @@ export interface ReviewUndo {
   items: Suggestion[];
   /** Threads that followed an accepted suggestion onto its text (#114), as they were before. */
   anchors?: { id: string; quote: string; at: number }[];
+  /** The plan's reason line, when this accept settled the last open item and took it out (PR46 N5). */
+  reason?: string;
 }
 
 export interface CommentState {

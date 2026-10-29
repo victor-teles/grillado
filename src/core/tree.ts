@@ -1,4 +1,5 @@
 import { type Session, currentRound } from "./session.ts";
+import { openFloor } from "./floor.ts";
 
 /*
  * The decision tree the UI draws (side panel, mobile strip, confirm and plan screens). It is derived
@@ -82,7 +83,8 @@ export function buildTree(s: Session): TreeState {
   const open = currentRound(s);
   const frontier = new Map((open?.questions ?? []).map((q, i) => [q.key, i]));
   const latest = s.rounds.at(-1);
-  const upcomingNow = new Set((latest?.upcoming ?? []).map((u) => u.key));
+  // Every upcoming item no round asked stays open (the floor, #40), so the side count matches Confirm and the plan.
+  const upcomingNow = new Set([...(latest?.upcoming ?? []).map((u) => u.key), ...openFloor(s).filter((f) => !f.asked).map((f) => f.key)]);
   const stale = s.stale ?? {};
 
   const statusOf = (key: string): NodeStatus | null => {

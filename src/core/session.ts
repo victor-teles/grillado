@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { type FloorItem, dropReasonLine, notAskedLine, openFloor, reasonLine, stopReason, syncPlanOpen } from "./floor.ts";
 import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
@@ -121,7 +122,10 @@ export interface Session extends CommentState {
     title: string;
     markdown: string;
     path: string;
+    /** What's open now, a saved copy of planOpenNow (PR46); readers derive it from the text instead. */
     openDecisions: string[];
+    /** The plan writer's open list as written (or [] on import), never changed afterwards (PR46 r3). */
+    listed?: string[];
     createdAt: string;
     editedAt?: string;
     /** Decisions being asked again after an inline change (Q2); the plan stays, marked, until the next plan. */
@@ -194,7 +198,7 @@ const touch = (s: Session) => {
 /** The agent's plan is saved: plated, stamped with when it was written, and the session is updated (#41). */
 export function setPlan(s: Session, plan: { title: string; markdown: string; path: string; openDecisions: string[] }): void {
   const at = new Date().toISOString();
-  s.plan = { ...plan, createdAt: at };
+  s.plan = { ...plan, listed: [...plan.openDecisions], createdAt: at };
   s.status = "plated";
   s.updatedAt = at;
 }
@@ -324,6 +328,7 @@ export function submitAnswers(s: Session, roundN: number, answers: Answer[]): vo
     // A Question you added yourself (U id, item 4 #34) gets its answer in the plan text too.
     if (s.plan && /^u\d+$/.test(q.key))
       s.plan.markdown = updateDecisionBlock(s.plan.markdown, q.key, { status: undefined, answer: decision.answer, by: "you", at: new Date().toISOString() });
+    syncPlanOpen(s);
     recorded.push({ questionId: q.key, optionId: a.optionId, text: a.optionId === OTHER_OPTION ? decision.answer : undefined, accepted_recommendation: accepted });
   }
   round.answers = recorded;
@@ -400,6 +405,7 @@ export function editPlan(s: Session, markdown: unknown) {
   if (markdown.length > MAX_PLAN_CHARS) throw new Error("The plan is too long to save.");
   s.plan.markdown = markdown;
   s.plan.editedAt = new Date().toISOString();
+  syncPlanOpen(s);
   touch(s);
 }
 
@@ -547,7 +553,26 @@ export function decisionBlock(s: Session, d: Decision, note?: string): string {
  * decisions"), so every answered question appears with its {round, questionId} whatever the
  * model did (AC16).
  */
-export function renderPlanMarkdown(s: Session, plan: PlanReply): string {
+/**
+ * The plan's open section (#40): the open round's questions, the agent's other open items, and every
+ * floor item the agent left out (appended by Grillado). `open` is what plan.openDecisions stores.
+ */
+export function planOpen(s: Session, plan: PlanReply) {
+  const openQs = openQuestions(s);
+  const openTitles = new Set(openQs.map((q) => q.title));
+  const other = [...new Set(plan.openDecisions)].filter((o) => !openTitles.has(o));
+  const listed = (f: FloorItem) => other.some((o) => o.toLowerCase().includes(f.label.toLowerCase()) || o.includes(f.key));
+  const appended = openFloor(s).filter((f) => !f.asked && !listed(f));
+  return { openQs, other, appended, open: [...new Set([...openQs.map((q) => q.title), ...other, ...appended.map((f) => f.label)])] };
+}
+
+/** Who wrote the plan and the cap in force, for the reason line. Without it (imports) no reason line is written. */
+export interface PlanStop {
+  max: number;
+  agent: string;
+}
+
+export function renderPlanMarkdown(s: Session, plan: PlanReply, stop?: PlanStop): string {
   const statements = new Map(plan.decisions.map((d) => [d.questionId, d.statement]));
   const pos = (d: Decision) => s.rounds.find((r) => r.n === d.round)?.questions.findIndex((q) => q.key === d.key) ?? 0;
   const decisions = Object.values(s.decisions).sort((a, b) => a.round - b.round || pos(a) - pos(b));
@@ -564,20 +589,22 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply): string {
   }
   // Open decisions lead the document: after any intro, before the first section (v1.2 §5 e-early).
   const round = currentRound(s);
-  const openQs = openQuestions(s);
-  const openTitles = new Set(openQs.map((q) => q.title));
-  const other = [...new Set(plan.openDecisions)].filter((o) => !openTitles.has(o));
+  const { openQs, other, appended } = planOpen(s, plan);
+  const why = stop && stopReason(s);
   const lines = [`# ${plan.title}`, ""];
   let opened = false;
   const pushOpen = () => {
     opened = true;
-    if (!openQs.length && !other.length) return;
+    if (!openQs.length && !other.length && !appended.length) return;
     lines.push("## Open decisions", "");
+    // One line for why the interview stopped (#40).
+    if (why) lines.push(reasonLine(why, stop.max, stop.agent), "");
     openQs.forEach((q, i) => {
       lines.push(serializeDecision({ id: `R${round!.n}·${i + 1}`, key: q.key, question: q.title, status: "open" }), "");
     });
     for (const o of other) lines.push(`- ${o}`);
-    if (other.length) lines.push("");
+    for (const f of appended) lines.push(notAskedLine(f.label));
+    if (other.length || appended.length) lines.push("");
   };
   for (const sec of sections) {
     if (!opened && /^##\s/.test(body[sec.a] ?? "")) pushOpen();
@@ -649,6 +676,7 @@ function setAnswer(s: Session, key: string, pick: Pick): string[] | null {
   const swapped = oldNote && !overrides(oldNote) ? swapAnswer(oldNote, d.answer, next.answer) : null;
   s.plan!.markdown = updateDecisionBlock(md, key, { answer: next.answer, ...(swapped ? { note: swapped } : overrides(oldNote) ? { note: undefined } : {}), by: "you", kept_suggestion: next.accepted, at: now });
   s.plan!.editedAt = now;
+  syncPlanOpen(s);
   return deps;
 }
 
@@ -781,6 +809,7 @@ export function adoptExternalPlan(s: Session, markdown: string): void {
   if (!s.plan) return;
   s.plan.markdown = markdown;
   s.plan.reloadedAt = new Date().toISOString();
+  syncPlanOpen(s);
   const pending: ExternalEdit[] = [];
   for (const e of answerEdits(markdown, settledAnswers(s))) {
     const deps = dependentsOf(s, e.key);
@@ -796,6 +825,7 @@ export function confirmExternal(s: Session): string[] {
   const edits = s.plan?.external ?? [];
   s.plan!.external = undefined;
   const deps = [...new Set(edits.flatMap((e) => applyEdit(s, e, true)))];
+  syncPlanOpen(s);
   finishChange(s, deps);
   return deps;
 }
@@ -848,7 +878,9 @@ export function answerOpenDecision(s: Session, key: string, pick: Pick): void {
   };
   const now = new Date().toISOString();
   s.plan.markdown = updateDecisionBlock(s.plan.markdown, key, { status: undefined, answer: next.answer, by: "you", kept_suggestion: next.accepted, at: now });
-  s.plan.openDecisions = s.plan.openDecisions.filter((t) => t !== q.title);
+  syncPlanOpen(s);
+  // N1 (PR46): the last open item answered, the reason line explains nothing.
+  if (!s.plan.openDecisions.length) s.plan.markdown = dropReasonLine(s.plan.markdown);
   s.plan.editedAt = now;
   touch(s);
 }

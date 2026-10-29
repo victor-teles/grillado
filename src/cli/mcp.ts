@@ -1,6 +1,7 @@
 // `grillado mcp` (v1.2 item 1): a stdio MCP server over the same data dir as the web app, so the
 // coding agent the user builds with can read plans and decisions, start a new plan, and comment.
 // Local only: no network. stdout carries the protocol; anything else goes to stderr.
+import { planOpenNow } from "../core/floor.ts";
 import { issuesOf } from "../core/issues.ts";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -40,7 +41,8 @@ export function summary(s: Session) {
   };
 }
 
-export function decisionsOf(s: Session) {
+/** `md`: the plan text the reader sees (plan.md on disk); the open list is derived from it (PR46 r3 M2). */
+export function decisionsOf(s: Session, md: string = s.plan?.markdown ?? "") {
   return {
     id: s.id,
     draft: isDraft(s),
@@ -56,7 +58,7 @@ export function decisionsOf(s: Session) {
         acceptedRecommendation: d.accepted_recommendation,
         dependsOn: d.dependsOn,
       })),
-    open: s.plan?.openDecisions ?? [],
+    open: s.plan ? planOpenNow(s, md) : [],
     stale: Object.values(s.stale ?? {}).map((d) => ({ key: d.key, title: d.title, reason: d.reason })),
   };
 }
@@ -131,7 +133,7 @@ export function createMcpServer(
       safely(() => {
         const s = load(store, plan);
         const markdown = markdownOf(store, s);
-        const d = decisionsOf(s);
+        const d = decisionsOf(s, markdown);
         const issues = issuesOf(s);
         return {
           content: [text(markdown), json({ id: s.id, title: titleOf(s), status: s.status, draft: d.draft, decisions: d.decisions, open: d.open, issues })],
@@ -149,7 +151,8 @@ export function createMcpServer(
     },
     async ({ plan }) =>
       safely(() => {
-        const d = decisionsOf(load(store, plan));
+        const s = load(store, plan);
+        const d = decisionsOf(s, markdownOf(store, s));
         return { content: [json(d)], structuredContent: d };
       }),
   );
