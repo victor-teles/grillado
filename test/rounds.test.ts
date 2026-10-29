@@ -31,7 +31,7 @@ describe("--max-rounds (#32)", () => {
   });
 
   test("help names the flag and its default; mcp refuses it", () => {
-    expect(HELP).toMatch(/--max-rounds <n>\s+Rounds of questions before the plan \(default 2\)/);
+    expect(HELP).toContain("--max-rounds <n>    Question rounds before the plan is written (default 2)\n");
     expect(() => parseArgs(["mcp", "--max-rounds", "3"])).toThrow("mcp only takes --data-dir");
   });
 

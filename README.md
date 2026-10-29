@@ -19,7 +19,7 @@ the answer behind every decision.
 --port <n>          Port (default 4747, or the next free one). With --port, a busy port is an error.
 --provider <id>     claude | codex | grok | pi
 --model <id>        Passed through to the agent CLI
---max-rounds <n>    Rounds of questions before the plan (default 2), the same for every agent
+--max-rounds <n>    Question rounds before the plan is written (default 2)
 --no-open           Don't open a browser; just print the URL
 --no-scan           Don't look in this folder for plans to import (also GRILLADO_NO_SCAN=1)
 --data-dir <path>   Sessions and plans (default ~/.grillado, or $GRILLADO_HOME)

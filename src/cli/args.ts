@@ -95,7 +95,7 @@ Options:
                       With --port, a busy port is an error.
   --provider <id>     claude | codex | grok | pi (skips the picker)
   --model <id>        Pass a model id through to the agent CLI
-  --max-rounds <n>    Rounds of questions before the plan (default 2), the same for every agent
+  --max-rounds <n>    Question rounds before the plan is written (default 2)
   --no-open           Don't open the browser; just print the URL
   --no-scan           Don't look in this folder for plans and planning sessions from your
                       coding agent (also GRILLADO_NO_SCAN=1). Nothing is imported unless you click.
