@@ -77,6 +77,8 @@ export interface Session extends CommentState {
   id: string;
   createdAt: string;
   updatedAt: string;
+  /** When the agent was first asked for round 1 (#41). Only reported; it never starts, stops or extends a round. */
+  roundsStartedAt?: string;
   provider: ProviderId;
   idea: string;
   context: string;
@@ -186,6 +188,28 @@ export function createSession(input: { idea: string; context?: string; provider:
 const touch = (s: Session) => {
   s.updatedAt = new Date().toISOString();
 };
+
+/** The agent's plan is saved: plated, stamped with when it was written, and the session is updated (#41). */
+export function setPlan(s: Session, plan: { title: string; markdown: string; path: string; openDecisions: string[] }): void {
+  const at = new Date().toISOString();
+  s.plan = { ...plan, createdAt: at };
+  s.status = "plated";
+  s.updatedAt = at;
+}
+
+/** The plan's tracker links after an export run (or its failure): the session changed (friction 26). */
+export function setIssues(s: Session, issues: PlanIssues): void {
+  s.issues = issues;
+  touch(s);
+}
+
+/** "Plan written 12 min 5 s after round 1 started." (#41); nothing for sessions with no round-1 start. */
+export function planTiming(s: Session): string | undefined {
+  if (!s.roundsStartedAt || !s.plan) return undefined;
+  const ms = Math.max(0, Date.parse(s.plan.createdAt) - Date.parse(s.roundsStartedAt));
+  if (!Number.isFinite(ms)) return undefined;
+  return `Plan written ${Math.floor(ms / 60_000)} min ${Math.floor((ms % 60_000) / 1000)} s after round 1 started.`;
+}
 
 export const currentRound = (s: Session): Round | undefined => {
   const last = s.rounds.at(-1);

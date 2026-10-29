@@ -33,6 +33,8 @@ export interface SessionSummary {
   queued?: boolean;
   /** Imported from a source found in the project (v1.3 item 1 §6). */
   source?: { app: SourceApp; kind: SourceKind };
+  /** The plan's export (friction 26): its parent issue, else how many issues it sent. */
+  issues?: { parent: { number?: number; identifier?: string } | null; items: Record<string, unknown> } | null;
 }
 
 // ---------------------------------------------------------------- found in this project (v1.3 item 1)

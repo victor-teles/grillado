@@ -1,3 +1,4 @@
+import { issuesOf } from "../core/issues.ts";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, statSync, unwatchFile, watch, watchFile } from "node:fs";
 import http from "node:http";
@@ -37,6 +38,8 @@ import {
   submitAnswers,
   userText,
   wrapUp,
+  setPlan,
+  planTiming,
 } from "../core/session.ts";
 import { textHash } from "../core/text-hash.ts";
 import { buildTree } from "../core/tree.ts";
@@ -72,6 +75,8 @@ export interface ServerOptions {
   issues?: IssuesOptions;
   /** `--max-rounds` (#32): this process's cap for every session and agent. Absent: DEFAULT_MAX_ROUNDS. */
   maxRounds?: number;
+  /** A line for the terminal running Grillado (main.ts prints it to stdout), e.g. the plan's timing (#41). */
+  log?: (line: string) => void;
 }
 
 export interface ProviderInfo {
@@ -535,6 +540,8 @@ export class GrilladoServer {
         decisions: Object.keys(s.decisions).length,
         open: s.plan?.openDecisions.length ?? 0,
         updatedAt: s.updatedAt,
+        // Friction 26: Recent shows the plan's export ("Issues #31").
+        issues: issuesOf(s),
         // Imported (v1.3 item 1): where it came from, for Recent's "From Claude Code session" line.
         ...(s.source ? { source: { app: s.source.app, kind: s.source.kind }, ...(s.source.title ? { title: s.source.title } : {}) } : {}),
         from: s.from,
@@ -867,8 +874,9 @@ export class GrilladoServer {
       // The new plan overwrites plan.md; keep the user's edited version next to it.
       if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
       const file = this.opts.store.writePlan(s.id, out.markdown);
-      s.plan = { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions, createdAt: new Date().toISOString() };
-      s.status = "plated";
+      setPlan(s, { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions });
+      const timing = planTiming(s);
+      if (timing) this.opts.log?.(timing);
       this.watchPlan(s);
       const sections = planSections(out.markdown).map((x) => x.title);
       rec.step("Saved plan.md");

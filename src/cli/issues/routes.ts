@@ -4,7 +4,7 @@
 import type http from "node:http";
 import { textHash } from "../../core/text-hash.ts";
 import { PARENT_KEY, type PlanIssues, type Slice, type SplitSource, type Tracker, agentSlices, buildItems, contentHash, fallbackSlices, groupsTodos, planChanges } from "../../core/issues.ts";
-import type { Session } from "../../core/session.ts";
+import { type Session, setIssues } from "../../core/session.ts";
 import type { Store } from "../store.ts";
 import { Gh, type GhOptions, GitHubTracker, projectRemotes } from "./gh.ts";
 import { LINEAR_KEYS_URL, Linear, type LinearOptions, LinearTracker } from "./linear.ts";
@@ -334,7 +334,7 @@ export class IssuesRoutes {
           { tracker, dest: { tracker: dest.tracker, target: dest.target, labels: dest.labels, ...(dest.host && dest.host !== "github.com" ? { host: dest.host } : {}), ...(dest.targetName ? { targetName: dest.targetName } : {}), ...(dest.projectId ? { projectId: dest.projectId } : {}) }, items: chosen, overwrite: strs(body?.overwrite, 200), newLabels },
           {
             save: (issues: PlanIssues) => {
-              s.issues = issues;
+              setIssues(s, issues);
               this.host.changed(s);
             },
             progress: (r) => {
@@ -348,7 +348,7 @@ export class IssuesRoutes {
         const msg = (err as Error)?.message ?? String(err);
         run.rows = run.rows.map((r) => ({ ...r, status: "failed", message: msg }));
         run.state = "done";
-        s.issues = { ...(s.issues ?? { tracker: dest.tracker, target: dest.target, labels: dest.labels, items: {}, exportedAt: new Date().toISOString() }), failed: Object.fromEntries(chosen.map((it) => [it.key, msg])) };
+        setIssues(s, { ...(s.issues ?? { tracker: dest.tracker, target: dest.target, labels: dest.labels, items: {}, exportedAt: new Date().toISOString() }), failed: Object.fromEntries(chosen.map((it) => [it.key, msg])) });
         this.host.changed(s);
         countExport(this.host.store, s.id, run);
       } finally {

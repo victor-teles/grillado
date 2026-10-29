@@ -5,6 +5,7 @@ import { IPlus, IRefresh, IUp } from "./icons";
 import type { AppState, ProviderId, ProviderView, SessionSummary } from "./types";
 import { fromEditor } from "../../../src/core/editor.ts";
 import { sourceLabel } from "../../../src/core/activity.ts";
+import { statusText } from "./recent";
 import { Found } from "./found/Found";
 import { useFoundHandoff } from "./found/handoff";
 
@@ -317,14 +318,6 @@ function when(iso: string) {
   y.setDate(today.getDate() - 1);
   if (d.toDateString() === y.toDateString()) return "yesterday";
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
-}
-
-/** Plain text status for a recent session (v1.2: no badges). */
-function statusText(s: SessionSummary) {
-  if (s.status === "plated") return s.open ? `Wrapped early · ${s.open} open` : "Plated";
-  if (s.status === "confirm") return "Confirm";
-  if (s.status === "synthesizing") return "Plating";
-  return `Round ${Math.max(1, s.rounds)}`;
 }
 
 function Recent({

@@ -88,12 +88,12 @@ async function waitFor<T>(fn: () => Promise<T | undefined>, ms = 10_000): Promis
   }
 }
 
-async function start(id: ProviderId, opts: { maxRounds?: number; extra?: Record<string, string>; store?: Store } = {}) {
+async function start(id: ProviderId, opts: { maxRounds?: number; extra?: Record<string, string>; store?: Store; log?: (line: string) => void } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "grillado-rounds-"));
   const log = path.join(dir, "agent.jsonl");
   const env = fakeEnv(fakeBinDir([id]), { FAKE_LOG: log, ...opts.extra });
   const store = opts.store ?? new Store(path.join(dir, "home"));
-  const server = new GrilladoServer({ adapters: createAdapters({ env }), store, webDir: webDir(), port: 0, strictPort: true, provider: id, maxRounds: opts.maxRounds });
+  const server = new GrilladoServer({ adapters: createAdapters({ env }), store, webDir: webDir(), port: 0, strictPort: true, provider: id, maxRounds: opts.maxRounds, log: opts.log });
   servers.push(server);
   await server.detect();
   await server.listen();
@@ -276,5 +276,64 @@ describe("Confirm's status line (#33)", () => {
     expect(atCap(view(2))).toBe(true);
     expect(atCap(view(1))).toBe(false);
     expect(atCap(view(2, { stale: { a: {} } }))).toBe(false);
+  });
+});
+
+describe("plan time (#41)", () => {
+  const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+  test("round 1's start, every round's time and the plan's are stamped; the plan updates the session; stdout gets the elapsed line", async () => {
+    const lines: string[] = [];
+    const t = await start("claude", { log: (l) => lines.push(l) });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "A grilling recipe app" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    const confirm = await t.idle(sid, "confirm");
+    const before = confirm.updatedAt;
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await t.api("POST", `/api/sessions/${sid}/confirm`)).status).toBe(200);
+    await t.idle(sid, "plated");
+    const s = t.store.load(sid)!;
+    expect(s.roundsStartedAt).toMatch(ISO);
+    expect(s.rounds.map((r) => r.askedAt)).toEqual([expect.stringMatching(ISO), expect.stringMatching(ISO)]);
+    expect(Date.parse(s.roundsStartedAt!)).toBeLessThanOrEqual(Date.parse(s.rounds[0].askedAt));
+    expect(s.plan!.createdAt).toMatch(ISO);
+    // Friction 15: writing the plan updates the session.
+    expect(s.updatedAt).toBe(s.plan!.createdAt);
+    expect(Date.parse(s.updatedAt)).toBeGreaterThan(Date.parse(before));
+    const ms = Date.parse(s.plan!.createdAt) - Date.parse(s.roundsStartedAt!);
+    expect(lines).toEqual([`Plan written ${Math.floor(ms / 60_000)} min ${Math.floor((ms % 60_000) / 1000)} s after round 1 started.`]);
+    expect(lines[0]).toMatch(/^Plan written \d+ min \d+ s after round 1 started\.$/);
+  });
+
+  test("minutes and seconds are whole; a session with no round-1 start prints nothing", async () => {
+    const { createSession, planTiming } = await import("../src/core/session.ts");
+    const s = createSession({ idea: "x", provider: "claude" });
+    s.plan = { title: "t", markdown: "m", path: "/tmp/p.md", openDecisions: [], createdAt: "2026-10-29T13:12:05.999Z" };
+    expect(planTiming(s)).toBeUndefined();
+    s.roundsStartedAt = "2026-10-29T13:00:00.000Z";
+    expect(planTiming(s)).toBe("Plan written 12 min 5 s after round 1 started.");
+    s.plan.createdAt = "2026-10-29T15:00:59.000Z";
+    expect(planTiming(s)).toBe("Plan written 120 min 59 s after round 1 started.");
+  });
+
+  test("elapsed time never starts, stops or extends a round", async () => {
+    const t = await start("claude");
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.idle(sid, "answering");
+    // Round 1 started a day ago: nothing about the rounds changes.
+    await t.server.close();
+    servers.length = 0;
+    const saved = t.store.load(sid)!;
+    const started = new Date(Date.now() - 86_400_000).toISOString();
+    saved.roundsStartedAt = started;
+    t.store.save(saved);
+    const b = await start("claude", { store: t.store });
+    await b.answer(sid);
+    await b.answer(sid);
+    const s = await b.idle(sid, "confirm");
+    expect(s).toMatchObject({ stop: "cap" });
+    expect(s.rounds).toHaveLength(2);
+    expect(b.store.load(sid)!.roundsStartedAt).toBe(started);
   });
 });

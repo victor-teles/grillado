@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { issuesOf } from "../src/cli/mcp.ts";
+import { issuesOf } from "../src/core/issues.ts";
 import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
@@ -149,6 +149,38 @@ describe("export", () => {
     expect(gh.state().issues.length).toBe(4);
     const stats = JSON.parse(readFileSync(path.join(store.dir, "stats.json"), "utf8")).issues;
     expect(stats).toMatchObject({ runs: 2, cleanRuns: 2, created: 4, github: 2, plans: [s.id] });
+  });
+
+  test("friction 26: the export updates the session and shows in /api/state, Recent and MCP list_plans", async () => {
+    const { summary } = await import("../src/cli/mcp.ts");
+    const { statusText } = await import("../web/src/app/recent.ts");
+    const { store, call, done } = await start();
+    const s = storySession(store);
+    const old = "2026-10-28T12:00:00.000Z";
+    store.save({ ...store.load(s.id)!, updatedAt: old });
+    const row = async () => (await call("GET", "/api/state")).json.sessions.find((x: any) => x.id === s.id);
+    expect((await row()).issues).toBeNull();
+    expect(statusText(await row())).toBe("Plated");
+    const { json } = await call("POST", `/api/sessions/${s.id}/issues/split`, { use: "fallback" });
+    await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: json.items.map((it: any) => it.key) });
+    await done(s.id);
+    const after = await row();
+    expect(Date.parse(after.updatedAt)).toBeGreaterThan(Date.parse(old));
+    expect(after.issues).toMatchObject({ tracker: "github", target: "victor-teles/grillado", parent: { number: 1, url: "https://github.com/victor-teles/grillado/issues/1" } });
+    expect(Object.keys(after.issues.items)).toHaveLength(3);
+    expect(statusText(after)).toBe("Plated · Issues #1");
+    const listed = summary(store.load(s.id)!);
+    expect(listed.updatedAt).toBe(after.updatedAt);
+    expect(listed.issues).toEqual(after.issues);
+  });
+
+  test("Recent names a Linear parent by its identifier, and counts issues sent without one", async () => {
+    const { statusText } = await import("../web/src/app/recent.ts");
+    const base = { id: "x", idea: "x", status: "plated" as const, rounds: 2, decisions: 3, updatedAt: "2026-10-29T13:00:00.000Z" };
+    expect(statusText({ ...base, issues: { parent: { identifier: "ENG-12" }, items: { a: {} } } })).toBe("Plated · Issues ENG-12");
+    expect(statusText({ ...base, open: 2, issues: { parent: null, items: { a: {}, b: {} } } })).toBe("Wrapped early · 2 open · 2 issues");
+    expect(statusText({ ...base, issues: { parent: null, items: { a: {} } } })).toBe("Plated · 1 issue");
+    expect(statusText({ ...base, issues: null })).toBe("Plated");
   });
 
   // review-pr28 must 3: a plan exported before #28 ("**Covers:** R1·1 question answer") reads unchanged after it,

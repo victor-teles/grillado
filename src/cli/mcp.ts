@@ -1,6 +1,7 @@
 // `grillado mcp` (v1.2 item 1): a stdio MCP server over the same data dir as the web app, so the
 // coding agent the user builds with can read plans and decisions, start a new plan, and comment.
 // Local only: no network. stdout carries the protocol; anything else goes to stderr.
+import { issuesOf } from "../core/issues.ts";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -33,6 +34,8 @@ export function summary(s: Session) {
     draft: isDraft(s),
     decisions: Object.keys(s.decisions).length,
     updatedAt: s.updatedAt,
+    // Friction 26: the export shows in list_plans, as it does in get_plan.
+    issues: issuesOf(s),
     uri: URI + s.id,
   };
 }
@@ -290,19 +293,3 @@ export async function runMcp(store: Store, version: string, appLine?: string): P
   console.error(`grillado mcp: serving ${store.dir} over stdio`);
 }
 
-/**
- * v1.3 item 2: the plan's tracker links, read-only. There's no create_issues tool: issues are only
- * created from the browser, after its preview and confirm.
- */
-export function issuesOf(s: Session) {
-  const i = s.issues;
-  if (!i || (!i.parent && !Object.keys(i.items).length)) return null;
-  const link = (l: { number?: number; identifier?: string; url: string }) => ({ ...(l.number !== undefined ? { number: l.number } : {}), ...(l.identifier ? { identifier: l.identifier } : {}), url: l.url });
-  return {
-    tracker: i.tracker,
-    target: i.tracker === "linear" ? (i.targetName ?? i.target) : i.target,
-    parent: i.parent ? link(i.parent) : null,
-    items: Object.fromEntries(Object.entries(i.items).map(([k, l]) => [k, link(l)])),
-    exportedAt: i.exportedAt,
-  };
-}

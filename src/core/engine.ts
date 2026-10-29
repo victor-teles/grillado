@@ -222,6 +222,7 @@ export async function runValidated<T>(
 
 /** Ask for the next round and apply it to the session (or record the error). */
 export async function nextRound(s: Session, adapter: ProviderAdapter, opts: RunOptions, max = DEFAULT_MAX_ROUNDS): Promise<boolean> {
+  if (!s.rounds.length) s.roundsStartedAt ??= new Date().toISOString(); // #41: kept across retries
   const result = await runValidated<RoundReply>(
     adapter,
     { kind: "round", systemPrompt: roundSystemPrompt(), userPrompt: buildRoundPrompt(s, max), jsonSchema: roundJsonSchema() },
