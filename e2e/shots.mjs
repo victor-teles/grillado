@@ -29,10 +29,10 @@ const started = new Set();
 process.on("exit", () => {
   for (const c of started) if (c.exitCode === null) c.kill("SIGKILL");
 });
-async function server(ids, extra = {}, home) {
+async function server(ids, extra = {}, home, args = []) {
   home ??= mkdtempSync(path.join(WORK, "home-"));
   const e = { PATH: `${fakeBins(ids)}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, ...extra };
-  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open", "--no-scan"], { env: e, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open", "--no-scan", ...args], { env: e, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {
@@ -221,9 +221,9 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
       await p2.ctx.close();
       await s2.stop();
     }
-    // wrapped early → plan with open decisions; long → nudge
+    // wrapped early → plan with open decisions (a long run: --max-rounds 6)
     {
-      const s = await server(["claude"], { FAKE_MODE: "long" });
+      const s = await server(["claude"], { FAKE_MODE: "long" }, undefined, ["--max-rounds", "6"]);
       const { ctx, pg, snap } = await page(theme, vp);
       await pg.goto(s.url);
       await typeIdea(pg, "A notes app");
@@ -233,8 +233,7 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
         await pg.getByRole("button", { name: /Send round/ }).click();
         await pg.getByText(t).first().waitFor({ state: "detached", timeout: 15000 });
       }
-      await pg.getByTestId("nudge").waitFor({ timeout: 15000 });
-      await snap("s-nudge");
+      await pg.getByText("Back up nightly?").first().waitFor({ timeout: 15000 });
       await pg.locator(".bar").getByRole("button", { name: "Wrap it up" }).click();
       await pg.getByRole("heading", { name: /^Wrap up with \d+ still open\?$/ }).waitFor({ timeout: 15000 });
       await snap("s-early");

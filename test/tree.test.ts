@@ -3,13 +3,15 @@ import { RoundReplySchema } from "../src/core/schema.ts";
 import {
   type Answer,
   type Session,
-  acceptStreak,
+  DEFAULT_MAX_ROUNDS,
   applyRound,
+  atCap,
   createSession,
   currentRound,
-  dismissNudge,
+  keepGoing,
   reopen,
-  shouldNudge,
+  roundsSaved,
+  stopAtCap,
   submitAnswers,
 } from "../src/core/session.ts";
 import { ROOT_ID, buildTree, heatLevel } from "../src/core/tree.ts";
@@ -123,45 +125,87 @@ describe("decision tree", () => {
   });
 });
 
-describe("passivity nudge", () => {
-  test("appears after 4 rounds in a row of all-accepted answers, never before", () => {
-    const s = createSession({ idea: "x", provider: "claude" });
-    for (let i = 1; i <= 4; i++) {
-      ask(s, [q(`k${i}a`), q(`k${i}b`)]);
-      expect(shouldNudge(s)).toBe(false);
-      answerAll(s);
-    }
-    expect(acceptStreak(s)).toBe(4);
-    expect(shouldNudge(s)).toBe(false); // waiting for the next round: nothing to push back on yet
-    ask(s, [q("k5")]);
-    expect(shouldNudge(s)).toBe(true);
-  });
+describe("round cap (#33)", () => {
+  test("the default is 2 rounds", () => expect(DEFAULT_MAX_ROUNDS).toBe(2));
 
-  test("one changed answer resets the streak", () => {
+  test("a round counts once its batch is saved; the gate closes at N", () => {
     const s = createSession({ idea: "x", provider: "claude" });
-    for (let i = 1; i <= 5; i++) {
-      ask(s, [q(`k${i}a`), q(`k${i}b`)]);
-      answerAll(s, (k) => (i === 2 && k.endsWith("b") ? "b" : "a"));
-    }
-    expect(acceptStreak(s)).toBe(3);
-    ask(s, [q("k6")]);
-    expect(shouldNudge(s)).toBe(false);
-  });
-
-  test("Looks right dismisses it for the rest of the session", () => {
-    const s = createSession({ idea: "x", provider: "claude" });
-    for (let i = 1; i <= 4; i++) {
-      ask(s, [q(`k${i}`)]);
-      answerAll(s);
-    }
-    ask(s, [q("k5")]);
-    expect(shouldNudge(s)).toBe(true);
-    dismissNudge(s);
-    expect(shouldNudge(s)).toBe(false);
+    expect(roundsSaved(s)).toBe(0);
+    ask(s, [q("a")]);
+    expect(roundsSaved(s)).toBe(1);
+    expect(atCap(s, 2)).toBe(false);
     answerAll(s);
-    ask(s, [q("k6")]);
-    expect(acceptStreak(s)).toBe(5);
-    expect(shouldNudge(s)).toBe(false);
+    ask(s, [q("b")]);
+    expect(atCap(s, 2)).toBe(true);
+    expect(atCap(s, 3)).toBe(false);
+  });
+
+  test("a round asked while a reopened or stale decision is owed is a re-ask and doesn't count", () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    ask(s, [q("a")]);
+    answerAll(s);
+    ask(s, [q("b")]);
+    answerAll(s);
+    expect(atCap(s, 2)).toBe(true);
+    s.reopened = ["a"];
+    expect(atCap(s, 2)).toBe(false);
+    ask(s, [q("a")]);
+    answerAll(s);
+    s.stale = { b: { key: "b", label: "b", title: "b", answer: "x", round: 2, dependsOn: [], reason: "a changed" } as any };
+    expect(atCap(s, 2)).toBe(false);
+    ask(s, [q("b")]);
+    delete s.stale!.b;
+    answerAll(s);
+    expect(s.rounds.map((r) => !!r.reask)).toEqual([false, false, true, true]);
+    expect(roundsSaved(s)).toBe(2);
+    expect(atCap(s, 2)).toBe(true);
+    expect(atCap(s, 3)).toBe(false);
+  });
+
+  test("at the cap Confirm opens with the cap as its reason, and Keep going is refused", () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    ask(s, [q("a")]);
+    answerAll(s);
+    ask(s, [q("b")]);
+    answerAll(s);
+    stopAtCap(s);
+    expect(s.status).toBe("confirm");
+    expect(s.stop).toBe("cap");
+    expect(() => keepGoing(s, 2)).toThrow("That was the last round.");
+    keepGoing(s, 3);
+    expect(s.status as string).toBe("asking");
+    expect(s.stop).toBeUndefined();
+  });
+
+  test("an empty frontier below the cap is the agent ending early; Keep going stays", () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    ask(s, [q("a")]);
+    answerAll(s);
+    applyRound(s, { type: "frontier_empty", summary: "done", questions: [], upcoming: [] });
+    expect(s.status).toBe("confirm");
+    expect(s.stop).toBe("empty");
+    expect(roundsSaved(s)).toBe(1);
+    keepGoing(s, 2);
+    expect(s.status as string).toBe("asking");
+  });
+
+  test("reopened decisions are owed past the cap", () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    ask(s, [q("platform")]);
+    answerAll(s);
+    ask(s, [q("storage", ["platform"])]);
+    answerAll(s);
+    expect(atCap(s, 2)).toBe(true);
+    stopAtCap(s);
+    reopen(s, "platform");
+    expect(atCap(s, 2)).toBe(false);
+    ask(s, [q("platform")]);
+    answerAll(s);
+    // storage still waits to be asked again
+    expect(atCap(s, 2)).toBe(false);
+    ask(s, [q("storage", ["platform"])]);
+    answerAll(s);
+    expect(atCap(s, 2)).toBe(true);
   });
 });
 

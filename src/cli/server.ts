@@ -16,11 +16,9 @@ import {
   type Answer,
   UNKNOWN_OPTION,
   type Session,
-  acceptStreak,
   answerOpenDecision,
   changeDecision,
   createSession,
-  dismissNudge,
   editPlan,
   adoptExternalPlan,
   confirmExternal,
@@ -28,10 +26,13 @@ import {
   planAnswerEdits,
   reaskStale,
   saveAnswerEdits,
+  DEFAULT_MAX_ROUNDS,
+  owed,
+  atCap,
   keepGoing,
+  stopAtCap,
   reopen,
   setError,
-  shouldNudge,
   startSynthesis,
   submitAnswers,
   userText,
@@ -69,6 +70,8 @@ export interface ServerOptions {
   launchDir?: string;
   /** "Send to issues": gh and Linear settings (tests point them at fakes). */
   issues?: IssuesOptions;
+  /** `--max-rounds` (#32): this process's cap for every session and agent. Absent: DEFAULT_MAX_ROUNDS. */
+  maxRounds?: number;
 }
 
 export interface ProviderInfo {
@@ -567,8 +570,7 @@ export class GrilladoServer {
       // v1.3 item 1 §6: where an imported plan came from, and whether that source changed or is gone.
       ...(s.source ? { sourceInfo: this.sourceInfo(s) } : {}),
       agentNote: this.agentNote(s),
-      acceptStreak: acceptStreak(s),
-      nudge: shouldNudge(s),
+      maxRounds: this.maxRounds,
       // v1.3 item 2: the export in progress (or just finished), so a re-opened sheet shows it (#174).
       issuesRun: this.issues?.runView(s.id),
       // Grillado's own cache, not the browser's business.
@@ -722,6 +724,8 @@ export class GrilladoServer {
       const queued = s.queued;
       // A run that was cut off by a restart can't resume on its own (AC14): offer Retry.
       if (queued) delete s.queued;
+      // Reopened at the cap (#33): the same rule as a live run, Confirm with no agent call.
+      else if (s.status === "asking" && atCap(s, this.maxRounds)) stopAtCap(s);
       else if ((s.status === "asking" || s.status === "synthesizing") && !s.error) {
         setError(s, "unknown", "Interrupted. Retry to continue.");
       }
@@ -800,10 +804,20 @@ export class GrilladoServer {
       });
   }
 
+  private get maxRounds() {
+    return this.opts.maxRounds ?? DEFAULT_MAX_ROUNDS;
+  }
+
   private startRound(s: Session, retry = false) {
     if (this.inflight.has(s.id)) return;
+    // The one cap gate (#33): every path that would ask for a round (answers, Retry, Keep going, a
+    // reopened session) lands on Confirm instead once the last allowed round is saved.
+    if (atCap(s, this.maxRounds)) {
+      stopAtCap(s);
+      return this.changed(s);
+    }
     const n = s.rounds.length + 1;
-    const rec = this.record(s, "round", { round: n, ...(s.reopened.length && s.rounds.length ? { reask: true } : {}) }, retry ? `session:${s.id}` : undefined);
+    const rec = this.record(s, "round", { round: n, ...(owed(s) && s.rounds.length ? { reask: true } : {}) }, retry ? `session:${s.id}` : undefined);
     this.lastRun.set(`session:${s.id}`, rec.id);
     this.run(s, async (c) => {
       rec.step("Read the session", "{agent} is picking questions");
@@ -1309,13 +1323,8 @@ export class GrilladoServer {
         this.changed(s);
         break;
       }
-      case "nudge": {
-        dismissNudge(s);
-        this.changed(s);
-        break;
-      }
       case "keep-going": {
-        keepGoing(s);
+        keepGoing(s, this.maxRounds);
         this.startRound(s);
         break;
       }

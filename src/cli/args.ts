@@ -1,4 +1,5 @@
 import { PROVIDER_IDS, type ProviderId } from "../core/providers/types.ts";
+import { DEFAULT_MAX_ROUNDS } from "../core/session.ts";
 
 export interface CliArgs {
   /** `grillado mcp`: the stdio MCP server instead of the web app. */
@@ -12,12 +13,17 @@ export interface CliArgs {
   version: boolean;
   /** Look in the launch folder for plans and planning sessions (v1.3 item 1). --no-scan turns it off. */
   scan: boolean;
+  /** Rounds of questions before Confirm (#32). Every agent gets the same; absent means DEFAULT_MAX_ROUNDS. */
+  maxRounds: number;
 }
 
 export class UsageError extends Error {}
 
+export const MAX_ROUNDS_ERROR = "--max-rounds needs a whole number of 1 or more, like --max-rounds 2.";
+
 export function parseArgs(argv: string[]): CliArgs {
-  const out: CliArgs = { open: true, help: false, version: false, scan: true };
+  const out: CliArgs = { open: true, help: false, version: false, scan: true, maxRounds: DEFAULT_MAX_ROUNDS };
+  let maxRoundsSet = false;
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i];
     if (raw === "mcp" && i === 0) {
@@ -41,6 +47,14 @@ export function parseArgs(argv: string[]): CliArgs {
         const v = value();
         if (!PROVIDER_IDS.includes(v as ProviderId)) throw new UsageError(`Unknown provider "${v}". Use one of: ${PROVIDER_IDS.join(", ")}`);
         out.provider = v as ProviderId;
+        break;
+      }
+      case "--max-rounds": {
+        // Digits only: "2.0", "1e1", " 3" and "0x2" are refused, not read as numbers.
+        const v = inline ?? argv[++i];
+        if (v === undefined || !/^[0-9]+$/.test(v) || !(Number(v) >= 1) || !Number.isSafeInteger(Number(v))) throw new UsageError(MAX_ROUNDS_ERROR);
+        out.maxRounds = Number(v);
+        maxRoundsSet = true;
         break;
       }
       case "--no-open":
@@ -67,7 +81,7 @@ export function parseArgs(argv: string[]): CliArgs {
         throw new UsageError(`Unknown option "${raw}"`);
     }
   }
-  if (out.command === "mcp" && (out.port !== undefined || out.provider || out.model || !out.open || !out.scan)) throw new UsageError("mcp only takes --data-dir");
+  if (out.command === "mcp" && (maxRoundsSet || out.port !== undefined || out.provider || out.model || !out.open || !out.scan)) throw new UsageError("mcp only takes --data-dir");
   return out;
 }
 
@@ -81,6 +95,7 @@ Options:
                       With --port, a busy port is an error.
   --provider <id>     claude | codex | grok | pi (skips the picker)
   --model <id>        Pass a model id through to the agent CLI
+  --max-rounds <n>    Question rounds before the plan is written (default 2)
   --no-open           Don't open the browser; just print the URL
   --no-scan           Don't look in this folder for plans and planning sessions from your
                       coding agent (also GRILLADO_NO_SCAN=1). Nothing is imported unless you click.

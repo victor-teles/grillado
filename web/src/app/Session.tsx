@@ -7,6 +7,7 @@ import { COPY, fmt } from "./copy";
 import { confirmCounts, countText, plural, stillOpen } from "./counts";
 import { IAlert, IClock, IKey, ITerm } from "./icons";
 import { PlanView } from "./Plan";
+import { atCap, roundStatus } from "./rounds";
 import { FiringUp, RoundView, SessionBody, StatusLine, Strip, WaitingView } from "./Round";
 import type { AppState, Decision, DecisionNode, SessionView, TreeState } from "./types";
 
@@ -23,7 +24,7 @@ export function SessionScreen({ session, app, act, onSwitch }: { session: Sessio
     case "answering":
       return <RoundView session={session} act={act} banner={banner} />;
     case "confirm":
-      return <Confirm session={session} act={act} />;
+      return <Confirm session={session} act={act} agent={agentName(app, session)} />;
     case "synthesizing":
       return <Plating session={session} act={act} banner={banner} />;
     case "plated":
@@ -273,7 +274,7 @@ export function groupDecisions(session: SessionView): { title: string; items: De
 
 const SHOW = 6;
 
-function Confirm({ session, act }: { session: SessionView; act: Act }) {
+function Confirm({ session, act, agent }: { session: SessionView; act: Act; agent: string }) {
   const mobile = useMobile();
   const [reopening, setReopening] = useState<Decision | null>(null);
   const [more, setMore] = useState(false);
@@ -287,6 +288,7 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
   const early = open.length > 0;
   const cc = confirmCounts(session);
   const counts = countText(cc);
+  const status = roundStatus(session, agent);
   // Long lists fold after six rows; group headings only on an early wrap (v1.2).
   const fold = all.length > SHOW + 2 && !more;
   const shown = fold ? all.slice(0, SHOW) : all;
@@ -313,9 +315,12 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
           ↵
         </span>
       </button>
-      <button type="button" className="btn quiet" aria-label="Keep going on a branch" onClick={() => quiet(act("keep-going"))}>
-        {mobile ? "Keep going" : "Keep going on a branch"}
-      </button>
+      {/* Only below the cap (#33): at the cap the server refuses another round. */}
+      {atCap(session) ? null : (
+        <button type="button" className="btn quiet" aria-label="Keep going on a branch" onClick={() => quiet(act("keep-going"))}>
+          {mobile ? "Keep going" : "Keep going on a branch"}
+        </button>
+      )}
     </>
   );
   return (
@@ -333,6 +338,11 @@ function Confirm({ session, act }: { session: SessionView; act: Act }) {
               <div className="intro">
                 {/* Victor, v1.2 review: an early wrap asks the real question; no kicker above the title (C6). */}
                 <h1 id="confirm-title">{early ? `Wrap up with ${open.length} still open?` : "Is it done?"}</h1>
+                {status ? (
+                  <p className="rmeta" data-testid="round-status">
+                    {status}
+                  </p>
+                ) : null}
                 <p>
                   {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : `${plural(n, "decision")} settled, nothing open.`} Read them over before the plan gets written.
                 </p>

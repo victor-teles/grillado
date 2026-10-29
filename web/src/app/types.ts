@@ -145,6 +145,8 @@ export interface Round {
   answers?: Answer[];
   askedAt: string;
   answeredAt?: string;
+  /** A re-ask of reopened or stale decisions: it doesn't count toward the cap (#33). */
+  reask?: boolean;
 }
 export interface Decision {
   key: string;
@@ -205,8 +207,9 @@ export interface SessionView {
   decisions: Record<string, Decision>;
   reopened: string[];
   stale?: Record<string, StaleDecision>;
-  nudgeDismissed?: boolean;
   wrappedUp: boolean;
+  /** Why Confirm opened without a wrap (#33): the cap, or the agent had nothing left to ask. */
+  stop?: "cap" | "empty";
   keepGoing?: boolean;
   summary: string;
   error?: { code: FailureCode; message: string };
@@ -246,8 +249,8 @@ export interface SessionView {
   /** "Using Grok · Claude Code isn’t installed": an import running on a stand-in agent (demo finding MUST 2). */
   agentNote?: string;
   tree: TreeState;
-  acceptStreak: number;
-  nudge: boolean;
+  /** `--max-rounds` of the running app (#32). */
+  maxRounds: number;
   /** "Send to issues" (v1.3 item 2): the plan's links, and the run going now or last finished. */
   issues?: PlanIssues | null;
   issuesRun?: ExportRun;

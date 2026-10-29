@@ -152,7 +152,8 @@ try {
     if (one) {
       check("newest first: the plan, your confirm, round 2, your answers, round 1", titles[0] === "Wrote the plan" && /^You confirmed/.test(titles[1]) && titles.some((t) => /^Round 2/.test(t)) && /^Round 1/.test(titles[titles.length - 1]), titles.join(" | "));
       check("one group with a sticky header", (await act(pg).locator(".grp6").count()) === 1 && (await act(pg).locator(".gh6").evaluate((e) => getComputedStyle(e).position)) === "sticky" && (await act(pg).locator(".gh6").evaluate((e) => e.getBoundingClientRect().height)) === 36);
-      check("group header: Today · from time, runs · total", /^Today · from \d+:\d\d [AP]M\s*4 runs · \d/.test(await txt(act(pg).locator(".gh6"))), await txt(act(pg).locator(".gh6")));
+      // Rounds 1 and 2, then the plan: at the cap (#33) no third question call runs.
+      check("group header: Today · from time, runs · total", /^Today · from \d+:\d\d [AP]M\s*3 runs · \d/.test(await txt(act(pg).locator(".gh6"))), await txt(act(pg).locator(".gh6")));
       check("rows are in an <ol>", (await act(pg).locator("ol > li.ev6").count()) === titles.length);
       const plan = row(pg, "Wrote the plan");
       check("the latest run is open by default", (await plan.locator(".evb").getAttribute("aria-expanded")) === "true" && (await plan.locator(".st6").count()) > 0);

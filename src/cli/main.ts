@@ -54,6 +54,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     strictPort: args.port !== undefined,
     provider: args.provider,
     model: args.model,
+    maxRounds: args.maxRounds,
     timeoutMs: process.env.GRILLADO_TIMEOUT_MS ? Number(process.env.GRILLADO_TIMEOUT_MS) : undefined,
     onQuit: () => void shutdown("quit"),
     mcpLaunch: mcpLaunch(fileURLToPath(import.meta.url), store.dir),
