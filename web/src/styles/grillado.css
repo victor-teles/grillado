@@ -172,7 +172,7 @@ button:disabled{cursor:default}
 /* An import running on a stand-in agent: one quiet line, no banner (demo finding MUST 2). */
 .intro p.agent-note{font-size:var(--t-meta);line-height:16px}
 /* Where the interview stands (#33), a 12px meta line right under the h1. */
-.intro p.rmeta{font-size:var(--t-meta);line-height:16px;margin-top:-2px}
+.intro p.rmeta{font-size:var(--t-meta);line-height:16px;margin-top:-2px;text-wrap:pretty}
 .bar{padding:12px 40px 16px;background:var(--background)}
 .bar .in,.bar>div{max-width:640px;width:100%;margin:0 auto;display:flex;align-items:center;gap:12px;min-width:0}
 .bar>p[role=alert],.bar .err{max-width:640px;width:100%;margin:0 auto 10px;font-size:var(--t-meta);line-height:16px;color:var(--destructive-ink)}
