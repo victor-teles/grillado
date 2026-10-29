@@ -171,6 +171,8 @@ button:disabled{cursor:default}
 .intro p{color:var(--muted-foreground)}
 /* An import running on a stand-in agent: one quiet line, no banner (demo finding MUST 2). */
 .intro p.agent-note{font-size:var(--t-meta);line-height:16px}
+/* Where the interview stands (#33), a 12px meta line right under the h1. */
+.intro p.rmeta{font-size:var(--t-meta);line-height:16px;margin-top:-2px}
 .bar{padding:12px 40px 16px;background:var(--background)}
 .bar .in,.bar>div{max-width:640px;width:100%;margin:0 auto;display:flex;align-items:center;gap:12px;min-width:0}
 .bar>p[role=alert],.bar .err{max-width:640px;width:100%;margin:0 auto 10px;font-size:var(--t-meta);line-height:16px;color:var(--destructive-ink)}
@@ -205,10 +207,6 @@ button:disabled{cursor:default}
 .cmd.well .cbtn{float:right;margin:-4px 0 -4px 8px;font-family:var(--sans)}
 .cbtn .lb [data-l]::after{content:attr(data-l)}
 @media (hover:hover){.cmd.well:hover .cbtn{background:var(--muted);color:var(--foreground)}}
-.nudge{display:flex;align-items:center;gap:8px;color:var(--muted-foreground);margin-block:20px 24px;flex-wrap:wrap}
-.nudge>span,.nudge>p{flex:1;min-width:0}
-/* Mobile: the quiet buttons' labels line up with the text edge, closer under it (#20 leftover 6). */
-@media (max-width:640px){.nudge{row-gap:2px;margin-top:4px}.nudge>p,.nudge>span{flex-basis:100%}.nudge>.btn.quiet:first-of-type{margin-left:-14px}}
 
 /* ---------- the round: Uai AgentQuestion (stacked, card) ----------
    The vendored component nests its children in body > clip > grid wrappers and adds its own meta
@@ -677,9 +675,9 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
    Transitions only; the 220 ms fade is the base. Enter states use @starting-style, so nothing
    replays on re-render and nothing loops. Keyboard input never triggers motion. */
 @media (prefers-reduced-motion:no-preference){
-  .q,.dz,.pbanner,.banner,.nudge,.status,.plate section,.dialog,.scrim,.sheet-scrim{transition-property:opacity,background-color,box-shadow,transform;transition-duration:var(--d-base);transition-timing-function:var(--ease-out)}
+  .q,.dz,.pbanner,.banner,.status,.plate section,.dialog,.scrim,.sheet-scrim{transition-property:opacity,background-color,box-shadow,transform;transition-duration:var(--d-base);transition-timing-function:var(--ease-out)}
   @starting-style{
-    .pbanner,.banner,.nudge,.plate section,.scrim,.sheet-scrim{opacity:0}
+    .pbanner,.banner,.plate section,.scrim,.sheet-scrim{opacity:0}
     .dialog{opacity:0;transform:scale(.98)}
     .rail[data-sheet]{transform:translateY(100%)}
   }
@@ -706,7 +704,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-property:opacity,background-color,color!important;animation:none!important}
   @starting-style{
-    .pbanner,.banner,.nudge,.plate section,.scrim,.sheet-scrim,.dialog{opacity:0}
+    .pbanner,.banner,.plate section,.scrim,.sheet-scrim,.dialog{opacity:0}
     .rail[data-sheet],.csheet{opacity:0}
   }
   /* Sheets fade in 160ms instead of sliding (item 6 §18 F). */

@@ -82,9 +82,12 @@ export interface Session extends CommentState {
   reopened: string[];
   /** Reopened decisions not yet settled again, for the tree (kept across rounds). */
   stale?: Record<string, StaleDecision>;
-  /** "Looks right" on the passivity nudge hides it for the rest of the session. */
-  nudgeDismissed?: boolean;
   wrappedUp: boolean;
+  /**
+   * Why the interview stopped at Confirm without a wrap (#33): "cap" when the saved rounds reached N,
+   * "empty" when the agent had nothing left to ask. Cleared when another round starts.
+   */
+  stop?: "cap" | "empty";
   keepGoing: boolean;
   summary: string;
   error?: SessionError;
@@ -222,7 +225,9 @@ export function applyRound(s: Session, reply: RoundReply): void {
   s.keepGoing = false;
   if (reply.type === "frontier_empty") {
     s.status = "confirm";
+    s.stop = "empty";
   } else {
+    s.stop = undefined;
     const asked = new Set(reply.questions.map((q) => q.key));
     // Keep only usable "upcoming" hints: not settled, not asked now, not duplicated.
     const seen = new Set<string>();
@@ -327,6 +332,7 @@ export function reopen(s: Session, key: string): string[] {
   s.reopened = [...new Set([...s.reopened, ...affected])];
   s.status = "asking";
   s.wrappedUp = false;
+  s.stop = undefined;
   s.plan = undefined;
   s.error = undefined;
   touch(s);
@@ -353,38 +359,40 @@ export function editPlan(s: Session, markdown: unknown) {
 export function wrapUp(s: Session): void {
   if (s.status !== "answering" && s.status !== "asking") throw new Error("Nothing to wrap up.");
   s.wrappedUp = true;
+  s.stop = undefined;
   s.status = "confirm";
   s.error = undefined;
   touch(s);
 }
 
-/** Rounds in a row (most recent first) where every answer kept the recommendation untouched. */
-export function acceptStreak(s: Session): number {
-  let n = 0;
-  for (let i = s.rounds.length - 1; i >= 0; i--) {
-    const r = s.rounds[i];
-    if (!r.answers) continue; // the open round doesn't count
-    if (r.answers.length && r.answers.every((a) => a.accepted_recommendation)) n++;
-    else break;
-  }
-  return n;
+/** Rounds of questions when `--max-rounds` isn't given (#32, PO override): the same for every agent. */
+export const DEFAULT_MAX_ROUNDS = 2;
+
+/** Rounds that count toward the cap (#33): a round counts once its question batch is saved. */
+export const roundsSaved = (s: Session): number => s.rounds.length;
+
+/**
+ * The cap gate (#33): `max` saved rounds and nothing owed. Decisions the user reopened or changed
+ * (stale, or queued to re-ask) are owed: they run past the cap, because the user asked for them.
+ */
+export function atCap(s: Session, max: number): boolean {
+  return roundsSaved(s) >= max && !s.reopened.length && !Object.keys(s.stale ?? {}).length;
 }
 
-export const NUDGE_AFTER_ROUNDS = 4;
-
-/** Show the passivity nudge on the open round after 4 all-accept rounds, until dismissed. */
-export function shouldNudge(s: Session): boolean {
-  return s.status === "answering" && !s.nudgeDismissed && acceptStreak(s) >= NUDGE_AFTER_ROUNDS;
-}
-
-export function dismissNudge(s: Session): void {
-  s.nudgeDismissed = true;
+/** The last allowed round is answered: Confirm opens with no question-asking agent call (#33). */
+export function stopAtCap(s: Session): void {
+  s.status = "confirm";
+  s.stop = "cap";
+  s.keepGoing = false;
+  s.error = undefined;
   touch(s);
 }
 
-export function keepGoing(s: Session): void {
+export function keepGoing(s: Session, max = DEFAULT_MAX_ROUNDS): void {
   if (s.status !== "confirm") throw new Error("Not at the confirm step.");
+  if (atCap(s, max)) throw new Error("That was the last round. Write the plan.");
   s.keepGoing = true;
+  s.stop = undefined;
   s.wrappedUp = false;
   s.status = "asking";
   touch(s);
@@ -647,6 +655,7 @@ function finishChange(s: Session, deps: string[]) {
     s.plan!.waiting = deps;
     s.status = "asking";
     s.wrappedUp = false;
+    s.stop = undefined;
   }
   s.error = undefined;
   touch(s);

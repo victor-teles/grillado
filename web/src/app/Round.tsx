@@ -1,4 +1,4 @@
-// Round view (Direction A): stacked questions, bottom bar, side panel, nudge, waiting and firing up.
+// Round view (Direction A): stacked questions, bottom bar, side panel, waiting and firing up.
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   AgentQuestion,
@@ -127,7 +127,6 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
     };
   }, [onActive]);
   const [error, setError] = useState<string>();
-  const [nudgeHidden, setNudgeHidden] = useState(false);
   const n = round.questions.length;
   const labelOf = useMemo(() => new Map(session.tree.nodes.map((x) => [x.id, x.label])), [session.tree]);
   void n;
@@ -198,15 +197,6 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
               {first ? "The first calls on your idea." : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
             </p>
           </div>
-          {session.nudge && !nudgeHidden ? (
-            <Nudge
-              onReview={() => focusCard(0)}
-              onDismiss={() => {
-                setNudgeHidden(true);
-                void act("nudge").catch(() => {});
-              }}
-            />
-          ) : null}
           <AgentQuestionStack className="cards">
             {round.questions.map((q, i) => {
               const parent = parentOf.get(q.key);
@@ -251,20 +241,6 @@ function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; open
         <AgentQuestionOption value={UNKNOWN_OPTION} label="I don’t know" description="The agent picks one and marks it as a risk" className="mini unk" />
       </AgentQuestionOptions>
     </AgentQuestionItem>
-  );
-}
-
-function Nudge({ onReview, onDismiss }: { onReview: () => void; onDismiss: () => void }) {
-  return (
-    <div className="nudge" role="status" data-testid="nudge">
-      <p>You’ve kept every suggestion for 4 rounds. Anything you’d push back on?</p>
-      <button type="button" className="btn quiet" onClick={onReview}>
-        Review my picks
-      </button>
-      <button type="button" className="btn quiet" onClick={onDismiss}>
-        Looks right
-      </button>
-    </div>
   );
 }
 
