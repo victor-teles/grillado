@@ -5,7 +5,7 @@ import { IPlus, IRefresh, IUp } from "./icons";
 import type { AppState, ProviderId, ProviderView, SessionSummary } from "./types";
 import { fromEditor } from "../../../src/core/editor.ts";
 import { sourceLabel } from "../../../src/core/activity.ts";
-import { statusText } from "./recent";
+import { issuesText, statusText } from "./recent";
 import { Found } from "./found/Found";
 import { useFoundHandoff } from "./found/handoff";
 
@@ -369,7 +369,7 @@ function Recent({
         {sessions.map((s) => (
           <li key={s.id} data-id={s.id}>
             <a
-              className="rrow"
+              className={issuesText(s.issues) ? "rrow stack" : "rrow"}
               href={`/s/${s.id}`}
               onClick={(e) => {
                 e.preventDefault();
