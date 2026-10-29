@@ -8,6 +8,7 @@ import { decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment,
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
+import { syncPlanOpen } from "../core/floor.ts";
 import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, deleteThread, finishRun, pending, pruneSuggestions, refind, resolveThread, restoreThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
@@ -729,6 +730,8 @@ export class GrilladoServer {
       // (or by hand, in another editor).
       const md = s.plan ? this.opts.store.readPlan(id) : null;
       if (s.plan && md !== null && md !== s.plan.markdown) s.plan.markdown = md;
+      // The open count follows the text that's on disk (PR46 M1).
+      if (s.plan) syncPlanOpen(s);
       const queued = s.queued;
       // A run that was cut off by a restart can't resume on its own (AC14): offer Retry.
       if (queued) delete s.queued;
@@ -974,6 +977,7 @@ export class GrilladoServer {
     if (op !== "reject") {
       // plan.md only ever holds accepted text (N3).
       s.plan!.editedAt = new Date().toISOString();
+      syncPlanOpen(s);
       this.opts.store.writePlan(s.id, s.plan!.markdown);
     }
     this.changed(s);

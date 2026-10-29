@@ -4,7 +4,10 @@ import { COPY, fmt } from "../copy.ts";
 
 const WHEN = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-type Who = { by?: "you" | "agent"; at?: string; kept_suggestion?: boolean };
+type Who = { by?: "you" | "agent"; at?: string; kept_suggestion?: boolean; note?: string };
+
+/** An Overridden note is your call, whatever the block's kept_suggestion says (PR46 M2). */
+const kept = (f: Who) => !!f.kept_suggestion && !overrides(f.note);
 
 /**
  * "You, Oct 25, 5:14 PM" / "You kept the suggestion, …" / "Picked by {agent}, …" from `by:`,
@@ -17,14 +20,14 @@ export function whoLine(f: Who, agent: string, opts: { was?: string; format?: (d
   const t = f.at ? new Date(f.at) : null;
   const when = t && !Number.isNaN(t.getTime()) ? format(t) : "";
   if (!f.by && !when) return null;
-  const who = f.by === "agent" ? fmt(COPY.pickedBy, { agent }) : f.kept_suggestion ? COPY.youKept : COPY.you;
+  const who = f.by === "agent" ? fmt(COPY.pickedBy, { agent }) : kept(f) ? COPY.youKept : COPY.you;
   return when ? `${who}, ${when}` : who;
 }
 
 /** The rest-state tag after the answer: "Picked by {agent}" (muted) or "Your call" (ember), else none. */
 export function restTag(f: Who, agent: string): { kind: "agent" | "yours"; text: string } | null {
   if (f.by === "agent") return { kind: "agent", text: fmt(COPY.pickedBy, { agent }) };
-  if (!f.kept_suggestion) return { kind: "yours", text: COPY.yourCall };
+  if (!kept(f)) return { kind: "yours", text: COPY.yourCall };
   return null;
 }
 

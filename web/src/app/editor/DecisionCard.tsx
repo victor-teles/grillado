@@ -388,6 +388,14 @@ export function DecisionCard({
               aria-label="Your answer"
               value={other}
               autoFocus
+              // A long prefilled override opens at its start, not scrolled to its end (PR46 N2).
+              onFocus={(e) => {
+                const el = e.currentTarget;
+                if (el.dataset.opened) return;
+                el.dataset.opened = "1";
+                el.setSelectionRange(0, 0);
+                el.scrollLeft = 0;
+              }}
               maxLength={2000}
               onChange={(e) => setOther(e.target.value)}
             />
