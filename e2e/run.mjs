@@ -1027,6 +1027,36 @@ try {
     await pg.getByRole("textbox", { name: "What are you planning?" }).fill("A notes app");
     await pg.keyboard.press("Enter");
     await pg.getByText("Build it for yourself first?").waitFor({ timeout: 15_000 });
+    // PR45 N4: the phone strip stacks the heat word over the bar; at 320 the longest pair stays on one line each, 40px tall.
+    await pg.setViewportSize({ width: 320, height: 700 });
+    const strip = await pg.locator(".mstrip").evaluate((el) => {
+      // Rows the visible text takes (the screen-reader prefix and the chevron aside).
+      const lines = (node) => {
+        const tops = new Set();
+        const walk = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+          if (t.parentElement.closest(".sr-only") || !t.nodeValue.trim()) continue;
+          const r = document.createRange();
+          r.selectNodeContents(t);
+          for (const x of r.getClientRects()) tops.add(Math.round(x.top));
+        }
+        return tops.size;
+      };
+      const measure = (s) => ({ h: Math.round(s.getBoundingClientRect().height), lv: lines(s.querySelector(".lv")), c: lines(s.querySelector(".c")), over: s.scrollWidth > s.clientWidth });
+      const real = measure(el);
+      // A copy with the longest pair the strip can show, so React's own nodes stay untouched.
+      const copy = el.cloneNode(true);
+      copy.querySelector(".lv").textContent = "Ready to confirm";
+      const c = copy.querySelector(".c");
+      for (const n of [...c.childNodes]) if (n.nodeType === 3) n.remove();
+      c.insertBefore(document.createTextNode("12 settled · 14 open"), c.querySelector("svg"));
+      el.after(copy);
+      const long = measure(copy);
+      copy.remove();
+      return { real, long };
+    });
+    check("N4: the phone strip at 320 is 40px, one line each, no overflow", [strip.real, strip.long].every((m) => m.h === 40 && m.lv === 1 && m.c === 1 && !m.over), JSON.stringify(strip));
+    await pg.setViewportSize({ width: 390, height: 844 });
     // #39: Send and wrap up takes Wrap it up's slot on rounds 1 to N−1; bare Wrap it up is in ⋯ (#38).
     const sendWrap = pg.locator(".bar").getByRole("button", { name: "Send and wrap up", exact: true });
     check("#38: no bare Wrap it up in the round bar", (await pg.locator(".bar").getByRole("button", { name: "Wrap it up" }).count()) === 0);
