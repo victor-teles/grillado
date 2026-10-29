@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { FailureCode } from "./classify.ts";
 import { extractCandidate } from "./extract.ts";
+import { openFloor } from "./floor.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { StreamGuard } from "./stream-guard.ts";
@@ -49,6 +50,7 @@ import {
   owedKeys,
   roundsSaved,
   roundLimit,
+  planOpen,
   renderPlanMarkdown,
   setError,
   userText,
@@ -140,10 +142,15 @@ export function buildRoundPrompt(s: Session, max = DEFAULT_MAX_ROUNDS): string {
 export function buildSynthesisPrompt(s: Session): string {
   const state = stateFor(s);
   const open = openQuestions(s).map((q) => q.title);
+  // The floor (#40): queued items no round asked go to the writer too, not only the open round.
+  const notAsked = openFloor(s).filter((f) => !f.asked).map((f) => ({ key: f.key, label: f.label }));
   return [
     "Confirmed interview state (JSON):",
-    `<state>${JSON.stringify({ ...state, openDecisions: open.length ? open : undefined, wrappedUpEarly: s.wrappedUp || undefined })}</state>`,
+    `<state>${JSON.stringify({ ...state, openDecisions: open.length ? open : undefined, notAsked: notAsked.length ? notAsked : undefined, wrappedUpEarly: s.wrappedUp || undefined })}</state>`,
     "",
+    ...(notAsked.length
+      ? ["The items in notAsked were never asked before the interview stopped. Keep them open: list each one by its label in openDecisions and don't decide them.", ""]
+      : []),
     "Write the plan now.",
   ].join("\n");
 }
@@ -253,7 +260,8 @@ export async function synthesize(
   s: Session,
   adapter: ProviderAdapter,
   opts: RunOptions,
-): Promise<{ ok: true; plan: PlanReply; markdown: string } | { ok: false }> {
+  max = DEFAULT_MAX_ROUNDS,
+): Promise<{ ok: true; plan: PlanReply; markdown: string; open: string[] } | { ok: false }> {
   if (s.status !== "synthesizing") throw new Error("Synthesis requires the user’s confirmation.");
   const result = await runValidated<PlanReply>(
     adapter,
@@ -268,7 +276,7 @@ export async function synthesize(
     setError(s, result.code, result.message);
     return { ok: false };
   }
-  return { ok: true, plan: result.value, markdown: renderPlanMarkdown(s, result.value) };
+  return { ok: true, plan: result.value, markdown: renderPlanMarkdown(s, result.value, { max, agent: adapter.displayName }), open: planOpen(s, result.value).open };
 }
 
 /** Everything the user wrote in a thread is theirs: words in it never trip the banned filter. */

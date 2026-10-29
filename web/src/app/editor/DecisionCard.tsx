@@ -13,7 +13,7 @@ import type { DecisionFields } from "../../../../src/core/decision-block.ts";
 import { COPY, fmt } from "../copy";
 import { OTHER_OPTION, type Question } from "../types";
 import { IAlert, IRefresh } from "../icons";
-import { noteAdds, restTag, whoLine } from "./decision-meta";
+import { cardAnswer, noteAdds, restTag, whoLine } from "./decision-meta";
 import { jumpTo, offscreen } from "./link";
 import { type AddPlan, AddPlanButton, AddPlanLine } from "../addplan/AddPlan";
 
@@ -97,11 +97,13 @@ export function DecisionCard({
   const changeBtn = useRef<HTMLButtonElement>(null);
   const uid = useId();
   const options = question?.options ?? [];
-  const currentId = state === "open" ? undefined : options.find((o) => o.label === fields.answer)?.id ?? (fields.answer ? OTHER_OPTION : undefined);
+  // An "Overridden" note is the decision (friction 30): shown, read out and tagged Current like an answer.
+  const answer = cardAnswer(fields);
+  const currentId = state === "open" ? undefined : options.find((o) => o.label === answer)?.id ?? (answer ? OTHER_OPTION : undefined);
   // Open decisions start collapsed with a quiet "Answer" so Copy Markdown keeps the only blue (v1.2 review).
   const [expanded, setExpanded] = useState(!!startExpanded);
   const [pick, setPick] = useState<string | undefined>(currentId ?? question?.recommendedOptionId);
-  const [other, setOther] = useState(currentId === OTHER_OPTION ? fields.answer ?? "" : "");
+  const [other, setOther] = useState(currentId === OTHER_OPTION ? answer ?? "" : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [aff, setAff] = useState<{ above: number; below: number } | null>(null);
@@ -115,7 +117,7 @@ export function DecisionCard({
   }, [currentId, question?.recommendedOptionId, expanded]);
 
   const canChange = !!question && !readOnly && state !== "stale" && !external;
-  const differs = pick !== currentId || (pick === OTHER_OPTION && other.trim() !== (fields.answer ?? ""));
+  const differs = pick !== currentId || (pick === OTHER_OPTION && other.trim() !== (answer ?? ""));
   const reasks = state === "settled" && differs && dependents.length > 0;
   const ready = !!pick && (pick !== OTHER_OPTION || !!other.trim()) && (state === "open" || differs);
 
@@ -211,7 +213,7 @@ export function DecisionCard({
       data-key={fields.key}
       role="group"
       aria-roledescription="decision"
-      aria-label={`Decision ${fields.id}: ${fields.question}${fields.answer && state !== "open" ? ` ${fields.answer}` : ""}`}
+      aria-label={`Decision ${fields.id}: ${fields.question}${answer && state !== "open" ? ` ${answer}` : ""}`}
       aria-describedby={passages.length ? passages.join(" ") : undefined}
       aria-keyshortcuts={canChange ? "Enter /" : "/"}
       aria-description="Slash adds a block below"
@@ -255,9 +257,9 @@ export function DecisionCard({
       </div>
       {view === "rest" || view === "stale" ? (
         <>
-          {fields.answer ? (
+          {answer ? (
             <div className="dz-a">
-              {state === "stale" ? <s className="dz-av">{fields.answer}</s> : <span className="dz-av">{fields.answer}</span>}
+              {state === "stale" ? <s className="dz-av">{answer}</s> : <span className="dz-av">{answer}</span>}
               {chips}
               {tag ? (
                 <span className={tag.kind === "yours" ? "dz-badge yc" : "dz-badge dz-who"} data-kind={tag.kind}>
@@ -271,7 +273,7 @@ export function DecisionCard({
               ) : null}
             </div>
           ) : null}
-          {noteAdds(fields.note, fields.answer) ? <div className="dz-n">{fields.note}</div> : null}
+          {noteAdds(fields.note, answer) ? <div className="dz-n">{fields.note}</div> : null}
           {invalid ? <div className="dz-n">This block has a mistake in plan.md. Showing the last version that worked.</div> : null}
         </>
       ) : null}

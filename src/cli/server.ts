@@ -868,14 +868,14 @@ export class GrilladoServer {
       const n = Object.keys(s.decisions).length;
       rec.step(`Read ${n} ${n === 1 ? "decision" : "decisions"}`, "{agent} is writing the plan");
       const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s plan didn’t fit the format; asked again", "{agent} is writing the plan") };
-      const out = await synthesize(s, this.adapterFor(s), opts);
+      const out = await synthesize(s, this.adapterFor(s), opts, this.maxRounds);
       if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was writing the plan" });
       if (!out.ok) return rec.end("failed", { reason: s.error?.code ?? null, last: reasonText(s.error?.code, "{agent}") });
       rec.step("{agent} wrote the plan", "Saving plan.md");
       // The new plan overwrites plan.md; keep the user's edited version next to it.
       if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
       const file = this.opts.store.writePlan(s.id, out.markdown);
-      setPlan(s, { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.plan.openDecisions });
+      setPlan(s, { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.open });
       const timing = planTiming(s);
       if (timing) this.opts.log?.(timing);
       this.watchPlan(s);

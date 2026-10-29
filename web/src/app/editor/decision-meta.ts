@@ -1,4 +1,5 @@
 // Who answered a decision block and when (item 2 handoff §2.1), for the card's meta line and the tab rows.
+import { overrides } from "../../../../src/core/decision-block.ts";
 import { COPY, fmt } from "../copy.ts";
 
 const WHEN = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -29,3 +30,9 @@ export function restTag(f: Who, agent: string): { kind: "agent" | "yours"; text:
 
 // One rule for the plan page and the issue it exports (src/core/issues.ts).
 export { noteAdds } from "../../../../src/core/decision-block.ts";
+
+/**
+ * The answer a card shows, reads out and tags Current (friction 30): a note that begins "Overridden"
+ * is the decision, as in the exported issues; otherwise the recorded answer.
+ */
+export const cardAnswer = (f: { answer?: string; note?: string }): string | undefined => (overrides(f.note) ? f.note!.trim() : f.answer);

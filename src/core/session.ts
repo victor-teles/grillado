@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { type FloorItem, notAskedLine, openFloor, reasonLine, stopReason } from "./floor.ts";
 import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
@@ -547,7 +548,26 @@ export function decisionBlock(s: Session, d: Decision, note?: string): string {
  * decisions"), so every answered question appears with its {round, questionId} whatever the
  * model did (AC16).
  */
-export function renderPlanMarkdown(s: Session, plan: PlanReply): string {
+/**
+ * The plan's open section (#40): the open round's questions, the agent's other open items, and every
+ * floor item the agent left out (appended by Grillado). `open` is what plan.openDecisions stores.
+ */
+export function planOpen(s: Session, plan: PlanReply) {
+  const openQs = openQuestions(s);
+  const openTitles = new Set(openQs.map((q) => q.title));
+  const other = [...new Set(plan.openDecisions)].filter((o) => !openTitles.has(o));
+  const listed = (f: FloorItem) => other.some((o) => o.toLowerCase().includes(f.label.toLowerCase()) || o.includes(f.key));
+  const appended = openFloor(s).filter((f) => !f.asked && !listed(f));
+  return { openQs, other, appended, open: [...new Set([...openQs.map((q) => q.title), ...other, ...appended.map((f) => f.label)])] };
+}
+
+/** Who wrote the plan and the cap in force, for the reason line. Without it (imports) no reason line is written. */
+export interface PlanStop {
+  max: number;
+  agent: string;
+}
+
+export function renderPlanMarkdown(s: Session, plan: PlanReply, stop?: PlanStop): string {
   const statements = new Map(plan.decisions.map((d) => [d.questionId, d.statement]));
   const pos = (d: Decision) => s.rounds.find((r) => r.n === d.round)?.questions.findIndex((q) => q.key === d.key) ?? 0;
   const decisions = Object.values(s.decisions).sort((a, b) => a.round - b.round || pos(a) - pos(b));
@@ -564,20 +584,22 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply): string {
   }
   // Open decisions lead the document: after any intro, before the first section (v1.2 §5 e-early).
   const round = currentRound(s);
-  const openQs = openQuestions(s);
-  const openTitles = new Set(openQs.map((q) => q.title));
-  const other = [...new Set(plan.openDecisions)].filter((o) => !openTitles.has(o));
+  const { openQs, other, appended } = planOpen(s, plan);
+  const why = stop && stopReason(s);
   const lines = [`# ${plan.title}`, ""];
   let opened = false;
   const pushOpen = () => {
     opened = true;
-    if (!openQs.length && !other.length) return;
+    if (!openQs.length && !other.length && !appended.length) return;
     lines.push("## Open decisions", "");
+    // One line for why the interview stopped (#40).
+    if (why) lines.push(reasonLine(why, stop.max, stop.agent), "");
     openQs.forEach((q, i) => {
       lines.push(serializeDecision({ id: `R${round!.n}·${i + 1}`, key: q.key, question: q.title, status: "open" }), "");
     });
     for (const o of other) lines.push(`- ${o}`);
-    if (other.length) lines.push("");
+    for (const f of appended) lines.push(notAskedLine(f.label));
+    if (other.length || appended.length) lines.push("");
   };
   for (const sec of sections) {
     if (!opened && /^##\s/.test(body[sec.a] ?? "")) pushOpen();

@@ -1,6 +1,7 @@
 // One source for every decision count on a screen (item 2 handoff §4): the plan's title meta,
 // the Decisions tab, the save status, the "Open decisions" heading and the early-wrap confirm.
 // total = resolved + open, so "Decisions 18 · 2 open" means 16 resolved and 2 still open.
+import { type FloorItem, openFloor } from "../../../src/core/floor.ts";
 import type { SessionView } from "./types.ts";
 
 export interface Counts {
@@ -44,11 +45,12 @@ export function planCounts(session: SessionView, md: string): Counts & { openKey
   return { ...count(resolved, openKeys.length + extraOpen(session).length), openKeys };
 }
 
-/** Questions the plan will list as open if you wrap up now: the current round's unanswered ones. */
-export function stillOpen(session: SessionView) {
-  const r = session.rounds.at(-1);
-  if (!r || r.answers) return [];
-  return r.questions.filter((q) => !session.decisions[q.key]);
+/**
+ * What the plan will list as open if it's written now (#40): the open round's unanswered questions
+ * plus every upcoming item no round asked. The plan's open section is built from the same floor.
+ */
+export function stillOpen(session: SessionView): FloorItem[] {
+  return openFloor(session);
 }
 
 /** Counts for the confirm screen, matching what the plan will show once it's written. */
