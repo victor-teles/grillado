@@ -8,6 +8,7 @@ import { decisionsOf } from "../src/cli/mcp.ts";
 import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
 import { synthesize } from "../src/core/engine.ts";
+import { buildTree } from "../src/core/tree.ts";
 import { openFloor, reasonLine, stopReason } from "../src/core/floor.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
 import type { ProviderAdapter, ProviderEvent, RunRequest } from "../src/core/providers/types.ts";
@@ -142,6 +143,13 @@ describe("the open floor (#40)", () => {
     const view = JSON.parse(JSON.stringify(s));
     expect(stillOpen(view).map((f) => f.label)).toEqual(["storage", "Sync", "Export"]);
     expect(confirmCounts(view).open).toBe(3);
+    // The side panel and the phone strip count the same floor, even an item only round 1 hinted at.
+    expect(buildTree(s).counts.open).toBe(3);
+    const cap = twoRounds();
+    answerAll(cap);
+    stopAtCap(cap);
+    expect(buildTree(cap).counts.open).toBe(confirmCounts(JSON.parse(JSON.stringify(cap))).open);
+    expect(buildTree(cap).counts.open).toBe(2);
     const out = await write(s);
     s.plan = { title: "Plan", markdown: out.markdown, path: "", openDecisions: out.open, createdAt: new Date().toISOString() };
     s.status = "plated";
