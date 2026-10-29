@@ -1,5 +1,5 @@
 // Round view (Direction A): stacked questions, bottom bar, side panel, waiting and firing up.
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgentQuestion,
   type AgentQuestionAnswers,
@@ -15,7 +15,7 @@ import {
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
 import { COPY } from "./copy";
-import { preparing, roundCounter } from "./rounds";
+import { preparing, roundCounter, sendAndWrap } from "./rounds";
 import { waitLabel } from "./wait";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
@@ -153,7 +153,10 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
   }, []);
 
   const [values, setValues] = useState<AgentQuestionAnswers>({});
+  // Send and wrap up (#39) goes through the same submit as Send round, flagged for this one click.
+  const wrapNext = useRef(false);
   const submit = async (v: AgentQuestionAnswers, untouched: string[]) => {
+    const wrap = wrapNext.current;
     const answers: Answer[] = round.questions.map((q) => {
       const raw = v[q.key];
       const picked = typeof raw === "string" ? raw : q.recommendedOptionId;
@@ -163,7 +166,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
     setStatus("submitting");
     setError(undefined);
     try {
-      await act("answers", { round: round.n, answers });
+      await act("answers", { round: round.n, answers, ...(wrap ? { wrap: true } : {}) });
     } catch {
       setError(SEND_FAILED);
       setStatus("asking");
@@ -196,7 +199,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
             <h1>{n === 1 ? "1 decision is ready" : `${n} decisions are ready`}</h1>
             <RoundCounter session={session} round={round} />
             <p>
-              {first ? "The first calls on your idea." : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
+              {first ? "The first calls on your idea." : round.reask ? COPY.reaskSub : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
             </p>
           </div>
           <AgentQuestionStack className="cards">
@@ -212,9 +215,22 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
       </div>
       <AgentQuestionFooter className="bar">
         <span className="spacer" />
-        <button type="button" className="btn quiet wrap-btn" data-has-settled={session.tree.counts.settled > 0 || undefined} onClick={() => void act("wrap").catch(() => {})} disabled={status === "submitting"}>
-          Wrap it up
-        </button>
+        {/* Bare Wrap it up lives in ⋯ and the waiting bar; this slot is Send and wrap up, rounds 1 to N−1 (#38, #39). */}
+        {sendAndWrap(session, round.n) ? (
+          <button
+            type="button"
+            className="btn quiet"
+            data-testid="send-wrap"
+            disabled={status === "submitting"}
+            onClick={(e) => {
+              wrapNext.current = true;
+              e.currentTarget.closest("[data-slot=agent-question-footer]")?.querySelector<HTMLButtonElement>("[data-slot=agent-question-continue]")?.click();
+              wrapNext.current = false;
+            }}
+          >
+            Send and wrap up
+          </button>
+        ) : null}
       </AgentQuestionFooter>
     </AgentQuestion>
   );

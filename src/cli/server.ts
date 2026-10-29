@@ -1302,7 +1302,12 @@ export class GrilladoServer {
         const answers = (body?.answers ?? []) as Answer[];
         submitAnswers(s, Number(body?.round), answers);
         this.log(s, { v: 1, type: "user", what: "answered", round: Number(body?.round), answers: answers.length, yourCall: answers.filter((a) => a.optionId === UNKNOWN_OPTION).length, at: new Date().toISOString() });
-        this.startRound(s);
+        // Send and wrap up (#39): saved like Send round, then Confirm with no agent run. At the cap Send round
+        // lands on Confirm anyway, so the cap gate in startRound decides.
+        if (body?.wrap === true && !atCap(s, this.maxRounds)) {
+          wrapUp(s, this.maxRounds);
+          this.changed(s);
+        } else this.startRound(s);
         break;
       }
       case "retry": {
@@ -1330,7 +1335,7 @@ export class GrilladoServer {
       }
       case "wrap": {
         this.abort(s);
-        wrapUp(s);
+        wrapUp(s, this.maxRounds);
         this.changed(s);
         break;
       }
