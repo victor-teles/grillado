@@ -307,6 +307,11 @@ button:disabled{cursor:default}
 .mstrip .heat{display:block;padding:0}
 .mstrip .seg{grid-template-columns:repeat(5,14px)}
 .mstrip .c{margin-left:auto;display:inline-flex;align-items:center;gap:6px;color:var(--muted-foreground);font-size:var(--t-meta)}
+/* PR45 N4: the heat word stacks over the bar, the counts sit right; one line each at 320 to 430, still 40px tall. */
+.mstrip{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:12px;row-gap:4px;align-content:center}
+.mstrip .lv{grid-area:1/1;font-size:var(--t-meta);line-height:16px;white-space:nowrap}
+.mstrip .heat{grid-area:2/1}
+.mstrip .c{grid-area:1/2/3/3;justify-self:end;white-space:nowrap}
 .mstrip[aria-expanded=true] .c svg{transform:rotate(180deg)}
 .grab{display:block;width:36px;height:5px;border-radius:3px;background:var(--border-strong);margin:8px auto 0;flex:none}
 

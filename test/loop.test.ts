@@ -235,7 +235,7 @@ describe("interview loop", () => {
     const plan = { type: "plan", title: "t", markdown: "body", decisions: [], openDecisions: [] };
     const res = await synthesize(s, scripted([plan]), opts());
     const md = (res as any).markdown as string;
-    expect(md).toContain("## Open decisions\n\n```decision\nid: R2·1\nkey: two\nquestion: Question two?\nstatus: open\n```");
+    expect(md).toContain("## Open decisions\n\nThe interview stopped early because you chose to wrap up.\n\n```decision\nid: R2·1\nkey: two\nquestion: Question two?\nstatus: open\n```");
     expect(findDecisionBlocks(md).filter((b) => b.parsed.ok && b.parsed.fields.status === "open")).toHaveLength(2);
     s.status = "confirm";
     // Two saved rounds is the default cap (#33): Keep going is refused there, and runs below a higher one.
