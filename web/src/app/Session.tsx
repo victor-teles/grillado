@@ -4,10 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMobile, useSince } from "./chrome";
 import { CopyButton } from "./CopyButton";
 import { COPY, fmt } from "./copy";
-import { confirmCounts, countText, plural, stillOpen } from "./counts";
+import { confirmCounts, countText, stillOpen } from "./counts";
 import { IAlert, IClock, IKey, ITerm } from "./icons";
 import { PlanView } from "./Plan";
-import { atCap, roundStatus } from "./rounds";
+import { capAction, capReached, owedKeys, roundStatus, settledLine } from "./rounds";
 import { FiringUp, RoundView, SessionBody, StatusLine, Strip, WaitingView } from "./Round";
 import type { AppState, Decision, DecisionNode, SessionView, TreeState } from "./types";
 
@@ -289,6 +289,9 @@ function Confirm({ session, act, agent }: { session: SessionView; act: Act; agen
   const cc = confirmCounts(session);
   const counts = countText(cc);
   const status = roundStatus(session, agent);
+  // At the cap the second button asks for the extra round, or names what was sent back (#37, PR43 review).
+  const atCapAction = capAction(session);
+  const owed = owedKeys(session).length;
   // Long lists fold after six rows; group headings only on an early wrap (v1.2).
   const fold = all.length > SHOW + 2 && !more;
   const shown = fold ? all.slice(0, SHOW) : all;
@@ -315,8 +318,11 @@ function Confirm({ session, act, agent }: { session: SessionView; act: Act; agen
           ↵
         </span>
       </button>
-      {/* Only below the cap (#33): at the cap the server refuses another round. */}
-      {atCap(session) ? null : (
+      {atCapAction ? (
+        <button type="button" className="btn quiet" aria-label={atCapAction.label} onClick={() => quiet(act(atCapAction.action))}>
+          {atCapAction.label}
+        </button>
+      ) : capReached(session) ? null : (
         <button type="button" className="btn quiet" aria-label="Keep going on a branch" onClick={() => quiet(act("keep-going"))}>
           {mobile ? "Keep going" : "Keep going on a branch"}
         </button>
@@ -344,7 +350,7 @@ function Confirm({ session, act, agent }: { session: SessionView; act: Act; agen
                   </p>
                 ) : null}
                 <p>
-                  {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : `${plural(n, "decision")} settled, nothing open.`} Read them over before the plan gets written.
+                  {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : settledLine(n, owed)} Read them over before the plan gets written.
                 </p>
                 {session.agentNote ? (
                   <p className="agent-note" data-testid="agent-note">

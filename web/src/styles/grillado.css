@@ -176,6 +176,8 @@ button:disabled{cursor:default}
 .intro p.agent-note{font-size:var(--t-meta);line-height:16px}
 /* Where the interview stands (#33), a 12px meta line right under the h1. */
 .intro p.rmeta{font-size:var(--t-meta);line-height:16px;margin-top:-2px;text-wrap:pretty}
+/* "· last round" on round N and the extra round (#36). */
+.intro p.rmeta .last{color:var(--foreground);font-weight:500}
 .bar{padding:12px 40px 16px;background:var(--background)}
 .bar .in,.bar>div{max-width:640px;width:100%;margin:0 auto;display:flex;align-items:center;gap:12px;min-width:0}
 .bar>p[role=alert],.bar .err{max-width:640px;width:100%;margin:0 auto 10px;font-size:var(--t-meta);line-height:16px;color:var(--destructive-ink)}

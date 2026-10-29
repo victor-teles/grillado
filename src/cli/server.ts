@@ -31,6 +31,7 @@ import {
   owed,
   atCap,
   keepGoing,
+  askMore,
   stopAtCap,
   reopen,
   setError,
@@ -1335,6 +1336,12 @@ export class GrilladoServer {
       }
       case "keep-going": {
         keepGoing(s, this.maxRounds);
+        this.startRound(s);
+        break;
+      }
+      case "ask-more": {
+        askMore(s, this.maxRounds);
+        this.changed(s);
         this.startRound(s);
         break;
       }
