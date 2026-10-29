@@ -238,7 +238,9 @@ describe("interview loop", () => {
     expect(md).toContain("## Open decisions\n\n```decision\nid: R2·1\nkey: two\nquestion: Question two?\nstatus: open\n```");
     expect(findDecisionBlocks(md).filter((b) => b.parsed.ok && b.parsed.fields.status === "open")).toHaveLength(2);
     s.status = "confirm";
-    keepGoing(s);
+    // Two saved rounds is the default cap (#33): Keep going is refused there, and runs below a higher one.
+    expect(() => keepGoing(s)).toThrow("That was the last round.");
+    keepGoing(s, 3);
     expect(s.status as string).toBe("asking");
   });
 

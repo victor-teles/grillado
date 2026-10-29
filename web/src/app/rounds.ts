@@ -1,5 +1,5 @@
 // The round cap as the browser shows it (#33). Mirrors the server's gate in src/core/session.ts.
-import type { SessionView } from "./types";
+import type { SessionView } from "./types.ts";
 
 type CapView = Pick<SessionView, "rounds" | "reopened" | "stale" | "maxRounds">;
 
