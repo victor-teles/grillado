@@ -62,7 +62,7 @@ async function serve(id: ProviderId, env: NodeJS.ProcessEnv, timeoutMs?: number,
   };
   const retry = () => call("POST", `/api/sessions/${created.id}/retry`, {});
   const stop = () => call("POST", `/api/sessions/${created.id}/stop`, {});
-  return { seen, until, retry, stop, store, id: created.id as string, call };
+  return { seen, until, retry, stop, store, id: created.id as string, call, server };
 }
 
 describe("per-provider default timeout", () => {
@@ -156,6 +156,10 @@ describe("review-pr26 r2: the 60 s line and the card after Stop", () => {
     await g.until((v) => v.busy);
     await g.stop();
     await g.until((v) => !v.busy && !!v.error);
+    // Close the first server before the rewrite, as an older build would have been closed. Its stopped
+    // run still ends after Stop answers and saves the session once more; close() waits for that.
+    servers.splice(servers.indexOf(g.server), 1);
+    await g.server.close();
     const old = g.store.load(g.id)!;
     old.error = { ...old.error!, message: STOPPED_BEFORE_26 };
     g.store.save(old);

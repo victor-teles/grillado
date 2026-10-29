@@ -112,6 +112,8 @@ export class GrilladoServer {
   private selected: ProviderId | null = null;
   private sessions = new Map<string, Session>();
   private inflight = new Map<string, AbortController>();
+  /** Agent runs not settled yet, Stopped ones included: each saves its session once more when it ends. */
+  private settling = new Set<Promise<unknown>>();
   /** Every session snapshot gets the next number, so the browser can drop one older than what it shows. */
   private rev = 0;
   /** When each session's current agent turn started (a send or a retry): the waiting timers count from here. */
@@ -253,7 +255,12 @@ export class GrilladoServer {
   async close() {
     for (const c of this.inflight.values()) c.abort();
     for (const c of this.commentRuns.values()) c.abort();
+    for (const c of this.diagramRuns.values()) c.abort();
+    for (const c of this.addPlanRuns.values()) c.abort();
     killAllChildren();
+    // A run ends after its abort (a Stopped one too, though Stop already answered) and saves its session
+    // then. Wait for those, so nothing writes the store after close() resolves.
+    await Promise.allSettled([...this.settling]);
     for (const s of this.sessions.values()) this.opts.store.save(s);
     for (const res of this.clients) res.end();
     for (const dir of this.agentDirs.values()) rmSync(dir, { recursive: true, force: true });
@@ -805,7 +812,7 @@ export class GrilladoServer {
     this.runAt.set(s.id, new Date().toISOString());
     s.error = undefined;
     this.changed(s);
-    work(controller)
+    this.track(work(controller)
       .catch((err) => setError(s, "unknown", String(err?.message ?? err)))
       .finally(() => {
         if (this.inflight.get(s.id) === controller) {
@@ -814,7 +821,7 @@ export class GrilladoServer {
         }
         this.progress.delete(s.id);
         this.changed(s);
-      });
+      }));
   }
 
   private get maxRounds() {
@@ -1086,7 +1093,7 @@ export class GrilladoServer {
       }
       if (run.state === "running") run.state = "done";
     };
-    work()
+    this.track(work()
       .catch((err) => {
         run.state = "error";
         run.message = redact(String(err?.message ?? err), userText(s));
@@ -1104,7 +1111,7 @@ export class GrilladoServer {
         });
         if (this.diagramRuns.get(s.id) === controller) this.diagramRuns.delete(s.id);
         this.changed(s);
-      });
+      }));
   }
 
   /** "Add to plan" (#104): start on one decision no passage cites, stop, or retry the last one. */
@@ -1171,7 +1178,7 @@ export class GrilladoServer {
       } else rec.step("Checked against plan.md: the suggestion no longer fit");
       run.state = "done";
     };
-    work()
+    this.track(work()
       .catch((err) => {
         if (controller.signal.aborted) return;
         run.state = "error";
@@ -1185,7 +1192,7 @@ export class GrilladoServer {
         else rec.end("done", { read: [d.title], suggestions: made ? [made] : [], result: { suggestions: made ? 1 : 0 } });
         if (this.addPlanRuns.get(s.id) === controller) this.addPlanRuns.delete(s.id);
         this.changed(s);
-      });
+      }));
   }
 
   private startComment(s: Session, threadId: string, kind: "reply" | "apply", retry = false) {
@@ -1254,12 +1261,19 @@ export class GrilladoServer {
       });
       finishRun(t, { ok: true, edits: added.length, ...(dropped ? { dropped } : {}), ...(decision ? { decision } : {}) });
     };
-    work()
+    this.track(work()
       .catch((err) => (failed("unknown"), finishRun(t, { ok: false, message: String(err?.message ?? err) })))
       .finally(() => {
         if (this.commentRuns.get(t.id) === controller) this.commentRuns.delete(t.id);
         this.changed(s);
-      });
+      }));
+  }
+
+  /** Keep a run's promise until it settles, for close() (the flaky reopen test, after #46). */
+  private track(p: Promise<unknown>) {
+    this.settling.add(p);
+    const done = () => void this.settling.delete(p);
+    p.then(done, done);
   }
 
   private abort(s: Session) {
