@@ -149,12 +149,15 @@ button:disabled{cursor:default}
 .rrow{display:flex;align-items:center;gap:12px;height:40px;padding:0 10px;margin:0 -10px;border-radius:9px;border:0;background:none;width:calc(100% + 20px);text-align:left;color:inherit}
 @media (hover:hover){.rrow:hover{background:var(--sel)}}
 .rrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rrow .meta{flex:none;white-space:nowrap}
+/* A long status line ends in an ellipsis before it squeezes the title (review of #43). */
+.rrow .meta{flex:0 1 auto;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Phone: an editor-started row, or one with an export (friction 26), stacks, title (ellipsis) over its 12px meta (#110). */
 @media (max-width:640px){
   .rrow:is(:has(.src1),.stack){flex-direction:column;align-items:stretch;justify-content:center;height:auto;min-height:56px;padding:8px 10px;gap:2px}
   .rrow:is(:has(.src1),.stack) .nm{flex:none}
-  .rrow:is(:has(.src1),.stack) .meta{overflow:hidden;text-overflow:ellipsis}
+  .rrow:is(:has(.src1),.stack) .meta{max-width:none}
+  /* A row with an export wraps its status line rather than cut the export off (review of #43, M1). */
+  .rrow.stack .meta{white-space:normal;text-wrap:pretty}
 }
 .note.empty{text-align:center;margin-top:40px}
 .row .nm>span{margin-left:8px;font-weight:400;font-size:var(--t-meta);color:var(--muted-foreground)}

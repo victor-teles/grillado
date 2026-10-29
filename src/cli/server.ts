@@ -836,7 +836,7 @@ export class GrilladoServer {
         const r = s.rounds.length === n ? s.rounds[n - 1] : null;
         if (!r) {
           // Past the cap a reply with nothing owed in it is dropped (stop "cap"); otherwise the frontier is empty.
-          rec.step(s.stop === "cap" ? "{agent} asked nothing you sent back, so the rounds are done" : "{agent} found nothing left to ask");
+          rec.step(s.stop === "cap" ? "{agent} asked only new questions, so the rounds are done" : "{agent} found nothing left to ask");
           return rec.end("done", { result: { questions: 0 } });
         }
         rec.step(`{agent} picked ${r.questions.length} ${r.questions.length === 1 ? "question" : "questions"}`);
