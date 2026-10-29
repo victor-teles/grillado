@@ -224,6 +224,26 @@ describe("the cap (#33)", () => {
     expect(roundStatus(s, "Claude Code")).toBe("3 rounds done. The cap is 2.");
   });
 
+  test("PR44-rounds M1: past a lowered cap, no Ask 1 more round, the grant is refused and nothing runs", async () => {
+    const { capAction, roundCounter } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude", { maxRounds: 3, extra: { FAKE_MODE: "long" } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    for (let i = 0; i < 3; i++) await t.answer(sid);
+    await t.idle(sid, "confirm");
+    await t.server.close();
+    servers.length = 0;
+    const b = await start("claude", { store: t.store });
+    const s = (await b.api("GET", `/api/sessions/${sid}`)).json;
+    expect(capAction(s)).toBeNull();
+    const c = roundCounter(s, 3);
+    expect([c.lead, c.tag, !!c.strong]).toEqual(["Round 3", "the cap is 2", false]);
+    const more = await b.api("POST", `/api/sessions/${sid}/ask-more`);
+    expect([more.status, more.json.error]).toEqual([400, "That was the last round. Write the plan."]);
+    expect(t.store.load(sid)!.extra).toBeUndefined();
+    expect((await b.api("GET", `/api/sessions/${sid}`)).json).toMatchObject({ status: "confirm", stop: "cap" });
+    expect(b.runs()).toBe(0);
+  });
+
   test("an older session without reask flags or stop loads, and every round it has counts", async () => {
     const { roundStatus, atCap } = await import("../web/src/app/rounds.ts");
     const t = await start("claude");

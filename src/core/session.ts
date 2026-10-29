@@ -439,6 +439,9 @@ export const roundLimit = (s: { extra?: boolean }, max: number): number => max +
 export function askMore(s: Session, max = DEFAULT_MAX_ROUNDS): void {
   if (s.status !== "confirm") throw new Error("Not at the confirm step.");
   if (!atCap(s, max) || s.extra) throw new Error("The extra round is used. Write the plan.");
+  // The grant is round max + 1. After a relaunch with a lower --max-rounds the saved rounds are already
+  // past that, so a grant would ask nothing.
+  if (roundsSaved(s) > max) throw new Error("That was the last round. Write the plan.");
   s.extra = true;
   s.stop = undefined;
   s.wrappedUp = false;

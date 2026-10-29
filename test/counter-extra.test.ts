@@ -148,3 +148,30 @@ describe("the extra round in the session (#37)", () => {
     expect(s.extra).toBeUndefined();
   });
 });
+
+// PR44-rounds M1 (Designer's M1-test.ts, plus Waiting and a re-ask): 3 rounds saved, relaunched at --max-rounds 2.
+describe("past a lowered cap (PR44-rounds M1)", () => {
+  test("no grant offered, an honest counter, and askMore refuses", () => {
+    expect(capAction(view(3))).toBeNull();
+    expect(roundStatus(view(3, { stop: "cap" }), "X")).toBe("3 rounds done. The cap is 2.");
+    const c = roundCounter(view(3), 3);
+    expect(`${c.lead} · ${c.tag}`).toBe("Round 3 · the cap is 2");
+    expect(c.strong).toBeFalsy();
+    const s = createSession({ idea: "x", provider: "claude" });
+    s.status = "confirm";
+    s.rounds = [1, 2, 3].map((n) => ({ n, questions: [], answers: [] })) as any;
+    expect(() => askMore(s, 2)).toThrow("That was the last round. Write the plan.");
+    expect(s).toMatchObject({ status: "confirm" });
+    expect(s.extra).toBeUndefined();
+  });
+
+  test("Waiting and a re-ask past a lowered cap never read as the extra round", () => {
+    expect(preparing(view(3))).toBe("Preparing round 4 · the cap is 2");
+    const r = roundCounter(view(4, {}, [4]), 4);
+    expect(`${r.lead} · ${r.tag}`).toBe("Round 3 · asking again");
+    // A granted extra round is still the extra round, and a later round past it is not.
+    expect(roundCounter(view(3, { extra: true }), 3)).toEqual({ lead: "Extra round", tag: "last round", strong: true });
+    expect(roundCounter(view(4, { extra: true }), 4)).toEqual({ lead: "Round 4", tag: "the cap is 2" });
+    expect(capAction(view(3, { extra: true }))).toBeNull();
+  });
+});
