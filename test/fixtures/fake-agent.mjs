@@ -119,7 +119,7 @@ const BASE = [
   { key: "storage", label: "Storage", title: "Keep data local first?", deps: ["platform"], options: [["local", "Local storage"], ["cloud", "Hosted database"]] },
 ];
 // FAKE_MODE=long: six rounds. Round 3 opens six questions at once, so the heat drops; rounds 1–4
-// accepted as suggested trigger the passivity nudge on round 5.
+// all accepted as suggested (the passivity nudge is gone, #34). It needs --max-rounds 6.
 const yn = [["yes", "Yes"], ["no", "No"]];
 const LONG = [
   { key: "audience", label: "Audience", title: "Build it for yourself first?", deps: [], options: yn },

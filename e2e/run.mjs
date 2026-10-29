@@ -318,7 +318,11 @@ try {
   await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
-  check("confirm gate after frontier empties", true);
+  check("confirm gate after the last round", true);
+  const st2 = await page.getByTestId("round-status").textContent();
+  check("#33: default cap of 2: the status line says round 2 of 2 is done", st2 === "Round 2 of 2 is done.", st2);
+  check("#33: the status line is 12px, under the title", (await page.getByTestId("round-status").evaluate((el) => getComputedStyle(el).fontSize === "12px" && el.previousElementSibling?.tagName === "H1")));
+  check("#33: no Keep going at the cap", (await page.getByRole("button", { name: "Keep going on a branch" }).count()) === 0);
   await shot(page, "confirm");
   saved = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
   check("no plan before confirm (AC7)", !saved.plan && !existsSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md")));
@@ -841,8 +845,16 @@ try {
     check("#22 Markdown: the warning names the old and new answer", ((await hold2.textContent()) ?? "").includes(`${newAnswer} → Mobile app`), (await hold2.textContent())?.slice(0, 160));
     await hold2.getByRole("button", { name: "Save and re-ask 1" }).click();
     await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
-    const s22 = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
-    check("#22 Markdown: saving writes the answer and re-asks the dependents in a new round", readFileSync(planFile2, "utf8").includes("key: platform\nquestion: Start on the web?\nanswer: Mobile app") && s22.stale?.storage && !s22.decisions.storage && s22.rounds.at(-1).questions.some((q) => q.key === "storage"));
+    // The page can show the round before plan.md and session.json are both on disk: read them again
+    // until both agree, for up to 5 s (Designer, review-pr29 r2: a one-shot read here was flaky).
+    const read22 = () => {
+      const s = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
+      const md = readFileSync(planFile2, "utf8");
+      return Boolean(md.includes("key: platform\nquestion: Start on the web?\nanswer: Mobile app") && s.stale?.storage && !s.decisions.storage && s.rounds.at(-1).questions.some((q) => q.key === "storage"));
+    };
+    let ok22 = false;
+    for (const end = Date.now() + 5000; !(ok22 = (() => { try { return read22(); } catch { return false; } })()) && Date.now() < end; ) await page.waitForTimeout(100);
+    check("#22 Markdown: saving writes the answer and re-asks the dependents in a new round", ok22);
 
     // DECISIONS #26: `answer:` edited outside Grillado is a Change. Notice in place, nothing reruns until confirmed.
     const sessFile = path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json");
@@ -949,10 +961,10 @@ try {
     check("SIGINT (idle) exits 0", r.code === 0, `${r.ms} ms`);
   }
 
-  // ---------------------------------------------------------------- long run: heat goes down, passivity nudge
+  // ---------------------------------------------------------------- long run: heat goes down; no passivity nudge (#34); the cap at --max-rounds 6 (#33)
   {
     const e5 = env(fakeBins(["claude"]), { FAKE_MODE: "long" });
-    const s5 = startServer(["--no-open"], e5);
+    const s5 = startServer(["--no-open", "--max-rounds", "6"], e5);
     const { url: u5 } = await s5.url;
     const ctx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1440, height: 900 } });
     const pg = await ctx.newPage();
@@ -966,28 +978,18 @@ try {
       await pg.getByText(t).first().waitFor({ timeout: 15_000 });
       await pg.waitForTimeout(150);
       heat.push(Number(await pg.getByTestId("heat").getAttribute("data-level")));
-      nudges.push(await pg.getByTestId("nudge").count());
-      if (i === 4) {
-        await shot(pg, "nudge");
-        check("nudge copy", (await pg.getByTestId("nudge").textContent()).includes("You’ve kept every suggestion for 4 rounds"));
-        const nm = await pg.getByTestId("nudge").evaluate((el) => [getComputedStyle(el).marginTop, getComputedStyle(el).marginBottom].join(" "));
-        check("nudge spacing 20px above, 24px below (v1.2 review)", nm === "20px 24px", nm);
-        const axeN = await new AxeBuilder({ page: pg }).analyze();
-        check("axe: nudge", axeN.violations.length === 0, axeN.violations.map((v) => `${v.id}:${v.nodes.length}@${v.nodes[0]?.target} ${v.nodes[0]?.any?.[0]?.message?.slice(0, 120) ?? ""}`).join(","));
-        await pg.getByRole("button", { name: "Review my picks" }).click();
-        check("'Review my picks' focuses the first card", await pg.evaluate(() => document.activeElement?.tagName === "LEGEND"));
-        await pg.getByRole("button", { name: "Looks right" }).click();
-        check("'Looks right' hides the nudge", (await pg.getByTestId("nudge").count()) === 0);
-        await pg.locator("[data-testid=question] legend").first().focus();
-      }
+      nudges.push((await pg.getByTestId("nudge").count()) + (await pg.getByText("kept every suggestion").count()) + (await pg.getByRole("button", { name: "Looks right" }).count()));
       await pg.keyboard.press("Enter"); // keep every suggestion and send
       if (i < titles.length - 1) await pg.getByText(t).first().waitFor({ state: "detached", timeout: 15_000 });
     }
     check("heat meter goes down when a round opens many decisions", heat[1] === 3 && heat[2] === 2, heat.join(" → "));
-    check("nudge only after 4 all-accept rounds", nudges.slice(0, 4).every((n) => n === 0) && nudges[4] === 1, nudges.join(","));
+    check("#34: no passivity nudge after 4 (or 5) all-accept rounds", nudges.every((n) => n === 0), nudges.join(","));
     await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
+    const st5 = await pg.getByTestId("round-status").textContent();
+    check("#33: the cap's status line under the title (--max-rounds 6)", st5 === "Round 6 of 6 is done.", st5);
+    check("#33: Keep going is gone at the cap", (await pg.getByRole("button", { name: "Keep going on a branch" }).count()) === 0);
     const s5json = JSON.parse(readFileSync(path.join(e5.GRILLADO_HOME, "sessions", readdirSync(path.join(e5.GRILLADO_HOME, "sessions"))[0], "session.json"), "utf8"));
-    check("'Looks right' is remembered", s5json.nudgeDismissed === true);
+    check("#33: six saved rounds, stopped by the cap", s5json.rounds.length === 6 && s5json.stop === "cap", `${s5json.rounds.length} ${s5json.stop}`);
     await ctx.close();
     await stop(s5, "SIGINT");
   }
