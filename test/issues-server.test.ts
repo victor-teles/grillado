@@ -179,22 +179,24 @@ describe("export", () => {
     expect(gh.state().issues.map((x) => x.body)).toEqual(items.map((it) => old(it.body)));
   });
 
-  // Dogfood friction 18: a plan edited after it was written exports what the plan says, over HTTP against the fake gh.
-  test("the parent sent to GitHub has the plan's answers and its notes, not the session's answers", async () => {
+  // Dogfood friction 18 and review-pr29 must 1: a plan edited after it was written exports what the plan says, an
+  // override as the decision, over HTTP against the fake gh.
+  test("the issues sent to GitHub have the plan's answers, an override as the answer and other notes under theirs", async () => {
     const { store, gh, call, done } = await start();
-    const md = withBlocks(STORY_MD, block("R1·1", "storage", "Where do recipes live?", "SQLite, with a weekly export"), block("R1·2", "cap", "Round cap?", "3 rounds", "Overridden by the PO: default 2 rounds"));
+    const OVR = "Overridden by the PO: SQLite, with a weekly export to a file";
+    const md = withBlocks(STORY_MD, block("R1·1", "storage", "Where do recipes live?", "SQLite on the device", OVR), block("R1·2", "cap", "Round cap?", "3 rounds", "Overridden by the PO: default 2 rounds"), block("R2·1", "sync", "Sync between devices?", "Not in v1", "Sharing a list by link comes first."));
     const s = storySession(store, md);
     s.decisions.cap = { key: "cap", round: 1, title: "Round cap?", answer: "3 rounds", kind: "option", accepted_recommendation: true, dependsOn: [] };
     store.save(s);
     const { json } = await call("POST", `/api/sessions/${s.id}/issues/split`, { use: "fallback" });
-    const parent = json.items[0];
-    expect(parent.body).toContain("- **Where do recipes live?** SQLite, with a weekly export\n- **Round cap?** 3 rounds\n  _Note:_ Overridden by the PO: default 2 rounds\n");
+    const want = `- **Where do recipes live?** ${OVR}\n- **Round cap?** Overridden by the PO: default 2 rounds\n- **Sync between devices?** Not in v1\n  _Note:_ Sharing a list by link comes first.\n`;
+    expect(json.items[0].body).toContain(want);
     await call("POST", `/api/sessions/${s.id}/issues/export`, { ...GH, selected: json.items.map((it: any) => it.key) });
     expect((await done(s.id)).run.rows.every((x: any) => x.status === "created")).toBe(true);
     const sent = gh.state().issues;
-    expect(sent[0].body).toContain("- **Round cap?** 3 rounds\n  _Note:_ Overridden by the PO: default 2 rounds\n");
-    expect(sent[0].body).not.toContain("SQLite on the device");
-    expect(sent.find((x) => /^As a cook, I add/.test(x.title))!.body).toContain("**Covers:** Where do recipes live? SQLite, with a weekly export");
+    expect(sent[0].body).toContain(want);
+    for (const old of ["SQLite on the device", "3 rounds"]) expect(sent.some((x) => x.body.includes(old))).toBe(false);
+    expect(sent.find((x) => /^As a cook, I add/.test(x.title))!.body).toContain(`**Covers:** Where do recipes live? ${OVR}`);
     const pre = await call("POST", `/api/sessions/${s.id}/issues/preview`, GH);
     expect(pre.json.changes.every((c: any) => c.change === "unchanged")).toBe(true);
   });

@@ -10,7 +10,7 @@ import { linearView, readSecrets, writeSecrets } from "../src/cli/issues/secrets
 import { said, saidAfter } from "../src/cli/issues/tracker.ts";
 import { type ExportRun, countExport, runExport, takeExportLock } from "../src/cli/issues/service.ts";
 import { Store } from "../src/cli/store.ts";
-import { BODY_LIMIT, MAX_CHILDREN, PARENT_KEY, type PlanIssues, buildItems, contentHash, fallbackSlices, fitBody, groupedSlices, groupsTodos, marker, parentItem, planChanges, readMarker } from "../src/core/issues.ts";
+import { BODY_LIMIT, MAX_CHILDREN, PARENT_KEY, type IssueItem, type PlanIssues, buildItems, contentHash, fallbackSlices, fitBody, groupedSlices, groupsTodos, marker, parentItem, planChanges, readMarker } from "../src/core/issues.ts";
 import { buildGroupPrompt, buildSplitPrompt } from "../src/core/engine.ts";
 import { groupSystemPrompt } from "../src/core/prompts.ts";
 import type { Session } from "../src/core/session.ts";
@@ -217,6 +217,8 @@ describe("items", () => {
   describe("dogfood friction 18: the plan's decision blocks are the source, not the session's answers", () => {
     const STORAGE = block("R1·1", "storage", "Where do recipes live?", "SQLite, with a weekly export");
     const CAP = block("R1·2", "cap", "Round cap?", "3 rounds", "Overridden by the PO: default 2 rounds");
+    const OVR = "Overridden by the PO: SQLite, with a weekly export to a file";
+    const STORAGE_OVR = block("R1·1", "storage", "Where do recipes live?", "SQLite on the device", OVR);
     const withCap = (s: Session) => (s.decisions.cap = { key: "cap", round: 1, title: "Round cap?", answer: "3 rounds", kind: "option", accepted_recommendation: true, dependsOn: [] });
     const by = (xs: ReturnType<typeof planChanges>) => Object.fromEntries(xs.map((x) => [x.key, x.change]));
     const link = (hash: string) => ({ id: "1", number: 1, url: "u", contentHash: hash });
@@ -234,16 +236,29 @@ describe("items", () => {
       expect(prompt).not.toContain("SQLite on the device");
     });
 
-    test("a block with a note: the parent shows the answer, then the note (a PO override)", () => {
-      const md = withBlocks(STORY_MD, CAP, block("R2·1", "sync", "Sync between devices?", "Not in v1", "Decided: Not in v1."));
+    test("an override is the decision: its note is the answer in the parent, the Covers line and the split prompt; other notes follow their answer (review-pr29 must 1)", () => {
+      const md = withBlocks(STORY_MD, CAP, STORAGE_OVR, block("R2·1", "sync", "Sync between devices?", "Not in v1", "Decided: Not in v1."));
       const s = storySession(tempStore(), md);
       withCap(s);
-      const p = parentItem(s, md, "github");
-      expect(p.body).toContain("- **Round cap?** 3 rounds\n  _Note:_ Overridden by the PO: default 2 rounds\n");
-      // A note that only says the answer again isn't repeated (the plan page's rule, noteAdds).
+      const [p, a] = buildItems(s, md, "github", fallbackSlices(s, md).slices).items;
+      expect(p.body).toContain("- **Round cap?** Overridden by the PO: default 2 rounds\n");
+      expect(p.body).toContain(`- **Where do recipes live?** ${OVR}\n`);
+      expect(p.body).not.toContain("3 rounds");
+      expect(p.body).not.toContain("SQLite on the device");
+      // A note that only says the answer again isn't repeated (the plan page's rule, noteAdds); an override has no note line.
       expect(p.body).toContain("- **Sync between devices?** Not in v1\n");
-      expect(p.body.match(/_Note:_/g)?.length).toBe(1);
-      expect(buildSplitPrompt(s, md, [])).toContain(`"answer":"3 rounds","note":"Overridden by the PO: default 2 rounds"`);
+      expect(p.body).not.toContain("_Note:_");
+      expect(a.body).toContain(`**Covers:** Where do recipes live? ${OVR}`);
+      const prompt = buildSplitPrompt(s, md, []);
+      expect(prompt).toContain(`{"key":"cap","question":"Round cap?","answer":"Overridden by the PO: default 2 rounds"}`);
+      expect(prompt.slice(prompt.indexOf("<state>"))).not.toContain("3 rounds"); // the plan itself is in the prompt, for the record
+    });
+
+    test("a note that says more, and isn't an override, follows its answer on its own line", () => {
+      const md = withBlocks(STORY_MD, block("R1·1", "storage", "Where do recipes live?", "SQLite on the device", "A weekly export to a file covers backups."));
+      const s = storySession(tempStore(), md);
+      const p = parentItem(s, md, "github");
+      expect(p.body).toContain("- **Where do recipes live?** SQLite on the device\n  _Note:_ A weekly export to a file covers backups.\n");
     });
 
     test("hash stability: blocks that say what the session says, with no notes, export byte for byte what the session alone did", () => {
@@ -259,31 +274,43 @@ describe("items", () => {
       expect(Object.values(by(planChanges(after, issues)))).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
     });
 
-    test("a parent sent before the notes reads unchanged, as does #28's old R·n Covers; one sent with the note reads a note edit as update", () => {
-      const md = withBlocks(STORY_MD, CAP);
-      const s = storySession(tempStore(), md);
+    test("issues sent before #29 that cover an override read update, the rest unchanged (#28's R·n Covers too); a plain note edit after a #29 export reads update", () => {
+      const s = storySession(tempStore());
       withCap(s);
       s.rounds = [{ n: 1, questions: [{ key: "storage" }, { key: "cap" }] } as any, { n: 2, questions: [{ key: "other" }, { key: "sync" }] } as any];
+      // What main sent: the session's answers, whatever the plan's blocks said.
+      const sentByMain = buildItems(s, STORY_MD, "github", fallbackSlices(s, STORY_MD).slices).items;
+      const hashes = (pick: (it: IssueItem) => string) => {
+        const [p, ...cs] = sentByMain;
+        return { tracker: "github", target: "o/r", labels: [], parent: link(contentHash(p.title, pick(p))), items: Object.fromEntries(cs.map((it) => [it.key, link(contentHash(it.title, pick(it)))])), exportedAt: "" } as PlanIssues;
+      };
+      const main = hashes((it) => it.body);
+      const pr28 = hashes((it) => it.legacyBody ?? it.body); // #28's old "R1·1 title answer" Covers
+      expect(Object.values(pr28.items).map((l) => l.contentHash)).not.toEqual(Object.values(main.items).map((l) => l.contentHash));
+
+      const md = withBlocks(STORY_MD, CAP, STORAGE_OVR);
+      s.plan!.markdown = md;
       const items = buildItems(s, md, "github", fallbackSlices(s, md).slices).items;
       const [p, a, b, c] = items;
-      expect(p.legacyBody).toBe(p.body.replace("\n  _Note:_ Overridden by the PO: default 2 rounds", ""));
-      expect(a.legacyBody).toBe(a.body.replace("**Covers:** Where do recipes live?", "**Covers:** R1·1 Where do recipes live?"));
-      const old: PlanIssues = { tracker: "github", target: "o/r", labels: [], parent: link(contentHash(p.title, p.legacyBody!)), items: { [a.key]: link(contentHash(a.title, a.legacyBody!)), [b.key]: link(contentHash(b.title, b.body)), [c.key]: link(contentHash(c.title, c.legacyBody!)) }, exportedAt: "" };
-      expect(by(planChanges(items, old))).toEqual({ [p.key]: "unchanged", [a.key]: "unchanged", [b.key]: "unchanged", [c.key]: "unchanged" });
-      // A parent renamed in the sheet still matches its old body under the new title.
-      expect(by(planChanges([{ ...p, title: "Renamed" }], { ...old, parent: link(contentHash("Renamed", p.legacyBody!)) }))[p.key]).toBe("unchanged");
-      // Sent with the note, then the note is edited: update. (Sent before the notes, only the noteless body is known,
-      // so a note-only edit there reads unchanged until something else changes; the PR says so.)
-      const sent: PlanIssues = { ...old, parent: link(contentHash(p.title, p.body)) };
-      const md2 = md.replace("default 2 rounds", "default 2 rounds, 1 more on request");
-      s.plan!.markdown = md2;
-      const moved = buildItems(s, md2, "github", fallbackSlices(s, md2).slices).items;
-      expect(by(planChanges(moved, sent))[p.key]).toBe("update");
-      expect(by(planChanges(moved, old))[p.key]).toBe("unchanged");
-      // An answer edit in the plan reads update either way.
-      const md3 = md.replace("answer: 3 rounds", "answer: 2 rounds");
-      const moved3 = buildItems(s, md3, "github", fallbackSlices(s, md3).slices).items;
-      expect(by(planChanges(moved3, old))[p.key]).toBe("update");
+      expect(a.covers).toContain("storage");
+      expect([b, c].some((it) => it.covers.includes("storage"))).toBe(false);
+      for (const sent of [main, pr28]) expect(by(planChanges(items, sent))).toEqual({ [p.key]: "update", [a.key]: "update", [b.key]: "unchanged", [c.key]: "unchanged" });
+
+      // No override in the plan: what main sent reads unchanged, and a parent renamed in the sheet still matches.
+      const plain = withBlocks(STORY_MD, block("R1·1", "storage", "Where do recipes live?", "SQLite on the device", "A weekly export to a file covers backups."));
+      const kept = buildItems(s, plain, "github", fallbackSlices(s, plain).slices).items;
+      expect(kept[0].legacyBody).toBe(sentByMain[0].body);
+      expect(Object.values(by(planChanges(kept, main)))).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+      expect(by(planChanges([{ ...kept[0], title: "Renamed" }], { ...main, parent: link(contentHash("Renamed", sentByMain[0].body)) }))[kept[0].key]).toBe("unchanged");
+
+      // Sent with #29, then the plain note or an override is edited: update.
+      const sent29: PlanIssues = { ...main, parent: link(contentHash(kept[0].title, kept[0].body)) };
+      const md2 = plain.replace("covers backups", "covers backups and moving phones");
+      expect(by(planChanges(buildItems(s, md2, "github", fallbackSlices(s, md2).slices).items, sent29))[kept[0].key]).toBe("update");
+      const sentO: PlanIssues = { ...main, parent: link(contentHash(p.title, p.body)), items: { ...main.items, [a.key]: link(contentHash(a.title, a.body)) } };
+      const md3 = md.replace("default 2 rounds", "default 2 rounds, 1 more on request");
+      expect(by(planChanges(buildItems(s, md3, "github", fallbackSlices(s, md3).slices).items, sentO))[p.key]).toBe("update");
+      expect(by(planChanges(items, sentO))).toEqual({ [p.key]: "unchanged", [a.key]: "unchanged", [b.key]: "unchanged", [c.key]: "unchanged" });
     });
   });
 

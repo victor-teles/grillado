@@ -162,12 +162,21 @@ describe("changing a decision inline (Q2)", () => {
     expect(s.plan!.markdown).toContain("answer: Just me");
   });
 
-  test("dogfood friction 20: Change keeps a note that doesn't repeat the old answer, as written", () => {
-    const s = platedSession();
-    s.plan!.markdown = updateDecisionBlock(s.plan!.markdown, "scope", { note: "Overridden by the PO: one household only, for now." });
-    expect(changeDecision(s, "scope", { optionId: OTHER_OPTION, text: "Just me" })).toEqual([]);
-    const f = findDecisionBlocks(s.plan!.markdown).find((b) => b.parsed.ok && b.parsed.fields.key === "scope")!;
-    expect(f.parsed.ok && f.parsed.fields).toMatchObject({ answer: "Just me", note: "Overridden by the PO: one household only, for now." });
+  test("dogfood friction 20: Change keeps a person's note as written, but drops an override, since the Change is the newer decision (review-pr29 must 2)", () => {
+    const scope = (s: Session) => findDecisionBlocks(s.plan!.markdown).find((b) => b.parsed.ok && b.parsed.fields.key === "scope")!;
+    const kept = platedSession();
+    kept.plan!.markdown = updateDecisionBlock(kept.plan!.markdown, "scope", { note: "One household only, for now." });
+    expect(changeDecision(kept, "scope", { optionId: OTHER_OPTION, text: "Just me" })).toEqual([]);
+    const k = scope(kept).parsed;
+    expect(k.ok && k.fields).toMatchObject({ answer: "Just me", note: "One household only, for now." });
+
+    const dropped = platedSession();
+    dropped.plan!.markdown = updateDecisionBlock(dropped.plan!.markdown, "scope", { note: "Overridden by the PO: one household only, for now." });
+    expect(changeDecision(dropped, "scope", { optionId: OTHER_OPTION, text: "Just me" })).toEqual([]);
+    const f = scope(dropped);
+    expect(f.parsed.ok && f.parsed.fields.answer).toBe("Just me");
+    expect(f.parsed.ok && f.parsed.fields.note).toBeUndefined();
+    expect(dropped.plan!.markdown).not.toContain("Overridden");
   });
 
   test("no stale restatement: cited prose and the block's note follow the new answer (recording bug 1)", () => {

@@ -3,7 +3,7 @@
 // would do; the trackers (src/cli/issues) do the talking, only after the user confirms.
 
 import { planSections } from "./diagrams.ts";
-import { blockKey, findDecisionBlocks, noteAdds } from "./decision-block.ts";
+import { blockKey, findDecisionBlocks, noteAdds, overrides } from "./decision-block.ts";
 import { textHash } from "./text-hash.ts";
 import type { Session } from "./session.ts";
 
@@ -150,7 +150,7 @@ export interface PlanDecision {
   round: number;
   title: string;
   answer: string;
-  /** The block's `note:`, when it says more than the answer (noteAdds), e.g. a PO override (dogfood friction 18). */
+  /** The block's `note:`, when it says more than the answer (noteAdds). Never an override: that is the answer. */
   note?: string;
 }
 
@@ -159,6 +159,9 @@ export interface PlanDecision {
  * it's written, so the answer and note come from its ```decision block. The session's answer only stands in when the
  * plan has no block for that decision (or the block can't be read, or has no answer). Which decisions, their order and
  * their titles stay the session's, so a plan nobody edited exports exactly what it did before.
+ * A note that begins "Overridden" is the decision (the plan's own rule, DOGFOOD-1 r2; review-pr29 must 1): it becomes
+ * the answer, with no note line, so the parent, every Covers line and the split prompt say the override, never the
+ * recorded answer it replaced.
  */
 export function planDecisions(s: Session, md: string): PlanDecision[] {
   const blocks = new Map<string, { answer?: string; note?: string }>();
@@ -169,6 +172,7 @@ export function planDecisions(s: Session, md: string): PlanDecision[] {
   }
   return resolved(s).map((d) => {
     const f = blocks.get(d.key);
+    if (f && overrides(f.note)) return { key: d.key, round: d.round, title: d.title.trim(), answer: f.note!.trim() };
     const answer = f?.answer?.trim() || d.answer.trim();
     const note = noteAdds(f?.note, answer) ? f!.note!.trim() : undefined;
     return { key: d.key, round: d.round, title: d.title.trim(), answer, ...(note ? { note } : {}) };

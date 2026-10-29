@@ -313,3 +313,6 @@ const noteNorm = (v: string) =>
 export function noteAdds(note: string | undefined, answer: string | undefined): boolean {
   return !!note?.trim() && noteNorm(note) !== noteNorm(answer ?? "");
 }
+
+/** A note that replaces its answer: the plan's own rule, "where a note: begins Overridden, that note wins" (DOGFOOD-1 r2). */
+export const overrides = (note: string | undefined) => /^\s*overridden\b/i.test(note ?? "");
