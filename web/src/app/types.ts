@@ -212,6 +212,8 @@ export interface SessionView {
   wrappedUp: boolean;
   /** Why Confirm opened without a wrap (#33): the cap, or the agent had nothing left to ask. */
   stop?: "cap" | "empty";
+  /** Ask 1 more round was granted (#37). */
+  extra?: boolean;
   keepGoing?: boolean;
   summary: string;
   error?: { code: FailureCode; message: string };

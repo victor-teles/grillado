@@ -15,6 +15,7 @@ import {
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
 import { COPY } from "./copy";
+import { preparing, roundCounter } from "./rounds";
 import { waitLabel } from "./wait";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
@@ -193,6 +194,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
           <AgentQuestionHeader className="sr-only">{null}</AgentQuestionHeader>
           <div className="intro">
             <h1>{n === 1 ? "1 decision is ready" : `${n} decisions are ready`}</h1>
+            <RoundCounter session={session} round={round} />
             <p>
               {first ? "The first calls on your idea." : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
             </p>
@@ -215,6 +217,17 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
         </button>
       </AgentQuestionFooter>
     </AgentQuestion>
+  );
+}
+
+/** "Round {k} of {N}" under the title, in the slot the waiting status line uses (#36). */
+function RoundCounter({ session, round }: { session: SessionView; round: Round }) {
+  const c = roundCounter(session, round.n);
+  return (
+    <p className="rmeta" data-testid="round-counter">
+      {c.lead}
+      {c.tag ? <span className={c.strong ? "last" : undefined}> · {c.tag}</span> : null}
+    </p>
   );
 }
 
@@ -283,14 +296,13 @@ export function StatusLine({ label, dot, onStop, note }: { label: string; dot?: 
 /** Between rounds: one status line, static skeletons, the bar confirms what was saved. */
 export function WaitingView({ session, act, banner }: { session: SessionView; act: Act; banner?: React.ReactNode }) {
   const last = session.rounds.at(-1);
-  const next = (session.rounds.length || 0) + 1;
   const busy = session.busy;
   // From when this turn started, so a Retry after a failure starts at zero (review-pr22 r3 #2).
   const since = busy ? (session.runAt ?? last?.answeredAt ?? session.updatedAt) : undefined;
   const elapsed = useSince(since, busy);
   const saved = last?.answers?.length ?? 0;
   const long = waitLabel(session, elapsed, "");
-  const label = long || `Preparing round ${next} · reading your answers`;
+  const label = long || preparing(session);
   return (
     <SessionBody
       session={session}

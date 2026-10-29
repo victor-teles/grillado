@@ -48,6 +48,7 @@ import {
   openQuestions,
   owedKeys,
   roundsSaved,
+  roundLimit,
   renderPlanMarkdown,
   setError,
   userText,
@@ -100,19 +101,24 @@ function userState(s: Session) {
 }
 
 /** The round budget (#35): rounds left of `max`, counted from saved batches; past it, only what's owed. */
-function budgetLines(s: Session, max: number): string[] {
+function budgetLines(s: Session, cap: number): string[] {
+  const max = roundLimit(s, cap);
   const left = max - roundsSaved(s);
   const most = `at most ${MAX_QUESTIONS} questions, one decision per question`;
   if (left <= 0)
     return [`The question rounds are used up. Ask only what the user sent back to be asked again: ${owedKeys(s).join(", ")}. Ask ${most}. Any other question is dropped.`];
-  const lines = [`Round budget: ${left} of ${max} question ${max === 1 ? "round" : "rounds"} left, counting this one. Ask ${most}. You may end early: reply frontier_empty once nothing that matters is left to ask.`];
+  const lines = [
+    s.extra && left === 1
+      ? `Round budget: the user asked for one extra question round past the cap of ${cap}, and this is it. Ask ${most}. You may end early: reply frontier_empty once nothing that matters is left to ask.`
+      : `Round budget: ${left} of ${max} question ${max === 1 ? "round" : "rounds"} left, counting this one. Ask ${most}. You may end early: reply frontier_empty once nothing that matters is left to ask.`,
+  ];
   if (left === 1) lines.push("This is the last question round. Ask what matters most for the plan; anything still open after it goes into the plan as an open question.");
   return lines;
 }
 
 export function buildRoundPrompt(s: Session, max = DEFAULT_MAX_ROUNDS): string {
   const state = stateFor(s);
-  const pastCap = roundsSaved(s) >= max;
+  const pastCap = roundsSaved(s) >= roundLimit(s, max);
   const lines = [`Interview state (JSON):`, `<state>${JSON.stringify(state)}</state>`, ""];
   if (!state.decisions.length && !state.reopened) lines.push("This is the first round. Map the idea and ask the first frontier.");
   else if (state.reopened) lines.push(`The user reopened: ${state.reopened.join(", ")}. Ask those again${pastCap ? "" : ", plus anything newly unblocked"}.`);

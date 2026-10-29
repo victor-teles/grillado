@@ -242,6 +242,8 @@ try {
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "2 decisions are ready" }).waitFor({ timeout: 15_000 });
   check("round 1 stacks both questions at once", (await page.getByTestId("question").count()) === 2 && (await page.getByText("Start on the web?").count()) === 1);
+  const rc1 = await page.getByTestId("round-counter").textContent();
+  check("#36: round 1's counter, 12px under the title", rc1 === "Round 1 of 2" && (await page.getByTestId("round-counter").evaluate((el) => getComputedStyle(el).fontSize === "12px" && el.previousElementSibling?.tagName === "H1")), rc1);
   await shot(page, "round");
   await page.waitForURL(/\/s\//);
   const sessionId = new URL(page.url()).pathname.split("/").pop();
@@ -295,6 +297,8 @@ try {
   await page.keyboard.press("Enter"); // send
   await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
   check("round 2 shown after a keyboard stacked submit", true);
+  const rc2 = await page.getByTestId("round-counter").textContent();
+  check("#36: round N reads Round 2 of 2 · last round, the tag at 500", rc2 === "Round 2 of 2 · last round" && (await page.getByTestId("round-counter").locator(".last").evaluate((el) => getComputedStyle(el).fontWeight === "500")), rc2);
   check("round 2 card says what opened it", (await page.getByText("Opened by").textContent())?.includes("Platform"));
   let saved = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
   check(
@@ -323,6 +327,8 @@ try {
   check("#33: default cap of 2: the status line says round 2 of 2 is done", st2 === "Round 2 of 2 is done.", st2);
   check("#33: the status line is 12px, under the title", (await page.getByTestId("round-status").evaluate((el) => getComputedStyle(el).fontSize === "12px" && el.previousElementSibling?.tagName === "H1")));
   check("#33: no Keep going at the cap", (await page.getByRole("button", { name: "Keep going on a branch" }).count()) === 0);
+  const more = page.getByRole("button", { name: "Ask 1 more round", exact: true });
+  check("#37: Ask 1 more round, quiet, in Keep going's slot; Yes, plate it keeps the focus", (await more.count()) === 1 && /\bquiet\b/.test((await more.getAttribute("class")) ?? "") && (await page.evaluate(() => document.activeElement?.textContent?.startsWith("Yes, plate it"))));
   await shot(page, "confirm");
   saved = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
   check("no plan before confirm (AC7)", !saved.plan && !existsSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md")));
@@ -994,6 +1000,8 @@ try {
     await pg.getByRole("button", { name: "Reopen Launch" }).click();
     await pg.getByRole("alertdialog", { name: "Reopen “Launch”?" }).getByRole("button", { name: "Reopen" }).click();
     await pg.getByText("Launch to friends first?").first().waitFor({ timeout: 15_000 });
+    const rcRe = await pg.getByTestId("round-counter").textContent();
+    check("ROUNDS-REASK: a re-ask at the cap reads Round 6 of 6 · asking again", rcRe === "Round 6 of 6 · asking again", rcRe);
     await pg.keyboard.press("Enter");
     await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
     await pg.getByTestId("round-status").waitFor({ timeout: 15_000 });

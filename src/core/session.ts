@@ -95,6 +95,8 @@ export interface Session extends CommentState {
    * "empty" when the agent had nothing left to ask. Cleared when another round starts.
    */
   stop?: "cap" | "empty";
+  /** Ask 1 more round (#37): granted once at the cap, stored on the click, so a reload can't grant it twice. */
+  extra?: boolean;
   keepGoing: boolean;
   summary: string;
   error?: SessionError;
@@ -258,7 +260,7 @@ export function applyRound(s: Session, reply: RoundReply, max = DEFAULT_MAX_ROUN
   s.summary = reply.summary;
   s.keepGoing = false;
   const owe = new Set(owedKeys(s));
-  const questions = roundsSaved(s) >= max ? reply.questions.filter((q) => owe.has(q.key)) : reply.questions;
+  const questions = roundsSaved(s) >= roundLimit(s, max) ? reply.questions.filter((q) => owe.has(q.key)) : reply.questions;
   if (reply.type === "frontier_empty") {
     s.status = "confirm";
     s.stop = "empty";
@@ -427,7 +429,24 @@ export const roundsSaved = (s: Session): number => s.rounds.filter((r) => !r.rea
  * (stale, or queued to re-ask) are owed: they run past the cap, because the user asked for them.
  */
 export function atCap(s: Session, max: number): boolean {
-  return roundsSaved(s) >= max && !owed(s);
+  return roundsSaved(s) >= roundLimit(s, max) && !owed(s);
+}
+
+/** Rounds allowed: the cap, plus the one extra round once it's granted (#37). */
+export const roundLimit = (s: { extra?: boolean }, max: number): number => max + (s.extra ? 1 : 0);
+
+/** Ask 1 more round (#37): at the cap, once. The grant is saved before the round is asked. */
+export function askMore(s: Session, max = DEFAULT_MAX_ROUNDS): void {
+  if (s.status !== "confirm") throw new Error("Not at the confirm step.");
+  if (!atCap(s, max) || s.extra) throw new Error("The extra round is used. Write the plan.");
+  // The grant is round max + 1. After a relaunch with a lower --max-rounds the saved rounds are already
+  // past that, so a grant would ask nothing.
+  if (roundsSaved(s) > max) throw new Error("That was the last round. Write the plan.");
+  s.extra = true;
+  s.stop = undefined;
+  s.wrappedUp = false;
+  s.status = "asking";
+  touch(s);
 }
 
 /** The last allowed round is answered: Confirm opens with no question-asking agent call (#33). */

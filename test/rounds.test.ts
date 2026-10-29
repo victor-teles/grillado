@@ -224,6 +224,26 @@ describe("the cap (#33)", () => {
     expect(roundStatus(s, "Claude Code")).toBe("3 rounds done. The cap is 2.");
   });
 
+  test("PR44-rounds M1: past a lowered cap, no Ask 1 more round, the grant is refused and nothing runs", async () => {
+    const { capAction, roundCounter } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude", { maxRounds: 3, extra: { FAKE_MODE: "long" } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    for (let i = 0; i < 3; i++) await t.answer(sid);
+    await t.idle(sid, "confirm");
+    await t.server.close();
+    servers.length = 0;
+    const b = await start("claude", { store: t.store });
+    const s = (await b.api("GET", `/api/sessions/${sid}`)).json;
+    expect(capAction(s)).toBeNull();
+    const c = roundCounter(s, 3);
+    expect([c.lead, c.tag, !!c.strong]).toEqual(["Round 3", "the cap is 2", false]);
+    const more = await b.api("POST", `/api/sessions/${sid}/ask-more`);
+    expect([more.status, more.json.error]).toEqual([400, "That was the last round. Write the plan."]);
+    expect(t.store.load(sid)!.extra).toBeUndefined();
+    expect((await b.api("GET", `/api/sessions/${sid}`)).json).toMatchObject({ status: "confirm", stop: "cap" });
+    expect(b.runs()).toBe(0);
+  });
+
   test("an older session without reask flags or stop loads, and every round it has counts", async () => {
     const { roundStatus, atCap } = await import("../web/src/app/rounds.ts");
     const t = await start("claude");
@@ -335,5 +355,93 @@ describe("plan time (#41)", () => {
     expect(s).toMatchObject({ stop: "cap" });
     expect(s.rounds).toHaveLength(2);
     expect(b.store.load(sid)!.roundsStartedAt).toBe(started);
+  });
+});
+
+describe("Ask 1 more round (#37)", () => {
+  test("at the cap: one extra round runs, then You’ve used the extra round and only the plan write", async () => {
+    const { roundStatus, roundCounter, capAction } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude", { extra: { FAKE_MODE: "long" } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    const cap = await t.idle(sid, "confirm");
+    expect(capAction(cap)).toEqual({ label: "Ask 1 more round", action: "ask-more" });
+    expect(t.runs()).toBe(2);
+    const more = await t.api("POST", `/api/sessions/${sid}/ask-more`);
+    expect(more.status).toBe(200);
+    expect(more.json).toMatchObject({ extra: true, status: "asking" });
+    const r3 = await t.idle(sid, "answering");
+    expect(r3.rounds).toHaveLength(3);
+    expect(r3.maxRounds).toBe(2);
+    const c = roundCounter(r3, 3);
+    expect(`${c.lead} · ${c.tag}`).toBe("Extra round · last round");
+    await t.answer(sid);
+    const done = await t.idle(sid, "confirm");
+    expect(done).toMatchObject({ stop: "cap", extra: true });
+    expect(t.runs()).toBe(3);
+    expect(roundStatus(done, "Claude Code")).toBe("You’ve used the extra round.");
+    expect(capAction(done)).toBeNull();
+    for (const action of ["ask-more", "keep-going"]) expect((await t.api("POST", `/api/sessions/${sid}/${action}`)).status).toBe(400);
+    expect(t.runs()).toBe(3);
+  });
+
+  test("below the cap there is no extra round to ask for", async () => {
+    const t = await start("claude", { maxRounds: 5 });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    await t.idle(sid, "confirm"); // the agent ended early at 2 of 5
+    expect((await t.api("POST", `/api/sessions/${sid}/ask-more`)).status).toBe(400);
+    expect(t.store.load(sid)!.extra).toBeUndefined();
+  });
+
+  test("the grant is saved on the click, before the batch: a reload keeps one grant and can't take a second", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "grillado-ctl-"));
+    const ctl = path.join(dir, "ctl.json");
+    writeFileSync(ctl, JSON.stringify({ FAKE_MODE: "long" }));
+    const t = await start("claude", { extra: { FAKE_CTL: ctl } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    await t.idle(sid, "confirm");
+    writeFileSync(ctl, JSON.stringify({ FAKE_MODE: "long", FAKE_DELAY_MS: "20000" }));
+    expect((await t.api("POST", `/api/sessions/${sid}/ask-more`)).status).toBe(200);
+    // Saved before the agent answers, and a second click is refused.
+    expect(t.store.load(sid)).toMatchObject({ extra: true, status: "asking" });
+    expect(t.store.load(sid)!.rounds).toHaveLength(2);
+    expect((await t.api("POST", `/api/sessions/${sid}/ask-more`)).status).toBe(400);
+    await t.server.close();
+    servers.length = 0;
+
+    writeFileSync(ctl, JSON.stringify({ FAKE_MODE: "long" }));
+    const b = await start("claude", { store: t.store, extra: { FAKE_CTL: ctl } });
+    const s = (await b.api("GET", `/api/sessions/${sid}`)).json;
+    expect(s).toMatchObject({ status: "asking", extra: true });
+    expect(s.error.message).toBe("Interrupted. Retry to continue.");
+    expect((await b.api("POST", `/api/sessions/${sid}/retry`)).status).toBe(200);
+    await b.answer(sid);
+    const done = await b.idle(sid, "confirm");
+    expect(done.rounds).toHaveLength(3);
+    expect(done).toMatchObject({ stop: "cap", extra: true });
+    expect((await b.api("POST", `/api/sessions/${sid}/ask-more`)).status).toBe(400);
+    expect(b.runs()).toBe(1);
+  });
+
+  test("a saved extra batch still unanswered is shown again after a reload", async () => {
+    const t = await start("claude", { extra: { FAKE_MODE: "long" } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    await t.idle(sid, "confirm");
+    await t.api("POST", `/api/sessions/${sid}/ask-more`);
+    const r3 = await t.idle(sid, "answering");
+    await t.server.close();
+    servers.length = 0;
+    const b = await start("claude", { store: t.store, extra: { FAKE_MODE: "long" } });
+    const s = (await b.api("GET", `/api/sessions/${sid}`)).json;
+    expect(s).toMatchObject({ status: "answering", extra: true });
+    expect(s.rounds.at(-1).questions).toEqual(r3.rounds.at(-1).questions);
+    expect(b.runs()).toBe(0);
   });
 });

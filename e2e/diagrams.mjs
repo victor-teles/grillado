@@ -660,7 +660,7 @@ try {
         const st = qp.locator(".intro .status");
         await st.waitFor({ timeout: 5000 });
         const label = (await st.textContent()).trim();
-        check(`${theme} Retry ${Math.round((Date.now() - sentAt) / 1000)} s after the send: the normal working line, not "Still cooking…"`, label === "Preparing round 2 · reading your answers", label);
+        check(`${theme} Retry ${Math.round((Date.now() - sentAt) / 1000)} s after the send: the normal working line, not "Still cooking…"`, /^Preparing round 2 of \d+ · reading your answers$/.test(label), label);
         if (SHOTS) await qp.screenshot({ path: path.join(SHOTS, `retry-working-${theme}.png`) });
         await st.waitFor({ state: "detached", timeout: 15000 });
       }
