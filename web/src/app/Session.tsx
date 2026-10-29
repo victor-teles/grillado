@@ -350,7 +350,7 @@ function Confirm({ session, act, agent }: { session: SessionView; act: Act; agen
                   </p>
                 ) : null}
                 <p>
-                  {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it" : "them"} as open decisions.` : settledLine(n, owed)} Read them over before the plan gets written.
+                  {early ? `${counts.confirm}. The plan will list ${open.length === 1 ? "it as an open decision" : "them as open decisions"}.` : settledLine(n, owed)} Read them over before the plan gets written.
                 </p>
                 {session.agentNote ? (
                   <p className="agent-note" data-testid="agent-note">

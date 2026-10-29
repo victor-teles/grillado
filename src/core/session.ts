@@ -410,6 +410,8 @@ export function editPlan(s: Session, markdown: unknown) {
 export function wrapUp(s: Session, max = DEFAULT_MAX_ROUNDS): void {
   if (s.status !== "answering" && s.status !== "asking") throw new Error("Nothing to wrap up.");
   s.wrappedUp = true;
+  // A wrap before the granted extra round saved anything gives the grant back (#38, PR45 M1): Confirm is the plain cap Confirm again.
+  if (s.extra && roundsSaved(s) <= max) s.extra = undefined;
   s.stop = atCap(s, max) ? "cap" : undefined;
   s.status = "confirm";
   s.error = undefined;

@@ -517,6 +517,24 @@ describe("Wrap up early and Send and wrap up (#38, #39)", () => {
     for (const a of ["ask-more", "keep-going"]) expect((await t.api("POST", `/api/sessions/${sid}/${a}`)).status).toBe(400);
   });
 
+  test("Wrap it up while the granted extra round prepares gives the grant back (PR45 M1)", async () => {
+    const { roundStatus, capAction } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude", { extra: { FAKE_MODE: "long", FAKE_DELAY_MS: "400" } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    await t.idle(sid, "confirm");
+    const g = await t.api("POST", `/api/sessions/${sid}/ask-more`);
+    expect(g.json).toMatchObject({ extra: true, status: "asking" });
+    const w = (await t.api("POST", `/api/sessions/${sid}/wrap`)).json;
+    expect(w).toMatchObject({ status: "confirm", stop: "cap" });
+    expect(w.extra).toBeFalsy();
+    expect(roundStatus(w, "Claude Code")).toBe("Round 2 of 2 is done.");
+    expect(capAction(w)).toEqual({ label: "Ask 1 more round", action: "ask-more" });
+    expect((await t.api("POST", `/api/sessions/${sid}/keep-going`)).status).toBe(400);
+    expect((await t.api("POST", `/api/sessions/${sid}/ask-more`)).status).toBe(200);
+  });
+
   test("Wrap it up below the cap keeps Keep going and has no status line", async () => {
     const { roundStatus } = await import("../web/src/app/rounds.ts");
     const t = await start("claude");
