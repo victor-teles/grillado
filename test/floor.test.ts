@@ -12,8 +12,9 @@ import { buildTree } from "../src/core/tree.ts";
 import { openFloor, reasonLine, stopReason } from "../src/core/floor.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
 import type { ProviderAdapter, ProviderEvent, RunRequest } from "../src/core/providers/types.ts";
-import { type Session, applyRound, askMore, createSession, keepGoing, stopAtCap, submitAnswers, wrapUp } from "../src/core/session.ts";
-import { cardAnswer } from "../web/src/app/editor/decision-meta.ts";
+import { type Session, answerOpenDecision, applyRound, askMore, createSession, keepGoing, setPlan, stopAtCap, submitAnswers, wrapUp } from "../src/core/session.ts";
+import { textHash } from "../src/core/text-hash.ts";
+import { cardAnswer, citeAnswer, restTag, whoLine } from "../web/src/app/editor/decision-meta.ts";
 import { confirmCounts, planCounts, stillOpen } from "../web/src/app/counts.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
 
@@ -234,4 +235,75 @@ test("a wrap on round 1, unanswered: the plan's open section, the sessions list,
   expect(row.open).toBe(confirmCounts(c).open);
   expect(decisionsOf(store.load(sid)!).open).toHaveLength(confirmCounts(c).open);
   expect(existsSync(done.plan.path)).toBe(true);
+});
+
+describe("an Overridden note beside the text and in the card's meta (PR46 M2)", () => {
+  const note = "Overridden by the PO: at most 6 questions a round.";
+  test("the gutter cite reads the override and the peek says Your call", () => {
+    const d = { answer: "Lean wide", accepted_recommendation: true };
+    expect(citeAnswer(d, { answer: "Lean wide", note })).toEqual({ answer: note, yours: true });
+    expect(citeAnswer(d, { answer: "Lean wide", note: "Ask more each round." })).toEqual({ answer: "Lean wide", yours: false });
+    expect(citeAnswer(d, undefined)).toEqual({ answer: "Lean wide", yours: false });
+  });
+  test("the card's meta line is You with the Your call tag, never You kept the suggestion", () => {
+    const f = { by: "you" as const, at: "2026-10-29T19:11:00Z", kept_suggestion: true, note };
+    const iso = (x: Date) => x.toISOString();
+    expect(whoLine(f, "Claude Code", { format: iso })).toBe("You, 2026-10-29T19:11:00.000Z");
+    expect(restTag(f, "Claude Code")).toEqual({ kind: "yours", text: "Your call" });
+    expect(whoLine({ ...f, note: undefined }, "Claude Code", { format: iso })).toBe("You kept the suggestion, 2026-10-29T19:11:00.000Z");
+    expect(restTag({ ...f, note: undefined }, "Claude Code")).toBeNull();
+  });
+});
+
+test("after a plan edit the page, /api/state and MCP get_plan still count the same open items (PR46 M1)", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "grillado-floor-"));
+  const env = fakeEnv(fakeBinDir(["claude"]), {});
+  const store = new Store(path.join(dir, "home"));
+  const server = new GrilladoServer({ adapters: createAdapters({ env }), store, webDir: webDir(), port: 0, strictPort: true, provider: "claude" });
+  servers.push(server);
+  await server.detect();
+  await server.listen();
+  const h = { "x-grillado-token": server.token, "content-type": "application/json" };
+  const api = (method: string, p: string, body?: unknown) => request(server.port, method, p, h, body);
+  const idle = (sid: string, status: string) =>
+    waitFor(async () => {
+      const s = (await api("GET", `/api/sessions/${sid}`)).json;
+      return !s.busy && s.status === status ? s : undefined;
+    });
+  const sid = (await api("POST", "/api/sessions", { idea: "A grilling recipe app" })).json.id;
+  const r1 = await idle(sid, "answering");
+  // Send and wrap up on round 1: round 1's hint (Storage) was never asked.
+  await api("POST", `/api/sessions/${sid}/answers`, { round: 1, wrap: true, answers: r1.rounds[0].questions.map((x: any) => ({ questionId: x.key, optionId: x.recommendedOptionId, accepted_recommendation: true })) });
+  expect((await api("POST", `/api/sessions/${sid}/confirm`)).status).toBe(200);
+  const plated = await idle(sid, "plated");
+  const md: string = plated.plan.markdown;
+  const line = "- Storage: not asked before the interview stopped.";
+  expect(md).toContain(line);
+  const counts = async () => {
+    const view = (await api("GET", `/api/sessions/${sid}`)).json;
+    const row = (await api("GET", "/api/state")).json.sessions.find((x: any) => x.id === sid);
+    return [planCounts(view, view.plan.markdown).open, row.open, decisionsOf(store.load(sid)!).open.length];
+  };
+  expect(await counts()).toEqual([1, 1, 1]);
+
+  const block = "```decision\nid: U1\nkey: u1\nquestion: Should it sync offline?\nstatus: open\n```\n\n";
+  const added = md.replace("## Open decisions\n\n", `## Open decisions\n\n${block}`);
+  expect((await api("POST", `/api/sessions/${sid}/plan`, { markdown: added, base: textHash(md) })).status).toBe(200);
+  expect(await counts()).toEqual([2, 2, 2]);
+
+  const cut = md.replace(`${line}\n`, "");
+  expect((await api("POST", `/api/sessions/${sid}/plan`, { markdown: cut, base: textHash(added) })).status).toBe(200);
+  expect(await counts()).toEqual([0, 0, 0]);
+});
+
+test("answering the last open item drops the reason line (PR46 N1)", async () => {
+  const s = createSession({ idea: "x", provider: "claude" });
+  ask(s, ["platform"]);
+  wrapUp(s);
+  const out = await write(s);
+  expect(out.markdown).toContain(REASONS[0]);
+  setPlan(s, { title: "Plan", markdown: out.markdown, path: "", openDecisions: out.open });
+  answerOpenDecision(s, "platform", { optionId: "a" });
+  expect(s.plan!.openDecisions).toEqual([]);
+  expect(s.plan!.markdown).not.toContain(REASONS[0]);
 });

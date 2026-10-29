@@ -39,3 +39,12 @@ export { noteAdds } from "../../../../src/core/decision-block.ts";
  * is the decision, as in the exported issues; otherwise the recorded answer.
  */
 export const cardAnswer = (f: { answer?: string; note?: string }): string | undefined => (overrides(f.note) ? f.note!.trim() : f.answer);
+
+/**
+ * What a gutter cite and its peek say for a decision (PR46 M2): the card's answer, so an Overridden
+ * note reads the same beside the text as on the card, and "Your call" when you didn't keep the suggestion.
+ */
+export function citeAnswer(decision: { answer: string; accepted_recommendation: boolean } | undefined, fields: { answer?: string; note?: string } | undefined) {
+  const answer = (fields && cardAnswer(fields)) ?? decision?.answer ?? "";
+  return { answer, yours: !!decision && (!decision.accepted_recommendation || overrides(fields?.note)) };
+}

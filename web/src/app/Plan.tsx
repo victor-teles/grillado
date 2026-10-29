@@ -13,7 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { useComments } from "./comments/Comments";
 import { useDiagrams } from "./diagrams/AddDiagrams";
 import { DecisionCard, listOf } from "./editor/DecisionCard";
-import { cardAnswer } from "./editor/decision-meta";
+import { citeAnswer } from "./editor/decision-meta";
 import { jumpTo, offscreen } from "./editor/link";
 import { countText, planCounts } from "./counts";
 import { passages as findPassages } from "./editor/blocks";
@@ -22,7 +22,7 @@ import { IAlert, ICheck, IChev, IDl, IDown, IFolder, IMore, IPlug } from "./icon
 import { type Act, dependentsOf } from "./Session";
 import type { Decision, McpLaunch, Question, SessionView } from "./types";
 import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
-import { type DecisionFields, findDecisionBlocks, overrides, updateDecisionBlock } from "../../../src/core/decision-block.ts";
+import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "../../../src/core/decision-block.ts";
 import { Provenance } from "./found/Provenance";
 import { AddPlanButton, AddPlanLine, AddPlanLive, addPlanFor } from "./addplan/AddPlan";
 import { useIssues } from "./issues/Issues";
@@ -513,8 +513,7 @@ function GutCite({
   const ref = useRef<HTMLSpanElement>(null);
   const pid = useId();
   const question = decision?.title ?? fallback;
-  const answer = (fields && cardAnswer(fields)) ?? decision?.answer ?? "";
-  const yours = !!decision && (!decision.accepted_recommendation || overrides(fields?.note));
+  const { answer, yours } = citeAnswer(decision, fields);
   const show = (delay: number) => {
     clearTimeout(t.current);
     t.current = setTimeout(() => {
