@@ -229,12 +229,13 @@ for (const vp of process.env.VP ? [process.env.VP] : ["d", "m"]) {
       await typeIdea(pg, "A notes app");
       for (const t of ["Build it for yourself first?", "Start with the capture flow?", "Include search in v1?", "Sync across devices?"]) {
         await pg.getByText(t).first().waitFor({ timeout: 15000 });
-        if (vp === "m" && t === "Start with the capture flow?") await snap("r-wrap"); // ghost Wrap it up, 1+ settled
+        if (vp === "m" && t === "Start with the capture flow?") await snap("r-wrap"); // Send and wrap up in the round bar (#39)
         await pg.getByRole("button", { name: /Send round/ }).click();
         await pg.getByText(t).first().waitFor({ state: "detached", timeout: 15000 });
       }
       await pg.getByText("Back up nightly?").first().waitFor({ timeout: 15000 });
-      await pg.locator(".bar").getByRole("button", { name: "Wrap it up" }).click();
+      await pg.getByRole("button", { name: "More" }).click();
+      await pg.getByRole("menuitem", { name: "Wrap it up" }).click();
       await pg.getByRole("heading", { name: /^Wrap up with \d+ still open\?$/ }).waitFor({ timeout: 15000 });
       await snap("s-early");
       await pg.getByRole("button", { name: /Yes, plate it/ }).click();

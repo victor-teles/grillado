@@ -5,7 +5,8 @@ import os from "node:os";
 import { buildRoundPrompt, nextRound } from "../src/core/engine.ts";
 import type { ProviderAdapter, ProviderEvent, RunRequest } from "../src/core/providers/types.ts";
 import { type Session, askMore, atCap, createSession, currentRound, stopAtCap, submitAnswers } from "../src/core/session.ts";
-import { capAction, preparing, roundCounter, roundStatus, settledLine } from "../web/src/app/rounds.ts";
+import { COPY } from "../web/src/app/copy.ts";
+import { capAction, preparing, roundCounter, roundStatus, sendAndWrap, settledLine } from "../web/src/app/rounds.ts";
 
 /** A view as the browser gets it: k rounds, with the given ones flagged as re-asks. */
 const view = (k: number, over: Record<string, unknown> = {}, reasks: number[] = []) =>
@@ -166,12 +167,33 @@ describe("past a lowered cap (PR44-rounds M1)", () => {
   });
 
   test("Waiting and a re-ask past a lowered cap never read as the extra round", () => {
-    expect(preparing(view(3))).toBe("Preparing round 4 · the cap is 2");
+    expect(preparing(view(3))).toBe("Preparing round 4 · the cap is 2 · reading your answers");
     const r = roundCounter(view(4, {}, [4]), 4);
     expect(`${r.lead} · ${r.tag}`).toBe("Round 3 · asking again");
     // A granted extra round is still the extra round, and a later round past it is not.
     expect(roundCounter(view(3, { extra: true }), 3)).toEqual({ lead: "Extra round", tag: "last round", strong: true });
     expect(roundCounter(view(4, { extra: true }), 4)).toEqual({ lead: "Round 4", tag: "the cap is 2" });
     expect(capAction(view(3, { extra: true }))).toBeNull();
+  });
+});
+
+describe("rounds PR 4 copy (#39, PR44 nice-to-haves)", () => {
+  test("Send and wrap up shows on rounds 1 to N−1 only, never on round N or the extra round", () => {
+    expect(sendAndWrap(view(1), 1)).toBe(true);
+    expect(sendAndWrap(view(2), 2)).toBe(false);
+    expect(sendAndWrap(view(3, { extra: true }), 3)).toBe(false);
+    // A re-ask sits in the round it repeats: below the cap it shows, at the cap it doesn't.
+    expect(sendAndWrap(view(2, {}, [2]), 2)).toBe(true);
+    expect(sendAndWrap(view(3, {}, [3]), 3)).toBe(false);
+    expect(sendAndWrap(view(1, { maxRounds: 1 }), 1)).toBe(false);
+  });
+
+  test("an extra round with nothing to ask names it", () => {
+    expect(roundStatus(view(2, { extra: true, stop: "empty" }), "Claude Code")).toBe("Extra round · Claude Code has nothing left to ask.");
+    expect(roundStatus(view(1, { stop: "empty" }), "Claude Code")).toBe("Round 1 of 2 · Claude Code has nothing left to ask.");
+  });
+
+  test("the re-ask sub line (REASK-SUB)", () => {
+    expect(COPY.reaskSub).toBe("You reopened these, or something they depend on changed.");
   });
 });

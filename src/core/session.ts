@@ -403,11 +403,16 @@ export function editPlan(s: Session, markdown: unknown) {
   touch(s);
 }
 
-/** "Wrap it up": stop asking; the plan lists what's still open (user story 8). */
-export function wrapUp(s: Session): void {
+/**
+ * "Wrap it up": stop asking; the plan lists what's still open (user story 8). A wrap with the last allowed
+ * round already saved (round N, or the extra round) lands on the cap Confirm (#38).
+ */
+export function wrapUp(s: Session, max = DEFAULT_MAX_ROUNDS): void {
   if (s.status !== "answering" && s.status !== "asking") throw new Error("Nothing to wrap up.");
   s.wrappedUp = true;
-  s.stop = undefined;
+  // A wrap before the granted extra round saved anything gives the grant back (#38, PR45 M1): Confirm is the plain cap Confirm again.
+  if (s.extra && roundsSaved(s) <= max) s.extra = undefined;
+  s.stop = atCap(s, max) ? "cap" : undefined;
   s.status = "confirm";
   s.error = undefined;
   touch(s);

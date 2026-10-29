@@ -24,10 +24,13 @@ export const atCap = (s: CapView) => capReached(s) && !owedKeys(s).length;
 
 /** Confirm's meta line: it stands in for the last round's agent summary. None after a wrap. */
 export function roundStatus(s: CapView & Pick<SessionView, "stop" | "wrappedUp">, agent: string): string | undefined {
-  if (s.wrappedUp || !s.stop) return undefined;
+  // A wrap below the cap has no stop and no line; a wrap on round N or the extra round is a cap stop (#38).
+  if (!s.stop) return undefined;
   const k = counted(s);
   const n = s.maxRounds;
   if (isExtra(s, k)) return "You’ve used the extra round.";
+  // The grant was made but the agent had nothing to ask, so no extra round was saved (PR44 edge b).
+  if (s.stop === "empty" && s.extra && k === n) return `Extra round · ${agent} has nothing left to ask.`;
   // Only a relaunch with a lower --max-rounds gets here: re-asks past the cap don't count.
   if (k > limit(s)) return `${k} rounds done. The cap is ${n}.`;
   if (s.stop === "cap") return `Round ${n} of ${n} is done.`;
@@ -56,9 +59,15 @@ export function preparing(s: CapView): string {
   if (owedKeys(s).length) return "Asking again · reading your answers";
   const k = counted(s) + 1;
   if (isExtra(s, k)) return "Preparing the extra round · reading your answers";
-  if (k > s.maxRounds) return `Preparing round ${k} · the cap is ${s.maxRounds}`;
+  if (k > s.maxRounds) return `Preparing round ${k} · the cap is ${s.maxRounds} · reading your answers`;
   return `Preparing round ${k} of ${s.maxRounds} · reading your answers`;
 }
+
+/**
+ * Send and wrap up (#39): on rounds 1 to N−1 only. On round N and the extra round Send round already
+ * lands on Confirm. A re-ask counts as the round it sits in.
+ */
+export const sendAndWrap = (s: CapView, roundN: number) => !s.extra && s.rounds.filter((x) => x.n <= roundN && !x.reask).length < s.maxRounds;
 
 /** Confirm's second button at the cap (#37, PR43 review): the extra round, or the owed decisions by name. */
 export function capAction(s: CapView & Pick<SessionView, "decisions">): { label: string; action: "ask-more" | "keep-going" } | null {

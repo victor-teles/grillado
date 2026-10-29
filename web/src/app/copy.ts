@@ -19,6 +19,8 @@ export const COPY = {
   resolvedRounds: "Rounds {first}–{last}",
   // Long runs (Grok CLI 1.0.70 rounds take minutes). For every agent: any of them can be slow on a big session.
   roundWaitNote: "Rounds can take a few minutes.",
+  /** The sub line on a re-ask round (Designer REASK-SUB); new-question rounds keep "Each one opened up…". */
+  reaskSub: "You reopened these, or something they depend on changed.",
   // Plating: the same quiet note as rounds, instead of "This one is taking a while" at 60 s (#26 follow-ups 3; worded like rounds, review-pr27 nice 5).
   platingWaitNote: "Plans can take a few minutes.",
   timeoutTitle: "{agent} is running slow",
