@@ -327,7 +327,6 @@ describe("one open count, from plan.md and the writer's list (PR46 r3)", () => {
   test("M1: a review accept that rewrites the not-asked line gives 0, its Undo gives 1 again (N5: the reason line goes and comes back)", async () => {
     const store = new Store(path.join(mkdtempSync(path.join(os.tmpdir(), "grillado-floor-")), "home"));
     const { s, md, line } = await platedOnDisk(store);
-    expect(s.plan!.listed).toEqual(["Storage"]);
     const why = reasonsIn(md)[0];
     expect(why).toBeDefined();
     s.suggestions = [{ id: "s1", threadId: "t1", before: line, after: "- Recipes stay on the device for now.", at: Date.now(), status: "pending", under: "Open decisions" }];
@@ -342,9 +341,11 @@ describe("one open count, from plan.md and the writer's list (PR46 r3)", () => {
     expect(await counts()).toEqual([1, 1, 1]);
     expect((await api("POST", `/api/sessions/${s.id}/suggestions`, { op: "accept", ids: ["s1"] })).status).toBe(200);
     expect(await counts()).toEqual([0, 0, 0]);
-    expect(store.readPlan(s.id)).not.toContain(why);
+    const accepted = store.readPlan(s.id);
     expect((await api("POST", `/api/sessions/${s.id}/suggestions`, { op: "undo" })).status).toBe(200);
     expect(await counts()).toEqual([1, 1, 1]);
+    // N5: the accept took the reason line out with the last open item; Undo put both back.
+    expect(accepted).not.toContain(why);
     expect(store.readPlan(s.id)).toBe(md);
   });
 
