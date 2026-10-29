@@ -140,6 +140,28 @@ describe("round cap (#33)", () => {
     expect(atCap(s, 3)).toBe(false);
   });
 
+  test("a round asked while a reopened or stale decision is owed is a re-ask and doesn't count", () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    ask(s, [q("a")]);
+    answerAll(s);
+    ask(s, [q("b")]);
+    answerAll(s);
+    expect(atCap(s, 2)).toBe(true);
+    s.reopened = ["a"];
+    expect(atCap(s, 2)).toBe(false);
+    ask(s, [q("a")]);
+    answerAll(s);
+    s.stale = { b: { key: "b", label: "b", title: "b", answer: "x", round: 2, dependsOn: [], reason: "a changed" } as any };
+    expect(atCap(s, 2)).toBe(false);
+    ask(s, [q("b")]);
+    delete s.stale!.b;
+    answerAll(s);
+    expect(s.rounds.map((r) => !!r.reask)).toEqual([false, false, true, true]);
+    expect(roundsSaved(s)).toBe(2);
+    expect(atCap(s, 2)).toBe(true);
+    expect(atCap(s, 3)).toBe(false);
+  });
+
   test("at the cap Confirm opens with the cap as its reason, and Keep going is refused", () => {
     const s = createSession({ idea: "x", provider: "claude" });
     ask(s, [q("a")]);

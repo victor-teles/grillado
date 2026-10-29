@@ -188,19 +188,61 @@ describe("the cap (#33)", () => {
     expect(s2.error.message).toBe("Interrupted. Retry to continue.");
   });
 
-  test("reopened decisions are re-asked past the cap, then Confirm", async () => {
+  test("Reopen on the cap Confirm: the re-ask runs, doesn't count, and Confirm reads Round 2 of 2 again", async () => {
+    const { roundStatus } = await import("../web/src/app/rounds.ts");
     const t = await start("claude");
     const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
     await t.answer(sid);
     await t.answer(sid);
-    await t.idle(sid, "confirm");
+    expect(roundStatus(await t.idle(sid, "confirm"), "Claude Code")).toBe("Round 2 of 2 is done.");
     expect((await t.api("POST", `/api/sessions/${sid}/reopen`, { key: "platform" })).status).toBe(200);
     await t.answer(sid); // platform again
     await t.answer(sid); // storage, which depended on it
     const s = await t.idle(sid, "confirm");
     expect(s.rounds).toHaveLength(4);
+    expect(s.rounds.map((r: any) => !!r.reask)).toEqual([false, false, true, true]);
+    expect(s.rounds.filter((r: any) => !r.reask)).toHaveLength(2);
     expect(s.stop).toBe("cap");
     expect(t.runs()).toBe(4);
+    expect(roundStatus(s, "Claude Code")).toBe("Round 2 of 2 is done.");
+    expect(roundStatus(s, "Claude Code")).not.toBe("3 rounds done. The cap is 2.");
+    // The repair didn't buy a new round: Keep going is still refused.
+    expect((await t.api("POST", `/api/sessions/${sid}/keep-going`)).status).toBe(400);
+  });
+
+  test("a relaunch with a lower --max-rounds is the one case that reads \"{s} rounds done\"", async () => {
+    const { roundStatus } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude", { maxRounds: 3, extra: { FAKE_MODE: "long" } });
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    for (let i = 0; i < 3; i++) await t.answer(sid);
+    expect(roundStatus(await t.idle(sid, "confirm"), "Claude Code")).toBe("Round 3 of 3 is done.");
+    await t.server.close();
+    servers.length = 0;
+    const b = await start("claude", { store: t.store });
+    const s = (await b.api("GET", `/api/sessions/${sid}`)).json;
+    expect(s).toMatchObject({ status: "confirm", stop: "cap", maxRounds: 2 });
+    expect(roundStatus(s, "Claude Code")).toBe("3 rounds done. The cap is 2.");
+  });
+
+  test("an older session without reask flags or stop loads, and every round it has counts", async () => {
+    const { roundStatus, atCap } = await import("../web/src/app/rounds.ts");
+    const t = await start("claude");
+    const sid = (await t.api("POST", "/api/sessions", { idea: "x" })).json.id;
+    await t.answer(sid);
+    await t.answer(sid);
+    await t.idle(sid, "confirm");
+    await t.server.close();
+    servers.length = 0;
+    const saved: any = t.store.load(sid)!;
+    for (const r of saved.rounds) delete r.reask;
+    delete saved.stop;
+    t.store.save(saved);
+    const b = await start("claude", { store: t.store });
+    const s = (await b.api("GET", `/api/sessions/${sid}`)).json;
+    expect(s.status).toBe("confirm");
+    expect(atCap(s)).toBe(true);
+    expect(roundStatus(s, "Claude Code")).toBeUndefined(); // no stop recorded: no line, as before
+    expect((await b.api("POST", `/api/sessions/${sid}/keep-going`)).status).toBe(400);
   });
 });
 
@@ -226,6 +268,10 @@ describe("Confirm's status line (#33)", () => {
     expect(roundStatus(view(2, { stop: "cap" }), "Grok")).toBe("Round 2 of 2 is done.");
     expect(roundStatus(view(1, { stop: "empty" }), "Grok")).toBe("Round 1 of 2 · Grok has nothing left to ask.");
     expect(roundStatus(view(4, { stop: "cap" }), "Grok")).toBe("4 rounds done. The cap is 2.");
+    const reasked = view(4, { stop: "cap" });
+    reasked.rounds[2].reask = reasked.rounds[3].reask = true;
+    expect(roundStatus(reasked, "Grok")).toBe("Round 2 of 2 is done.");
+    expect(atCap(reasked)).toBe(true);
     expect(roundStatus(view(1, { wrappedUp: true }), "Grok")).toBeUndefined();
     expect(atCap(view(2))).toBe(true);
     expect(atCap(view(1))).toBe(false);

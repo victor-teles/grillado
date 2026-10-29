@@ -27,6 +27,7 @@ import {
   reaskStale,
   saveAnswerEdits,
   DEFAULT_MAX_ROUNDS,
+  owed,
   atCap,
   keepGoing,
   stopAtCap,
@@ -816,7 +817,7 @@ export class GrilladoServer {
       return this.changed(s);
     }
     const n = s.rounds.length + 1;
-    const rec = this.record(s, "round", { round: n, ...(s.reopened.length && s.rounds.length ? { reask: true } : {}) }, retry ? `session:${s.id}` : undefined);
+    const rec = this.record(s, "round", { round: n, ...(owed(s) && s.rounds.length ? { reask: true } : {}) }, retry ? `session:${s.id}` : undefined);
     this.lastRun.set(`session:${s.id}`, rec.id);
     this.run(s, async (c) => {
       rec.step("Read the session", "{agent} is picking questions");

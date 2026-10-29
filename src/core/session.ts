@@ -34,6 +34,11 @@ export interface Round {
   answers?: Answer[];
   askedAt: string;
   answeredAt?: string;
+  /**
+   * Asked while something was owed (a reopened or stale decision): a repair the user asked for.
+   * It runs past the cap and doesn't count toward it (#33, review of #42). Older rounds lack it and count.
+   */
+  reask?: boolean;
 }
 
 export interface Decision {
@@ -236,7 +241,14 @@ export function applyRound(s: Session, reply: RoundReply): void {
       seen.add(u.key);
       return true;
     });
-    s.rounds.push({ n: s.rounds.length + 1, questions: reply.questions, upcoming, summary: reply.summary, askedAt: new Date().toISOString() });
+    s.rounds.push({
+      n: s.rounds.length + 1,
+      questions: reply.questions,
+      upcoming,
+      summary: reply.summary,
+      askedAt: new Date().toISOString(),
+      ...(owed(s) ? { reask: true } : {}),
+    });
     s.reopened = [];
     s.status = "answering";
   }
@@ -368,15 +380,18 @@ export function wrapUp(s: Session): void {
 /** Rounds of questions when `--max-rounds` isn't given (#32, PO override): the same for every agent. */
 export const DEFAULT_MAX_ROUNDS = 2;
 
-/** Rounds that count toward the cap (#33): a round counts once its question batch is saved. */
-export const roundsSaved = (s: Session): number => s.rounds.length;
+/** Something the user sent back is waiting to be asked again: a reopened or a stale decision. */
+export const owed = (s: Session): boolean => s.reopened.length > 0 || Object.keys(s.stale ?? {}).length > 0;
+
+/** Rounds that count toward the cap (#33): saved question batches, except re-asks (`reask`). */
+export const roundsSaved = (s: Session): number => s.rounds.filter((r) => !r.reask).length;
 
 /**
  * The cap gate (#33): `max` saved rounds and nothing owed. Decisions the user reopened or changed
  * (stale, or queued to re-ask) are owed: they run past the cap, because the user asked for them.
  */
 export function atCap(s: Session, max: number): boolean {
-  return roundsSaved(s) >= max && !s.reopened.length && !Object.keys(s.stale ?? {}).length;
+  return roundsSaved(s) >= max && !owed(s);
 }
 
 /** The last allowed round is answered: Confirm opens with no question-asking agent call (#33). */

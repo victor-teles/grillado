@@ -145,6 +145,8 @@ export interface Round {
   answers?: Answer[];
   askedAt: string;
   answeredAt?: string;
+  /** A re-ask of reopened or stale decisions: it doesn't count toward the cap (#33). */
+  reask?: boolean;
 }
 export interface Decision {
   key: string;

@@ -990,6 +990,17 @@ try {
     check("#33: Keep going is gone at the cap", (await pg.getByRole("button", { name: "Keep going on a branch" }).count()) === 0);
     const s5json = JSON.parse(readFileSync(path.join(e5.GRILLADO_HOME, "sessions", readdirSync(path.join(e5.GRILLADO_HOME, "sessions"))[0], "session.json"), "utf8"));
     check("#33: six saved rounds, stopped by the cap", s5json.rounds.length === 6 && s5json.stop === "cap", `${s5json.rounds.length} ${s5json.stop}`);
+    // Reopen at the cap is a repair: its re-ask round runs, doesn't count, and Confirm reads the same line again (review of #42).
+    await pg.getByRole("button", { name: "Reopen Launch" }).click();
+    await pg.getByRole("alertdialog", { name: "Reopen “Launch”?" }).getByRole("button", { name: "Reopen" }).click();
+    await pg.getByText("Launch to friends first?").first().waitFor({ timeout: 15_000 });
+    await pg.keyboard.press("Enter");
+    await pg.getByRole("heading", { name: "Is it done?" }).waitFor({ timeout: 15_000 });
+    await pg.getByTestId("round-status").waitFor({ timeout: 15_000 });
+    const st5b = await pg.getByTestId("round-status").textContent();
+    check("#33: after a re-ask at the cap, Confirm still reads round 6 of 6", st5b === "Round 6 of 6 is done.", st5b);
+    const s5b = JSON.parse(readFileSync(path.join(e5.GRILLADO_HOME, "sessions", readdirSync(path.join(e5.GRILLADO_HOME, "sessions"))[0], "session.json"), "utf8"));
+    check("#33: the re-ask round is saved with reask and isn't counted", s5b.rounds.length === 7 && s5b.rounds[6].reask === true && s5b.rounds.filter((r) => !r.reask).length === 6, s5b.rounds.map((r) => !!r.reask).join(","));
     await ctx.close();
     await stop(s5, "SIGINT");
   }
