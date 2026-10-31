@@ -1,6 +1,6 @@
 {
   "name": "grillado",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Turn a raw idea into a plan you understand, one round of questions at a time. Runs on your local coding agent CLI.",
   "license": "MIT",
   "author": "Victor Mesquita",
