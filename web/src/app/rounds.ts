@@ -4,6 +4,13 @@ import type { SessionView } from "./types.ts";
 
 type CapView = Pick<SessionView, "rounds" | "reopened" | "stale" | "maxRounds" | "extra">;
 
+export function finishingPlanRound(s: Pick<SessionView, "rounds" | "plan">, roundN: number): boolean {
+  const round = s.rounds.find((item) => item.n === roundN);
+  if (!s.plan || !round?.reask) return false;
+  const asked = new Set(s.rounds.filter((item) => item.n < roundN).flatMap((item) => item.questions.map((question) => question.key)));
+  return round.questions.some((question) => !asked.has(question.key));
+}
+
 /** Rounds that count toward the cap: re-asks of reopened or stale decisions don't. */
 export const counted = (s: Pick<CapView, "rounds">) => s.rounds.filter((r) => !r.reask).length;
 

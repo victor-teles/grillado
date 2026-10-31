@@ -77,6 +77,7 @@ export type Validated<T> = { ok: true; value: T } | { ok: false; code: FailureCo
 
 /** Compact, stateless snapshot of the interview: each call resends it (spec §9.3). */
 export function stateFor(s: Session) {
+  const pendingQuestions = openFloor(s).filter((item) => !item.asked && s.reopened.includes(item.key));
   return {
     idea: s.idea,
     context: s.context || undefined,
@@ -91,6 +92,7 @@ export function stateFor(s: Session) {
       ...(d.dependsOn.length ? { dependsOn: d.dependsOn } : {}),
     })),
     reopened: s.reopened.length ? s.reopened : undefined,
+    pendingQuestions: pendingQuestions.length ? pendingQuestions : undefined,
     keepGoing: s.keepGoing || undefined,
     ...userState(s),
   };
@@ -127,6 +129,7 @@ export function buildRoundPrompt(s: Session, max = DEFAULT_MAX_ROUNDS): string {
   else if (state.keepGoing)
     lines.push("The user wants to keep going: look for branches that were left shallow and ask the next frontier there.");
   else lines.push("Recompute the frontier from the settled decisions and ask the next round, or reply frontier_empty.");
+  if (state.pendingQuestions?.length) lines.push("The pendingQuestions topics were left open in the saved plan and never asked. Turn them into questions using their keys and labels. Keep all settled answers.");
   lines.push(...budgetLines(s, max));
   if (state.userQuestions)
     lines.push(

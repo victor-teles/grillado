@@ -158,6 +158,12 @@ function roundReply() {
   if (mode === "plan-early-once" && once("plan")) {
     return { type: "plan", title: "Too early", markdown: "# nope", decisions: [], openDecisions: [] };
   }
+  if (state.pendingQuestions?.length) {
+    const questions = state.pendingQuestions.slice(0, 6).map((item) => question(
+      TEMPLATES.find((template) => template.key === item.key) ?? { key: item.key, label: item.label, title: `Decide ${item.label}?`, deps: [], options: yn },
+    ));
+    return { type: "ask_round", summary: "Finish the open decisions", questions, upcoming: [] };
+  }
   const ready = TEMPLATES.filter((t) => !settled.has(t.key) && t.deps.every((d) => settled.has(d)));
   if (ready.length) {
     const q = ready.map(question);

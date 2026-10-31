@@ -32,6 +32,7 @@ import {
   owed,
   atCap,
   keepGoing,
+  resumePlan,
   askMore,
   stopAtCap,
   reopen,
@@ -1372,6 +1373,13 @@ export class GrilladoServer {
       }
       case "keep-going": {
         keepGoing(s, this.maxRounds);
+        this.startRound(s);
+        break;
+      }
+      case "resume-plan": {
+        if (busy) throw new Error("The agent is still working.");
+        if (!s.plan || body?.base !== textHash(s.plan.markdown)) throw new Error("Save the plan before continuing.");
+        resumePlan(s);
         this.startRound(s);
         break;
       }

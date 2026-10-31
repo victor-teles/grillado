@@ -662,6 +662,7 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .doc{padding:20px 20px 120px}
   .pbanner{margin:4px 12px 8px;grid-template-columns:20px minmax(0,1fr)}
   .pbanner-acts{grid-column:1/-1;justify-content:flex-end}
+  .plan-open-actions .btn{min-height:44px;width:100%}
   .banner{grid-template-columns:20px minmax(0,1fr)}
   .banner .acts{grid-column:1/-1;justify-content:flex-end}
   .drow{grid-template-columns:minmax(0,1fr) auto;row-gap:2px;cursor:pointer}

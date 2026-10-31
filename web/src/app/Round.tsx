@@ -15,7 +15,7 @@ import {
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
 import { COPY } from "./copy";
-import { preparing, roundCounter, sendAndWrap } from "./rounds";
+import { finishingPlanRound, preparing, roundCounter, sendAndWrap } from "./rounds";
 import { waitLabel } from "./wait";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
@@ -174,6 +174,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
   };
 
   const first = round.n === 1;
+  const finishing = finishingPlanRound(session, round.n);
   return (
     <AgentQuestion
       className="main"
@@ -199,7 +200,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
             <h1>{n === 1 ? "1 decision is ready" : `${n} decisions are ready`}</h1>
             <RoundCounter session={session} round={round} />
             <p>
-              {first ? "The first calls on your idea." : round.reask ? COPY.reaskSub : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
+              {finishing ? "These decisions were left open in your plan." : first ? "The first calls on your idea." : round.reask ? COPY.reaskSub : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
             </p>
           </div>
           <AgentQuestionStack className="cards">
@@ -238,7 +239,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
 
 /** "Round {k} of {N}" under the title, in the slot the waiting status line uses (#36). */
 function RoundCounter({ session, round }: { session: SessionView; round: Round }) {
-  const c = roundCounter(session, round.n);
+  const c: ReturnType<typeof roundCounter> = finishingPlanRound(session, round.n) ? { lead: "Finishing your plan" } : roundCounter(session, round.n);
   return (
     <p className="rmeta" data-testid="round-counter">
       {c.lead}

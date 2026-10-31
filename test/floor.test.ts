@@ -9,10 +9,12 @@ import { GrilladoServer } from "../src/cli/server.ts";
 import { Store } from "../src/cli/store.ts";
 import { synthesize } from "../src/core/engine.ts";
 import { buildTree } from "../src/core/tree.ts";
-import { openFloor, reasonLine, stopReason } from "../src/core/floor.ts";
+import { openFloor, reasonLine, stopReason, unaskedPlanItems } from "../src/core/floor.ts";
+import { buildRoundPrompt } from "../src/core/engine.ts";
+import type { Question } from "../src/core/schema.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
 import type { ProviderAdapter, ProviderEvent, RunRequest } from "../src/core/providers/types.ts";
-import { type Session, answerOpenDecision, applyRound, askMore, createSession, editPlan, keepGoing, setPlan, stopAtCap, submitAnswers, wrapUp } from "../src/core/session.ts";
+import { type Session, answerOpenDecision, applyRound, askMore, atCap, createSession, editPlan, keepGoing, resumePlan, setPlan, stopAtCap, submitAnswers, wrapUp } from "../src/core/session.ts";
 import { textHash } from "../src/core/text-hash.ts";
 import { cardAnswer, citeAnswer, restTag, whoLine } from "../web/src/app/editor/decision-meta.ts";
 import { confirmCounts, planCounts, stillOpen } from "../web/src/app/counts.ts";
@@ -157,6 +159,52 @@ describe("the open floor (#40)", () => {
     expect(planCounts(JSON.parse(JSON.stringify(s)), out.markdown).open).toBe(3);
     expect(s.plan.openDecisions).toHaveLength(3);
     expect(decisionsOf(s).open).toHaveLength(3);
+  });
+});
+
+describe("finishing the unasked decisions from a saved plan", () => {
+  test("resumes beyond the used extra round, keeps the plan and answers, and asks only the requested topics", async () => {
+    const s = twoRounds();
+    answerAll(s);
+    stopAtCap(s);
+    askMore(s);
+    ask(s, ["sync"]);
+    answerAll(s);
+    stopAtCap(s);
+    const out = await write(s);
+    setPlan(s, { title: "Plan", markdown: out.markdown, path: "/tmp/plan.md", openDecisions: out.open });
+    const decisions = structuredClone(s.decisions);
+    expect(unaskedPlanItems(s, out.markdown).map((item) => item.key)).toEqual(["export"]);
+    expect(atCap(s, 2)).toBe(true);
+
+    resumePlan(s);
+    expect(s.status).toBe("asking");
+    expect(s.reopened).toEqual(["export"]);
+    expect(s.plan?.markdown).toBe(out.markdown);
+    expect(s.decisions).toEqual(decisions);
+    expect(atCap(s, 2)).toBe(false);
+    expect(buildRoundPrompt(s)).toContain('"pendingQuestions":[{"key":"export","label":"Export"');
+    ask(s, ["export", "unrequested"]);
+    expect(s.rounds.at(-1)?.questions.map((question) => question.key)).toEqual(["export"]);
+    expect(s.rounds.at(-1)?.reask).toBe(true);
+    answerAll(s);
+    expect(atCap(s, 2)).toBe(true);
+    expect((await write(s)).open).toEqual([]);
+  });
+
+  test("does not resume a topic removed from the plan or replace unanswered questions", async () => {
+    const s = twoRounds();
+    const out = await write(s);
+    setPlan(s, { title: "Plan", markdown: out.markdown, path: "/tmp/plan.md", openDecisions: out.open });
+    expect(() => resumePlan(s)).toThrow("Answer the open questions first.");
+    s.status = "answering";
+    answerAll(s);
+    s.status = "plated";
+    const removed = s.plan!.markdown.replace(/^.*(?:Sync|Export).*\n/gm, "");
+    expect(unaskedPlanItems(s, removed)).toEqual([]);
+    s.plan!.markdown = removed;
+    expect(() => resumePlan(s)).toThrow("There are no remaining topics to ask about.");
+    expect(s.status).toBe("plated");
   });
 });
 
@@ -313,15 +361,48 @@ async function platedOnDisk(store: Store) {
   return { s, md: out.markdown, line: "- Storage: not asked before the interview stopped." };
 }
 
-async function serverOn(store: Store) {
+async function serverOn(store: Store, maxRounds = 2) {
   const env = fakeEnv(fakeBinDir(["claude"]), {});
-  const server = new GrilladoServer({ adapters: createAdapters({ env }), store, webDir: webDir(), port: 0, strictPort: true, provider: "claude" });
+  const server = new GrilladoServer({ adapters: createAdapters({ env }), store, webDir: webDir(), port: 0, strictPort: true, provider: "claude", maxRounds });
   servers.push(server);
   await server.detect();
   await server.listen();
   const h = { "x-grillado-token": server.token, "content-type": "application/json" };
   return (method: string, p: string, body?: unknown) => request(server.port, method, p, h, body);
 }
+
+test("resume-plan saves existing work, asks past the extra round, and returns a completed plan", async () => {
+  const store = new Store(path.join(mkdtempSync(path.join(os.tmpdir(), "grillado-resume-")), "home"));
+  const { s, md } = await platedOnDisk(store);
+  ask(s, ["scope"]);
+  answerAll(s);
+  stopAtCap(s);
+  s.status = "plated";
+  s.extra = true;
+  store.save(s);
+  const api = await serverOn(store, 1);
+  const endpoint = `/api/sessions/${s.id}`;
+  expect((await api("POST", `${endpoint}/resume-plan`, { base: "old-version" })).status).toBe(400);
+  expect((await api("POST", `${endpoint}/resume-plan`, { base: textHash(md) })).status).toBe(200);
+  const answering = await waitFor(async () => {
+    const current = (await api("GET", endpoint)).json;
+    return !current.busy && current.status === "answering" ? current : undefined;
+  });
+  expect(answering.rounds.at(-1).questions.map((question: Question) => question.key)).toEqual(["storage"]);
+  expect(answering.decisions.platform.answer).toBe("Option a");
+  expect(answering.decisions.scope.answer).toBe("Option a");
+  expect(store.readPlan(s.id)).toBe(md);
+  const round = answering.rounds.at(-1);
+  expect((await api("POST", `${endpoint}/answers`, { round: round.n, answers: round.questions.map((question: Question) => ({ questionId: question.key, optionId: question.recommendedOptionId })) })).status).toBe(200);
+  expect((await api("GET", endpoint)).json.status).toBe("confirm");
+  expect((await api("POST", `${endpoint}/confirm`)).status).toBe(200);
+  const finished = await waitFor(async () => {
+    const current = (await api("GET", endpoint)).json;
+    return !current.busy && current.status === "plated" ? current : undefined;
+  });
+  expect(finished.plan.openDecisions).toEqual([]);
+  expect(planCounts(finished, finished.plan.markdown).open).toBe(0);
+});
 
 describe("one open count, from plan.md and the writer's list (PR46 r3)", () => {
   test("M1: a review accept that rewrites the not-asked line gives 0, its Undo gives 1 again (N5: the reason line goes and comes back)", async () => {

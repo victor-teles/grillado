@@ -838,6 +838,7 @@ try {
     writeFileSync(planFile2, fileSide);
     const banner2 = page.getByRole("alert").filter({ hasText: "plan.md changed outside Grillado" });
     await banner2.waitFor({ timeout: 5000 });
+    await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
     const axeMC = await new AxeBuilder({ page }).analyze();
     check("axe: conflict banner (mobile, dark)", axeMC.violations.length === 0, axeIds(axeMC));
     await shot(page, "conflict-m-dark");
@@ -1097,8 +1098,9 @@ try {
     const firstCard = pg.locator("[data-testid=plan] .dz").first();
     check("plan with open decisions: the first card in the document is an open one", (await firstCard.getAttribute("data-state")) === "open");
     const answerBtn = firstCard.getByRole("button", { name: "Answer" });
-    check("open decisions start collapsed with a quiet 'Answer' button", (await answerBtn.count()) === 1 && !(await answerBtn.evaluate((b) => b.classList.contains("primary"))) && (await pg.locator(".planv .btn.primary:not(.copy-md)").count()) === 0);
-    const blue = await pg.locator(".copy-md").evaluate((b) => getComputedStyle(b).backgroundColor);
+    check("open decisions start collapsed with a quiet 'Answer' button", (await answerBtn.count()) === 1 && !(await answerBtn.evaluate((b) => b.classList.contains("primary"))) && (await pg.locator(".planv .dz .btn.primary").count()) === 0);
+    const blue = await pg.getByRole("button", { name: "Answer remaining questions" }).evaluate((b) => getComputedStyle(b).backgroundColor);
+    const copyBg = await pg.locator(".copy-md").evaluate((b) => getComputedStyle(b).backgroundColor);
     const primaryBg = await pg.evaluate(() => {
       const el = document.createElement("span");
       el.style.background = "var(--primary)";
@@ -1107,7 +1109,7 @@ try {
       el.remove();
       return c;
     });
-    check("Copy Markdown stays blue while open decisions show", blue === primaryBg, `${blue} vs ${primaryBg}`);
+    check("answering the open decisions is primary and Copy is quiet", blue === primaryBg && copyBg !== primaryBg, `${blue} vs ${primaryBg}`);
     const openN = await pg.locator("[data-testid=plan] .dz[data-state=open]").count();
     const status = ((await pg.getByTestId("save-status").textContent()) ?? "").trim();
     check("save status reads 'Saved · n open'", status === `Saved · ${openN} open`, status);
@@ -1134,6 +1136,53 @@ try {
     check("axe: Decisions tab with open decisions, resolved collapsed (mobile)", axeD.violations.length === 0, axeIds(axeD));
     await ctx.close();
     await stop(s6, "SIGINT");
+  }
+
+  // A saved plan can finish topics that were never asked, even after the extra round was used.
+  {
+    const e7 = env(fakeBins(["claude"]), { FAKE_MODE: "long" });
+    const s7 = startServer(["--no-open", "--max-rounds", "2"], e7);
+    const { url: u7 } = await s7.url;
+    const ctx = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
+    const pg = await ctx.newPage();
+    await pg.goto(u7);
+    await pg.getByRole("textbox", { name: "What are you planning?" }).fill("A shared household list");
+    await pg.keyboard.press("Enter");
+    await pg.getByRole("button", { name: "Send round", exact: true }).click();
+    await pg.getByText("Start with the capture flow?").waitFor();
+    await pg.getByRole("button", { name: "Send round", exact: true }).click();
+    await pg.getByRole("button", { name: "Ask 1 more round" }).click();
+    await pg.getByText("Include search in v1?").waitFor();
+    await pg.getByRole("button", { name: "Send round", exact: true }).click();
+    await pg.getByRole("button", { name: "Yes, plate it" }).click();
+    await pg.getByTestId("plan").waitFor();
+    const resume = pg.getByRole("button", { name: "Answer remaining questions" });
+    check("a plan with never-asked topics has a visible answer action", await resume.isVisible());
+    await shot(pg, "plan-unasked-desktop");
+    await pg.getByRole("tab", { name: /Decisions/ }).click();
+    const pending = pg.getByRole("region", { name: "Not asked yet" });
+    check("Decisions lists the never-asked Sync topic", await pending.getByText("Sync", { exact: true }).isVisible());
+    check("resolved answers stay collapsed while an unasked topic is open", await pg.locator(".acc-h").getAttribute("aria-expanded") === "false");
+    const desktopAxe = await new AxeBuilder({ page: pg }).analyze();
+    check("axe: never-asked decisions (desktop)", desktopAxe.violations.length === 0, axeIds(desktopAxe));
+    await pg.setViewportSize({ width: 320, height: 700 });
+    const hit = await resume.boundingBox();
+    check("the answer action fits a 320px phone", hit && hit.x >= 0 && hit.x + hit.width <= 320 && hit.height >= 44, JSON.stringify(hit));
+    await shot(pg, "plan-unasked-mobile");
+    const phoneAxe = await new AxeBuilder({ page: pg }).analyze();
+    check("axe: never-asked decisions (phone)", phoneAxe.violations.length === 0, axeIds(phoneAxe));
+    await resume.click();
+    await pg.getByText("Sync across devices?").waitFor({ timeout: 15_000 });
+    check("the answer action asks the pending topic past the used extra round", await pg.getByTestId("question").count() === 1);
+    check("resumed questions say they are finishing the saved plan", await pg.getByTestId("round-counter").textContent() === "Finishing your plan");
+    await pg.getByRole("button", { name: "Send round", exact: true }).click();
+    await pg.getByRole("button", { name: "Yes, plate it" }).click();
+    await pg.getByTestId("plan").waitFor();
+    check("the updated plan has no open decisions", !((await pg.getByRole("tab", { name: /Decisions/ }).textContent()) ?? "").includes("open") && await resume.count() === 0);
+    await pg.getByRole("button", { name: "Plan actions" }).click();
+    check("issue creation becomes available after the remaining question is answered", await pg.getByRole("menuitem", { name: "Create issues…" }).isEnabled());
+    await ctx.close();
+    await stop(s7);
   }
 
   // ---------------------------------------------------------------- no agent → empty state (AC2)

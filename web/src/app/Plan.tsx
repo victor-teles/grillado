@@ -26,6 +26,8 @@ import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "..
 import { Provenance } from "./found/Provenance";
 import { AddPlanButton, AddPlanLine, AddPlanLive, addPlanFor } from "./addplan/AddPlan";
 import { useIssues } from "./issues/Issues";
+import { type FloorItem, unaskedPlanItems } from "../../../src/core/floor.ts";
+import { textHash } from "../../../src/core/text-hash.ts";
 
 const nameOf = (d: { label?: string; title: string }) => d.label || d.title;
 
@@ -80,6 +82,8 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
     [counts.openKeys.join(" "), session.rounds],
   );
   const openCount = counts.open;
+  const unasked = unaskedPlanItems(session, draft.text);
+  const [resuming, setResuming] = useState(false);
   const text = countText(counts, mobile);
   const staleKeys = useMemo(() => new Set([...waiting, ...(waiting.length && touched ? [touched.key] : [])]), [waiting.join(" "), touched]);
   const reaskLine = useMemo(() => {
@@ -175,6 +179,18 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
     const was = session.decisions[key]?.answer;
     await draft.track(act(open ? "answer-open" : "change", { key, ...pick }));
     if (!open && was !== undefined) setTouched({ key, was });
+  };
+  const answerRemaining = async () => {
+    if (openKeys.length) return showDecisionRow(openKeys[0]);
+    setResuming(true);
+    try {
+      await draft.flush();
+      await act("resume-plan", { base: textHash(draft.text) });
+    } catch {
+      // The action error is shown by App; a failed save keeps the editor's error state.
+    } finally {
+      setResuming(false);
+    }
   };
   // Answering a Question you added is a plain edit of its block (#34): no round, no re-ask.
   const saveOwn = async (key: string, pick: { optionId: string; text?: string }) => {
@@ -418,6 +434,20 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
       </span>
       {note ? <span className="pnote">{note}</span> : null}
       {cm.rawNote}
+      {!readOnly && (openKeys.length > 0 || unasked.length > 0) ? (
+        <div className="pbanner plan-open-actions" data-testid="plan-open-actions">
+          <IAlert s={16} />
+          <span>
+            <strong>{openCount} {openCount === 1 ? "decision still needs an answer" : "decisions still need answers"}</strong>
+            <span>Answer these before creating issues.</span>
+          </span>
+          <span className="pbanner-acts">
+            <button type="button" className="btn primary" disabled={resuming || !!draft.conflict || !!draft.answerChange || draft.save.state === "error"} onClick={() => void answerRemaining()}>
+              {resuming ? "Preparing questions…" : "Answer remaining questions"}
+            </button>
+          </span>
+        </div>
+      ) : null}
       <div className="pvrow">
         <div className="pvmain">
       <div className="docwrap" ref={docRef}>
@@ -455,7 +485,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         </div>
         <div id="ppanel-decisions" role="tabpanel" aria-labelledby="ptab-decisions" hidden={tab !== "decisions"} className="dtab">
           {tab === "decisions" ? (
-            <DecisionsTab session={session} openKeys={openKeys} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} jump={rowJump} act={act} onReview={reviewSuggestion} />
+            <DecisionsTab session={session} openKeys={openKeys} unasked={unasked} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} jump={rowJump} act={act} onReview={reviewSuggestion} />
           ) : null}
         </div>
       </div>
@@ -633,6 +663,7 @@ const warm = () => performance.now() - lastClose < 600;
 function DecisionsTab({
   session,
   openKeys,
+  unasked,
   agentName,
   mobile,
   psg,
@@ -648,6 +679,7 @@ function DecisionsTab({
 }: {
   session: SessionView;
   openKeys: string[];
+  unasked: FloorItem[];
   agentName: string;
   mobile: boolean;
   psg: { id: string; keys: string[] }[];
@@ -664,7 +696,7 @@ function DecisionsTab({
   onReview: (suggestion: string) => void;
 }) {
   // With decisions still open they come first and the resolved log starts collapsed (§4).
-  const [expanded, setExpanded] = useState(!openKeys.length);
+  const [expanded, setExpanded] = useState(!openKeys.length && !unasked.length);
   const [changing, setChanging] = useState<string | null>(null);
   const [saved, setSaved] = useState("");
   const [cur, setCur] = useState(0);
@@ -747,6 +779,15 @@ function DecisionsTab({
             const title = questionFor(session, key)?.title ?? titleOf(key);
             return <div key={key}>{renderOpen({ id: label(key), key, question: title, status: "open" }, { invalid: false, active: false, setActive: () => {} })}</div>;
           })}
+        </section>
+      ) : null}
+      {unasked.length ? (
+        <section className="dgrp-open" aria-labelledby="not-asked">
+          <h2 id="not-asked">Not asked yet<span className="ct"> {unasked.length}</span></h2>
+          <p className="sub">{agentName} will turn these topics into questions when you continue.</p>
+          <ul className="dlist">
+            {unasked.map((item) => <li key={item.key} className="drow"><span>{item.label}</span></li>)}
+          </ul>
         </section>
       ) : null}
       <section className="acc">

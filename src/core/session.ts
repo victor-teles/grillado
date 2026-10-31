@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type FloorItem, dropReasonLine, notAskedLine, openFloor, reasonLine, stopReason, syncPlanOpen } from "./floor.ts";
+import { type FloorItem, dropReasonLine, notAskedLine, openFloor, reasonLine, stopReason, syncPlanOpen, unaskedPlanItems } from "./floor.ts";
 import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
@@ -86,7 +86,7 @@ export interface Session extends CommentState {
   status: SessionStatus;
   rounds: Round[];
   decisions: Record<string, Decision>;
-  /** Decisions the user reopened, to be asked again in the next round. */
+  /** Decisions the user explicitly asked to revisit or finish in the next round. */
   reopened: string[];
   /** Reopened decisions not yet settled again, for the tree (kept across rounds). */
   stale?: Record<string, StaleDecision>;
@@ -476,6 +476,20 @@ export function keepGoing(s: Session, max = DEFAULT_MAX_ROUNDS): void {
   s.stop = undefined;
   s.wrappedUp = false;
   s.status = "asking";
+  touch(s);
+}
+
+export function resumePlan(s: Session): void {
+  if (s.status !== "plated" || !s.plan) throw new Error("Finish writing the plan first.");
+  if (currentRound(s)?.questions.some((question) => !s.decisions[question.key])) throw new Error("Answer the open questions first.");
+  const pending = unaskedPlanItems(s, s.plan.markdown);
+  if (!pending.length) throw new Error("There are no remaining topics to ask about.");
+  s.reopened = [...new Set([...s.reopened, ...pending.map((item) => item.key)])];
+  s.status = "asking";
+  s.keepGoing = false;
+  s.wrappedUp = false;
+  s.stop = undefined;
+  s.error = undefined;
   touch(s);
 }
 

@@ -104,6 +104,12 @@ export function planOpenNow(s: PlanOpenSession, md: string): string[] {
   return [...new Set(out)];
 }
 
+/** Topics still listed in the plan that the interview never turned into questions. */
+export function unaskedPlanItems(s: PlanOpenSession, md: string): FloorItem[] {
+  const listed = planOpenNow(s, md).map((label) => label.toLowerCase());
+  return openFloor(s).filter((item) => !item.asked && listed.some((label) => label.includes(item.label.toLowerCase())));
+}
+
 /**
  * Refresh plan.openDecisions, the saved copy, from the plan text (after any write to it). A session saved
  * before `listed` existed gets it once from openDecisions, before that list is first overwritten.
