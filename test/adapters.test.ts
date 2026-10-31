@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { classifyFailure } from "../src/core/classify.ts";
@@ -178,7 +178,7 @@ describe("adapters against fake CLIs", () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), "grillado-cwd-"));
     await collect(a, roundReq(cwd));
     const entry = JSON.parse(readFileSync(log, "utf8").trim());
-    expect(entry.cwd).toBe(cwd);
+    expect(realpathSync(entry.cwd)).toBe(realpathSync(cwd));
     expect(entry.args).toContain("--no-tools");
   });
 });

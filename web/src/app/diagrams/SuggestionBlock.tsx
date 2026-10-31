@@ -4,7 +4,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { suggestedCode } from "../../../../src/core/diagrams.ts";
 import type { Placed } from "../comments/model";
-import { Diagram, LivePreview } from "../editor/Diagram";
+import { Diagram, LivePreview } from "../editor/DiagramView";
 import { accOf, kindName } from "../editor/diagram";
 import { useMobile } from "../chrome";
 import { type MermaidErr, MermaidError, SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "../editor/SourcePreview";

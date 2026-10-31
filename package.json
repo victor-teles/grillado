@@ -9,6 +9,11 @@
     "url": "git+https://github.com/victor-teles/grillado.git"
   },
   "type": "module",
+  "packageManager": "bun@1.4.2",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "bin": {
     "grillado": "dist/cli.js"
   },

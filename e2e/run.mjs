@@ -11,6 +11,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright-core";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+const VERSION = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
 const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-e2e-"));
 const CHROME = process.env.CHROME_PATH ?? "/usr/bin/google-chrome";
 const BANNED = ["grill-me", "grilling", "matt pocock", "mattpocock"];
@@ -136,7 +137,7 @@ const procAlive = (pid) => {
 
 {
   const e = env(fakeBins(["claude", "codex"]));
-  check("--version", runCli(["--version"], e).out.trim() === "0.1.0");
+  check("--version", runCli(["--version"], e).out.trim() === VERSION);
   const help = runCli(["--help"], e);
   check("--help mentions 127.0.0.1", help.code === 0 && help.out.includes("127.0.0.1"));
   const bad = runCli(["--provider", "nope"], e);
@@ -183,7 +184,9 @@ try {
   }
   if (!ips.length) check("non-loopback interface available for refusal test", false, "none found");
   // Local address column of every listening socket on this port.
-  const locals = execFileSync("ss", ["-ltnH", `sport = :${port}`], { encoding: "utf8" }).trim().split("\n").map((l) => l.trim().split(/\s+/)[3]);
+  const locals = process.platform === "darwin"
+    ? execFileSync("lsof", ["-nP", "-a", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fn"], { encoding: "utf8" }).trim().split("\n").filter((l) => l.startsWith("n")).map((l) => l.slice(1))
+    : execFileSync("ss", ["-ltnH", `sport = :${port}`], { encoding: "utf8" }).trim().split("\n").map((l) => l.trim().split(/\s+/)[3]);
   check("socket bound to 127.0.0.1 only", locals.length > 0 && locals.every((a) => a === `127.0.0.1:${port}`), locals.join(" "));
 
   // Browser.
@@ -544,11 +547,12 @@ try {
   const lowBox = page.getByRole("textbox", { name: /Edit block as Markdown/ });
   await lowBox.waitFor();
   const blkAtOpen = await scrollOf();
-  await lowBox.press("End");
+  await lowBox.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
+  const blkAtCaret = await scrollOf();
   await lowBox.pressSequentially("!");
   await page.waitForTimeout(150);
   const blkAfter = await scrollOf();
-  check("block editor: typing while scrolled down keeps the scroll", blkAtOpen > 500 && Math.abs(blkAfter - blkAtOpen) < 30, `${blkAtOpen} → ${blkAfter}`);
+  check("block editor: typing while scrolled down keeps the scroll", blkAtOpen > 500 && Math.abs(blkAfter - blkAtCaret) < 30, `${blkAtOpen} → ${blkAtCaret} → ${blkAfter}`);
   await lowBox.press("Backspace");
   await lowBox.press("Escape");
   // Edit one block in place in the rich view.
@@ -560,6 +564,7 @@ try {
   await blockBox.waitFor();
   await blockBox.press("End");
   await blockBox.pressSequentially(" Edited in place.");
+  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
   await shot(page, "plan-editor-block-edit-dark");
   const axeBlock = await new AxeBuilder({ page }).analyze();
   check("axe: plan editor, editing a block (dark)", axeBlock.violations.length === 0, axeIds(axeBlock));
@@ -791,12 +796,12 @@ try {
     await page.keyboard.press(String(pickIdx));
     const newAnswer = ((await card.locator(".dz-opt").nth(pickIdx - 1).locator("span").first().textContent()) ?? "").trim();
     await page.keyboard.press("Enter");
-    await page.getByText("Keep data local first?").waitFor({ timeout: 15_000 });
+    await page.locator("[data-testid=question]").getByText("Keep data local first?").waitFor({ timeout: 15_000 });
     const planFile2 = path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md");
     const after = readFileSync(planFile2, "utf8");
     const sess = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
     check("saving the change updates the block in plan.md", after.includes(`key: platform\nquestion: Start on the web?\nanswer: ${newAnswer}`), newAnswer);
-    check("its dependents are re-asked in a new round", ["answering", "asking"].includes(sess.status) && sess.stale?.storage && !sess.decisions.storage && sess.rounds.at(-1).questions.some((q) => q.key === "storage"));
+    check("its dependents are re-asked in a new round", ["answering", "asking"].includes(sess.status) && sess.stale?.storage && !sess.decisions.storage && sess.rounds.at(-1).questions.some((q) => q.key === "storage"), JSON.stringify({ status: sess.status, stale: sess.stale, storage: sess.decisions.storage, questions: sess.rounds.at(-1).questions.map((q) => q.key) }));
     await page.locator("[data-testid=question] legend").first().focus();
     await page.keyboard.press("1");
     await page.keyboard.press("Enter");
@@ -953,6 +958,7 @@ try {
     const banner = pg.getByTestId("problem");
     await banner.waitFor({ timeout: 15_000 });
     check("auth error shown as 'Log in to …' (AC8)", (await banner.getAttribute("data-code")) === "auth" && /log in to Claude Code/i.test(await banner.textContent()) && (await banner.locator(".t").count()) === 0);
+    await pg.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
     await shot(pg, "auth-error");
     check("auth banner offers retry", (await pg.getByRole("button", { name: "I’ve logged in, retry" }).count()) === 1);
     const authBody = banner.locator("p").first();

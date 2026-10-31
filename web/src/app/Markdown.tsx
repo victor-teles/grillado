@@ -1,6 +1,6 @@
 import { Fragment, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
-import { Diagram } from "./editor/Diagram";
+import { Diagram } from "./editor/DiagramView";
 import { IEdit } from "./icons";
 import { CalloutIcon, PlusIcon } from "./editor/SlashMenu";
 

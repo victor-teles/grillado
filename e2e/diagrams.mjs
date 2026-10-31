@@ -398,7 +398,7 @@ try {
       // 6. "/" → Diagram by Claude Code, for the section you're in; Problem has nothing to draw → toast.
       await pg.locator(".doc .blk[data-block=para] p").first().click();
       await pg.locator(TA).waitFor();
-      await pg.keyboard.press("Control+End");
+      await pg.keyboard.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End");
       await pg.keyboard.press("Enter");
       await pg.keyboard.press("Enter");
       await pg.keyboard.type("/diagram");
@@ -467,9 +467,9 @@ try {
       check("desktop: no Source | Preview switch; the preview sits under the source", (await pg.locator(".mseg, .acc4").count()) === 0 && (await pg.locator(".blk[data-editing]").getAttribute("data-view")) === null);
       check("editor hint: Mermaid · ⌘↵ draw now · Esc finish", (await txt(pg.locator(".blk[data-editing] .blk-hint"))) === "Mermaid · ⌘↵ draw now · Esc finish", await txt(pg.locator(".blk[data-editing] .blk-hint")));
       await pg.locator(".blk[data-editing] .lp5 svg").waitFor({ timeout: 8000 });
-      await pg.keyboard.press("Control+End");
+      await pg.keyboard.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End");
       await pg.keyboard.press("ArrowUp");
-      await pg.keyboard.press("End");
+      await pg.keyboard.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
       await pg.keyboard.type('\n  N9{"Same item?"');
       await pg.waitForTimeout(500);
       check("no error before 1s of quiet", (await pg.locator(".merr").count()) === 0);

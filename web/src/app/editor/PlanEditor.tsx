@@ -14,7 +14,7 @@ import { Autosaver, type SaveState } from "./autosave";
 import { type Block, parseBlocks, splice } from "./blocks";
 import { CodeEditor } from "./CodeEditor";
 import type { CodeEditorHandle } from "./cm";
-import { LivePreview } from "./Diagram";
+import { LivePreview } from "./DiagramView";
 import { MermaidError, SourcePreviewSwitch, useKeyboardDock, useSourcePreview } from "./SourcePreview";
 import { type CiteRenderer, type DocMarks, type FenceBlock, Markdown, type PassageLink } from "../Markdown";
 import { canHover, jumpTo, selecting } from "./link";

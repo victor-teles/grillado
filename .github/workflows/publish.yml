@@ -1,0 +1,75 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org/"
+          package-manager-cache: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Check release version
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+          if (process.env.RELEASE_TAG !== `v${version}`) {
+            throw new Error(`Tag ${process.env.RELEASE_TAG} must match package.json version v${version}`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `dist_tag=${version.includes("-") ? "next" : "latest"}\n`);
+          NODE
+
+      - run: bun install --frozen-lockfile
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Test the installed package in Chrome
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node e2e/run.mjs
+
+      - name: Pack release
+        id: pack
+        run: |
+          npm pack --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/grillado-pack.json"
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import path from "node:path";
+          const [pkg] = JSON.parse(readFileSync(path.join(process.env.RUNNER_TEMP, "grillado-pack.json"), "utf8"));
+          appendFileSync(process.env.GITHUB_OUTPUT, `tarball=${path.join(process.env.RUNNER_TEMP, pkg.filename)}\n`);
+          NODE
+
+      - name: Publish package with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        run: npm publish "$TARBALL" --access public --provenance --tag "$DIST_TAG"
