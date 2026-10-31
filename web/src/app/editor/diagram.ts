@@ -1,5 +1,3 @@
-// Mermaid rendering behind a tiny interface, so the fallback path is unit-testable without a DOM.
-
 export interface MermaidLike {
   initialize(config: Record<string, unknown>): void;
   parse(text: string): Promise<unknown>;
@@ -7,32 +5,24 @@ export interface MermaidLike {
 }
 
 export type DiagramResult = { ok: true; svg: string } | { ok: false; error: string };
-
-/** Mermaid takes hex colours, not var() or oklch: the theme is read from the tokens at render time (§6.2). */
 export type ThemeVars = Record<string, string | boolean>;
 
-/** Mermaid's config for Grillado: token theme, Inter 13px, no HTML labels, no ELK (§6.2). */
 export function mermaidConfig(theme?: ThemeVars, dark = true): Record<string, unknown> {
   return {
     startOnLoad: false,
-    securityLevel: "strict", // mermaid sanitizes labels and drops scripts/links
+    securityLevel: "strict",
     theme: theme ? "base" : dark ? "dark" : "default",
-    // Flat nodes (§6.2): Mermaid 12's default "neo" look puts a blurred drop shadow on every node,
-    // from its own stylesheet inside the SVG, which page CSS can't beat. Classic draws none.
     look: "classic",
     themeVariables: theme ? { ...theme, dropShadow: "none", nodeShadow: false } : theme,
     fontFamily: '"Inter Variable", Inter, sans-serif',
     htmlLabels: false,
     flowchart: { htmlLabels: false, curve: "basis", padding: 8, nodeSpacing: 22, rankSpacing: 28, useMaxWidth: false, diagramPadding: 4 },
-    // Mermaid 12 defaults to the ELK layout, which Grillado doesn't ship (EPL-2.0, see
-    // THIRD_PARTY_NOTICES.md). Use dagre everywhere and don't let a diagram switch it back.
     layout: "dagre",
     state: { layout: "dagre", useMaxWidth: false, padding: 6 },
     secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "maxEdges", "layout", "look", "theme", "themeVariables", "htmlLabels"],
   };
 }
 
-/** Which token each Mermaid theme variable reads (§6.2). */
 export const THEME_TOKENS: Record<string, string> = {
   primaryColor: "--background",
   mainBkg: "--background",
