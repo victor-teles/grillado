@@ -2,7 +2,7 @@
 // drive the UI in headless Chrome, and check security, concealment, shutdown and a11y.
 // One server and one browser at a time; only processes started here are killed.
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -12,7 +12,7 @@ import { chromium } from "playwright-core";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-const WORK = mkdtempSync(path.join(os.tmpdir(), "grillado-e2e-"));
+const WORK = realpathSync(mkdtempSync(path.join(os.tmpdir(), "grillado-e2e-")));
 const CHROME = process.env.CHROME_PATH ?? "/usr/bin/google-chrome";
 const BANNED = ["grill-me", "grilling", "matt pocock", "mattpocock"];
 const results = [];
@@ -66,7 +66,7 @@ function cleanup() {
 process.on("exit", cleanup);
 
 function startServer(args, e) {
-  const child = spawn(BIN, args, { env: e, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(BIN, args, { cwd: e.HOME, env: e, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   child.stdout.on("data", (d) => (out += d));
@@ -358,7 +358,8 @@ try {
   await page.getByRole("button", { name: "Yes, plate it" }).click();
   await page.getByTestId("plan").waitFor({ timeout: 15_000 });
   await shot(page, "plan");
-  const planFile = path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md");
+  const sessionDir = path.join(e.GRILLADO_HOME, "sessions", sessionId);
+  const planFile = path.join(e.HOME, "docs", "plans", `grillado-plan-${sessionId}.md`);
   const plan = existsSync(planFile) ? readFileSync(planFile, "utf8") : "";
   check("plan.md saved", plan.length > 0, planFile);
   check(
@@ -649,7 +650,7 @@ try {
   await shot(page, "plan-editor-conflict-dark");
   await page.unroute("**/plan");
   await conflict.getByRole("button", { name: "Keep mine" }).click();
-  const conflictFile = path.join(path.dirname(planFile), "plan.conflict.md");
+  const conflictFile = path.join(sessionDir, "plan.conflict.md");
   check("Keep mine: my version saved, theirs kept as plan.conflict.md", (await waitDisk((t) => t.includes(" Mine.") && !t.includes("(theirs)"))) && existsSync(conflictFile) && readFileSync(conflictFile, "utf8") === theirs);
   // Put the earlier edit back so the restart check below sees it.
   const mine = onDisk();
@@ -797,7 +798,7 @@ try {
     const newAnswer = ((await card.locator(".dz-opt").nth(pickIdx - 1).locator("span").first().textContent()) ?? "").trim();
     await page.keyboard.press("Enter");
     await page.locator("[data-testid=question]").getByText("Keep data local first?").waitFor({ timeout: 15_000 });
-    const planFile2 = path.join(e.GRILLADO_HOME, "sessions", sessionId, "plan.md");
+    const planFile2 = planFile;
     const after = readFileSync(planFile2, "utf8");
     const sess = JSON.parse(readFileSync(path.join(e.GRILLADO_HOME, "sessions", sessionId, "session.json"), "utf8"));
     check("saving the change updates the block in plan.md", after.includes(`key: platform\nquestion: Start on the web?\nanswer: ${newAnswer}`), newAnswer);
@@ -808,7 +809,7 @@ try {
     await page.getByRole("button", { name: "Yes, plate it" }).click();
     await page.getByTestId("plan").waitFor({ timeout: 15_000 });
     const replated = readFileSync(planFile2, "utf8");
-    check("the next plan carries the changed answer; the edited plan is kept beside it", replated.includes(`answer: ${newAnswer}`) && readdirSync(path.dirname(planFile2)).some((f) => f.startsWith("plan.edited-")));
+    check("the next plan carries the changed answer; the edited plan is kept in session data", replated.includes(`answer: ${newAnswer}`) && readdirSync(sessionDir).some((f) => f.startsWith("plan.edited-")));
     // Mobile: plan view and Decisions tab, light and dark; "Load the file" side of the conflict.
     await page.setViewportSize({ width: 390, height: 844 });
     for (const theme of ["Light theme", "Dark theme"]) {
@@ -845,7 +846,7 @@ try {
     await page.unroute("**/plan");
     await banner2.getByRole("button", { name: "Load the file" }).click();
     await page.getByRole("heading", { name: "Problem (from the file)" }).waitFor({ timeout: 5000 });
-    const cf2 = path.join(path.dirname(planFile2), "plan.conflict.md");
+    const cf2 = path.join(sessionDir, "plan.conflict.md");
     check("Load the file: the file wins, my edits are kept as plan.conflict.md", readFileSync(planFile2, "utf8") === fileSide && readFileSync(cf2, "utf8").includes(" Mine again.") && (await banner2.count()) === 0);
     await page.setViewportSize({ width: 1280, height: 720 });
     // DECISIONS #22, Markdown view, save side: "Save and re-ask 1" runs the same path as the card's Change.
