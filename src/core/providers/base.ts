@@ -120,7 +120,7 @@ export function createAdapter(spec: AdapterSpec, opts: AdapterOptions = {}): Pro
           wake?.();
           return r;
         });
-        while (read && !finished) {
+        while (read && !finished && !signal.aborted) {
           if (!queue.length) await new Promise<void>((r) => (wake = r));
           wake = null;
           // Nothing streamed after Stop: the run ends as stopped.

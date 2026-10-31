@@ -7,6 +7,7 @@ import { runValidated } from "../src/core/engine.ts";
 import { StreamGuard } from "../src/core/stream-guard.ts";
 import { promptFragments } from "../src/core/prompts.ts";
 import { SPECS, claudeStreamReader, createAdapters } from "../src/core/providers/adapters.ts";
+import { createAdapter } from "../src/core/providers/base.ts";
 import { partialStringField } from "../src/core/providers/partial-json.ts";
 import type { ProviderAdapter, ProviderEvent, RunFiles, RunRequest } from "../src/core/providers/types.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
@@ -144,6 +145,26 @@ describe("end to end with the fake CLIs", () => {
     }
     expect(evs.filter((e) => e.type === "text-delta").length).toBe(3);
     expect(evs.at(-1)).toEqual({ type: "error", code: "unknown", message: "Stopped." });
+  });
+  test("Stop with queued deltas ends without blocking the event loop", async () => {
+    const output = [so(1), dj(1, '{"text":"one'), dj(1, " two"), dj(1, " three")].join("\n") + "\n";
+    const script = `process.stdout.write(${JSON.stringify(output)}); setInterval(() => {}, 1000);`;
+    const claude = createAdapter({
+      ...SPECS.claude,
+      bin: "node",
+      stream: { ...SPECS.claude.stream!, buildInvocation: () => ({ args: ["-e", script] }) },
+    });
+    const controller = new AbortController();
+    const events: ProviderEvent[] = [];
+    for await (const event of claude.run(commentReq(), controller.signal)) {
+      events.push(event);
+      if (event.type === "text-delta") controller.abort();
+    }
+    expect(events).toEqual([
+      { type: "progress", label: "Thinking" },
+      { type: "text-delta", text: "one" },
+      { type: "error", code: "unknown", message: "Stopped." },
+    ]);
   });
 });
 

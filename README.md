@@ -108,6 +108,8 @@ It checks that the tag matches `package.json`, installs from the Bun lockfile, r
 the typecheck and tests, builds the web app and CLI, and tests the installed package
 in Chrome before publishing with provenance. Stable versions use `latest`;
 prerelease versions such as `0.2.0-beta.1` use `next`.
+Running the workflow manually verifies the build and package without publishing.
+The test steps have separate time limits so a stuck test fails promptly.
 
 For the first release, create an [npm granular access token](https://docs.npmjs.com/creating-and-viewing-access-tokens/)
 with package permission **Read and write (publish and stage)**, **All Packages**

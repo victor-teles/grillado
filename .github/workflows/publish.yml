@@ -1,6 +1,7 @@
 name: Publish to npm
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -33,6 +34,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - name: Check release version
+        if: github.ref_type == 'tag'
         id: release
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -48,10 +50,13 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: npm run typecheck
-      - run: npm test
+      - name: Unit and integration tests
+        timeout-minutes: 3
+        run: npm test
       - run: npm run build
 
       - name: Test the installed package in Chrome
+        timeout-minutes: 5
         env:
           CHROME_PATH: /usr/bin/google-chrome
         run: node e2e/run.mjs
@@ -68,6 +73,7 @@ jobs:
           NODE
 
       - name: Publish package with provenance
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           TARBALL: ${{ steps.pack.outputs.tarball }}
