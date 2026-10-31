@@ -1298,8 +1298,8 @@ export class GrilladoServer {
       if (!idea) throw new Error("Tell me the idea first.");
       if (!this.selected) throw new Error("Pick an agent first.");
       const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), provider: this.selected });
+      this.opts.store.create(s, this.opts.launchDir);
       this.sessions.set(s.id, s);
-      this.opts.store.save(s);
       this.watchSession(s);
       this.startRound(s);
       return this.json(res, 201, this.view(s));

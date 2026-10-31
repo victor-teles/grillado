@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -138,7 +138,8 @@ async function waitFor<T>(fn: () => Promise<T | undefined>, ms = 8000): Promise<
 describe("session API with a fake CLI", () => {
   test("idea → rounds → confirm → plan.md on disk; restore after restart (AC14)", async () => {
     const env = fakeEnv(fakeBinDir(["claude"]));
-    const { server, store } = await start({}, env);
+    const project = mkdtempSync(path.join(os.tmpdir(), "grillado-project-"));
+    const { server, store } = await start({ launchDir: project }, env);
     const h = { "x-grillado-token": server.token, "content-type": "application/json" };
     const api = async (method: string, p: string, body?: unknown) => {
       const r = await request(server.port, { method, path: p, headers: h, body });
@@ -163,16 +164,21 @@ describe("session API with a fake CLI", () => {
     await api("POST", `/api/sessions/${id}/confirm`);
     s = await idle("plated");
     expect(s.plan.path).toBe(store.planPath(id));
+    expect(s.plan.path).toBe(path.join(project, "docs", "plans", `grillado-plan-${id}.md`));
+    expect(store.load(id)?.project).toBe(project);
+    expect(existsSync(path.join(store.sessionDir(id), "plan.md"))).toBe(false);
     const md = await request(server.port, { path: `/api/sessions/${id}/plan.md`, headers: h });
     expect(md.headers["content-disposition"]).toContain("attachment");
     expect(md.body).toContain("[R2:storage]");
+    expect(readFileSync(s.plan.path, "utf8")).toBe(md.body);
 
     // A new server process over the same data dir restores the session.
-    const again = new GrilladoServer({ adapters: createAdapters({ env }), store, webDir: webDir(), port: 0, strictPort: true });
+    const again = new GrilladoServer({ adapters: createAdapters({ env }), store: new Store(store.dir), launchDir: os.tmpdir(), webDir: webDir(), port: 0, strictPort: true });
     servers.push(again);
     await again.listen();
     const r = await request(again.port, { path: `/api/sessions/${id}`, headers: { "x-grillado-token": again.token } });
     expect(JSON.parse(r.body).status).toBe("plated");
+    expect(JSON.parse(r.body).plan.path).toBe(s.plan.path);
   });
 
   test("auth failure surfaces as a classified error with the login hint available", async () => {

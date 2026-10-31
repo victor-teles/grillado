@@ -107,8 +107,10 @@ export interface Session extends CommentState {
   from?: string;
   /** Imported from a source found in the project (v1.3 item 1). */
   source?: ImportedSource;
-  /** The project root the source was found in (v1.3 item 1). */
+  /** The project this session was started in, or its imported source was found in. */
   project?: string;
+  /** Absolute Markdown destination for new project sessions. Older sessions keep their data-dir plan. */
+  planFile?: string;
   /**
    * The plan's tracker links (v1.3 item 2, the spec's "plan.issues"). Kept on the session, not inside
    * `plan`, so a plan rewritten after a reopen keeps its links and re-exports update instead of duplicating.

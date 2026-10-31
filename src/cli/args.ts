@@ -99,7 +99,7 @@ Options:
   --no-open           Don't open the browser; just print the URL
   --no-scan           Don't look in this folder for plans and planning sessions from your
                       coding agent (also GRILLADO_NO_SCAN=1). Nothing is imported unless you click.
-  --data-dir <path>   Where sessions and plans live (default ~/.grillado, or $GRILLADO_HOME)
+  --data-dir <path>   Session data (default ~/.grillado, or $GRILLADO_HOME)
   -v, --version       Print the version
   -h, --help          Show this help
 

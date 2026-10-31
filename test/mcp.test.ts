@@ -130,12 +130,25 @@ describe("grillado mcp tools", () => {
     expect(off.structuredContent.next).toContain("npx grillado --data-dir");
     const s = store.load(off.structuredContent.id)!;
     expect(s).toMatchObject({ idea: "A plant watering reminder", status: "asking", queued: true, rounds: [] });
+    expect(s.project).toBe(process.cwd());
+    expect(s.planFile).toBe(path.join(process.cwd(), "docs", "plans", `grillado-plan-${s.id}.md`));
 
     store.writeServerInfo({ pid: process.pid, port: 4999, token: "tok" });
     const on = await call(c, "start_plan", { idea: "Another", context: "Uses Expo" });
     expect(on.structuredContent.url).toBe(`http://127.0.0.1:4999/s/${on.structuredContent.id}?t=tok`);
     expect(store.load(on.structuredContent.id)!.context).toBe("Uses Expo");
     expect((await call(c, "start_plan", { idea: "   " })).isError).toBe(true);
+  });
+
+  test("start_plan can bind its output to an explicit project", async () => {
+    const store = tempStore();
+    const project = path.join(store.dir, "project");
+    const result = await call(await connect(store), "start_plan", { idea: "A project plan", path: project });
+    const id = result.structuredContent.id;
+    expect(store.load(id)?.project).toBe(project);
+    const file = store.writePlan(id, "# A project plan\n");
+    expect(file).toBe(path.join(project, "docs", "plans", `grillado-plan-${id}.md`));
+    expect(store.readPlan(id)).toBe("# A project plan\n");
   });
 
   test("add_comment: lands on the plan as the coding agent", async () => {
