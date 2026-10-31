@@ -129,11 +129,15 @@ export class Store {
     });
   }
 
-  /** Create a session that isn't on disk yet. */
-  create(s: Session) {
+  /** Create a session, optionally binding its Markdown output to the launch project. */
+  create(s: Session, project?: string) {
     const file = this.sessionFile(s.id);
     withLock(file, () => {
       if (existsSync(file)) throw new Error("Session already exists");
+      if (project) {
+        s.project = path.resolve(project);
+        s.planFile = path.join(s.project, "docs", "plans", `grillado-plan-${s.id}.md`);
+      }
       writeAtomic(file, JSON.stringify(s, null, 2));
     });
   }
@@ -177,7 +181,8 @@ export class Store {
   }
 
   planPath(id: string) {
-    return path.join(this.sessionDir(id), "plan.md");
+    const legacy = path.join(this.sessionDir(id), "plan.md");
+    return this.load(id)?.planFile ?? legacy;
   }
 
   writePlan(id: string, markdown: string) {

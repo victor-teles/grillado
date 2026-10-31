@@ -14,6 +14,7 @@ import { Store } from "../src/cli/store.ts";
 import { ImportError } from "../src/core/found/import.ts";
 import { reasonText } from "../src/core/reason.ts";
 import { createAdapters } from "../src/core/providers/adapters.ts";
+import { createSession } from "../src/core/session.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
 import { type ImportLine, fold, groupLabel, groupMeta, groups, importRows, metaParts, title } from "../src/core/activity.ts";
 
@@ -79,6 +80,16 @@ function cpFree(w: ReturnType<typeof world>, name: string, id = name) {
 const ALL = ["Family recipe app", "Home budget tracker", "Interview me about a chore rota for our flat", "Order delay dashboard", "Billing v2", "Onboarding checklist", "Faster search"];
 
 describe("found in this project: scan", () => {
+  test("project-local Grillado plans stay in Recent instead of being offered for import", async () => {
+    const w = world();
+    const session = createSession({ idea: "Already in Grillado", provider: "claude" });
+    w.store.create(session, w.root);
+    w.store.writePlan(session.id, readFileSync(path.join(w.root, "docs", "plans", "billing.md"), "utf8"));
+    const result = await w.svc().scan();
+    expect(result.rows.map((row) => row.title).sort()).toEqual([...ALL].sort());
+    expect(result.rows.some((row) => row.path === session.planFile)).toBe(false);
+  });
+
   test("finds the planning sessions and plan files, and nothing else", async () => {
     const w = world();
     const r = await w.svc().scan();

@@ -13,6 +13,11 @@ A browser tab opens. Describe the idea, answer rounds of questions (number keys 
 sends, the recommendation is preselected), confirm the decisions, and get a `plan.md` that cites
 the answer behind every decision.
 
+Run Grillado from your project folder. New plans are saved as
+`docs/plans/grillado-plan-<session-id>.md` in that folder, so you can commit them with your code.
+Session history, settings and credentials stay in `~/.grillado`. Each session remembers its
+project when you reopen it. Existing plans and imported copies keep their original storage location.
+
 ## Options
 
 ```
@@ -22,7 +27,7 @@ the answer behind every decision.
 --max-rounds <n>    Question rounds before the plan is written (default 2)
 --no-open           Don't open a browser; just print the URL
 --no-scan           Don't look in this folder for plans to import (also GRILLADO_NO_SCAN=1)
---data-dir <path>   Sessions and plans (default ~/.grillado, or $GRILLADO_HOME)
+--data-dir <path>   Session data (default ~/.grillado, or $GRILLADO_HOME)
 ```
 
 Requires Node.js 22 or newer.
@@ -39,6 +44,10 @@ the plan's Comments rail as from the coding agent), plus `list_project_sources` 
 plan). Once a plan has been sent to GitHub or Linear, `get_plan` includes its `issues` links. There
 is no tool to create issues: that only happens in the browser, after its preview and confirm. Each plan is also a resource,
 `grillado://plans/<id>`.
+
+`start_plan` saves its Markdown in the MCP server's working folder under `docs/plans/`.
+Pass `path` to start it in a different project. Opening its link in a web app launched elsewhere
+keeps that destination.
 
 Set it up once, for every project (`npx -y` skips npx's install prompt). If you use a custom
 data dir, pass it as `GRILLADO_HOME` (the web app's "Use in your editor" shows these with the

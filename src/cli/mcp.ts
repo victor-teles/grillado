@@ -106,6 +106,7 @@ export function createMcpServer(
 ): McpServer {
   const mcp = new McpServer({ name: "grillado", version });
   const clientName = () => mcp.server.getClientVersion()?.name;
+  const projectPath = z.string().min(1).max(4096).optional().describe("The project folder (default: the folder the MCP server runs in)");
 
   mcp.registerTool(
     "list_plans",
@@ -166,15 +167,16 @@ export function createMcpServer(
       inputSchema: {
         idea: z.string().trim().min(1, "Describe the idea.").max(8000).describe("The idea, in the user's words"),
         context: z.string().max(20_000).optional().describe("Optional background: the codebase, constraints, what exists already"),
+        path: projectPath,
       },
     },
-    async ({ idea, context }) =>
+    async ({ idea, context, path }) =>
       safely(() => {
         const s = createSession({ idea, context, provider: store.readConfig().defaultProvider ?? PROVIDER_IDS[0] });
         s.queued = true;
         // Always marked editor-started; a client without a usable name reads "From your editor" (#108).
         s.from = (clientName() ?? "").slice(0, 80);
-        store.create(s);
+        store.create(s, path ?? process.cwd());
         const info = store.readServerInfo();
         const url = info ? `http://127.0.0.1:${info.port}/s/${s.id}?t=${info.token}` : null;
         const next = url
@@ -225,7 +227,6 @@ export function createMcpServer(
     if (f.skip) throw new Error(f.skip === "off" ? "The project scan is off (GRILLADO_NO_SCAN)." : `Not a project folder (${f.skip === "home" ? "the home folder" : f.skip === "root" ? "a filesystem root" : "Grillado's data folder"}). Pass the project's path.`);
     return f;
   };
-  const projectPath = z.string().min(1).max(4096).optional().describe("The project folder (default: the folder the MCP server runs in)");
 
   mcp.registerTool(
     "list_project_sources",
