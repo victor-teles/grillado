@@ -204,6 +204,12 @@ export interface SessionView {
   provider: ProviderId;
   idea: string;
   context: string;
+  /** Source-only view of the immutable project-plan snapshot. */
+  projectContext?: {
+    capturedAt: string;
+    sources: { path: string; truncated: boolean }[];
+    truncated: boolean;
+  };
   status: SessionStatus;
   rounds: Round[];
   decisions: Record<string, Decision>;

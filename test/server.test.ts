@@ -11,6 +11,7 @@ import { addCoderComment } from "../src/core/comments.ts";
 import { createSession } from "../src/core/session.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
 import { platedSession } from "./mcp-fixture.ts";
+import { FoundService } from "../src/cli/found.ts";
 
 const servers: GrilladoServer[] = [];
 afterEach(async () => {
@@ -136,6 +137,41 @@ async function waitFor<T>(fn: () => Promise<T | undefined>, ms = 8000): Promise<
 }
 
 describe("session API with a fake CLI", () => {
+  test("creation captures project-plan context once and exposes source metadata without text", async () => {
+    const project = mkdtempSync(path.join(os.tmpdir(), "grillado-project-context-"));
+    mkdirSync(path.join(project, "docs", "plans"), { recursive: true });
+    const source = path.join(project, "docs", "plans", "existing.md");
+    writeFileSync(source, "Historical browser context");
+    const { server, store } = await start({ launchDir: project });
+    const headers = { "x-grillado-token": server.token, "content-type": "application/json" };
+
+    const response = await request(server.port, { method: "POST", path: "/api/sessions", headers, body: { idea: "A new idea" } });
+    const view = JSON.parse(response.body);
+    expect(view.projectContext.sources).toEqual([{ path: "docs/plans/existing.md", truncated: false }]);
+    expect(response.body).not.toContain("Historical browser context");
+    const snapshot = store.load(view.id)?.projectContext;
+    expect(snapshot?.sources[0].text).toBe("Historical browser context");
+    writeFileSync(source, "Changed after creation");
+    expect(store.load(view.id)?.projectContext).toEqual(snapshot);
+  });
+
+  test("browser creation honors the shared project scan opt-out", async () => {
+    const project = mkdtempSync(path.join(os.tmpdir(), "grillado-project-context-off-"));
+    writeFileSync(path.join(project, "PLAN.md"), "Must not be captured");
+    const store = new Store(mkdtempSync(path.join(os.tmpdir(), "grillado-home-")));
+    const found = new FoundService({ store, cwd: project, off: true });
+    const server = new GrilladoServer({ adapters: createAdapters({ env: fakeEnv(fakeBinDir(["claude"])) }), store, found, launchDir: project, webDir: webDir(), port: 0, strictPort: true });
+    servers.push(server);
+    await server.detect();
+    await server.listen();
+    const headers = { "x-grillado-token": server.token, "content-type": "application/json" };
+
+    const response = await request(server.port, { method: "POST", path: "/api/sessions", headers, body: { idea: "A new idea" } });
+    const view = JSON.parse(response.body);
+    expect(view.projectContext).toBeUndefined();
+    expect(store.load(view.id)?.projectContext).toBeUndefined();
+  });
+
   test("idea → rounds → confirm → plan.md on disk; restore after restart (AC14)", async () => {
     const env = fakeEnv(fakeBinDir(["claude"]));
     const project = mkdtempSync(path.join(os.tmpdir(), "grillado-project-"));

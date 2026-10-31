@@ -54,6 +54,8 @@ import { STOPPED } from "../core/reason.ts";
 import { ImportError } from "../core/found/import.ts";
 import type { Store } from "./store.ts";
 import { IssuesRoutes, type IssuesOptions } from "./issues/routes.ts";
+import { captureProjectContext } from "./project-context.ts";
+import { projectContextView } from "../core/project-context.ts";
 
 export const LOOPBACK = "127.0.0.1";
 
@@ -569,8 +571,10 @@ export class GrilladoServer {
 
   /** What the browser sees of a session. Error text from CLIs is scrubbed (AC17). */
   private view(s: Session) {
+    const { projectContext, ...session } = s;
     return {
-      ...s,
+      ...session,
+      projectContext: projectContextView(projectContext),
       rev: ++this.rev,
       error: s.error ? { ...s.error, message: redact(s.error.message, userText(s)) } : undefined,
       busy: this.inflight.has(s.id),
@@ -1297,7 +1301,13 @@ export class GrilladoServer {
       const idea = String(body?.idea ?? "").trim();
       if (!idea) throw new Error("Tell me the idea first.");
       if (!this.selected) throw new Error("Pick an agent first.");
-      const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), provider: this.selected });
+      const projectContext = await captureProjectContext({
+        cwd: this.opts.launchDir ?? process.cwd(),
+        dataDir: this.opts.store.dir,
+        home: this.opts.found?.home,
+        off: !!this.opts.found?.skip,
+      });
+      const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), projectContext, provider: this.selected });
       this.opts.store.create(s, this.opts.launchDir);
       this.sessions.set(s.id, s);
       this.watchSession(s);

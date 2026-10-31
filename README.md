@@ -18,6 +18,12 @@ Run Grillado from your project folder. New plans are saved as
 Session history, settings and credentials stay in `~/.grillado`. Each session remembers its
 project when you reopen it. Existing plans and imported copies keep their original storage location.
 
+When a new session is created, Grillado takes one bounded snapshot of existing plan files in the
+project (`PLAN.md`, known plan folders, and earlier Grillado exports). It uses those references as
+possibly stale background for consistent follow-up questions and never refreshes them during the
+session. Explicit context and current answers take precedence. Use `--no-scan` or
+`GRILLADO_NO_SCAN=1` to disable both this snapshot and project-source discovery.
+
 ## Options
 
 ```
@@ -26,7 +32,7 @@ project when you reopen it. Existing plans and imported copies keep their origin
 --model <id>        Passed through to the agent CLI
 --max-rounds <n>    Question rounds before the plan is written (default 2)
 --no-open           Don't open a browser; just print the URL
---no-scan           Don't look in this folder for plans to import (also GRILLADO_NO_SCAN=1)
+--no-scan           Don't read existing plans for context or import (also GRILLADO_NO_SCAN=1)
 --data-dir <path>   Session data (default ~/.grillado, or $GRILLADO_HOME)
 ```
 

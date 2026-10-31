@@ -81,6 +81,7 @@ export function stateFor(s: Session) {
   return {
     idea: s.idea,
     context: s.context || undefined,
+    projectContext: s.projectContext,
     nextRound: s.rounds.filter((r) => r.answers).length + 1,
     decisions: Object.values(s.decisions).map((d) => ({
       round: d.round,
@@ -96,6 +97,10 @@ export function stateFor(s: Session) {
     keepGoing: s.keepGoing || undefined,
     ...userState(s),
   };
+}
+
+function serializeStateForTag(value: unknown): string {
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
 
 /** Decisions and open Questions you added to the plan yourself (U ids, item 4 #34). */
@@ -123,7 +128,7 @@ function budgetLines(s: Session, cap: number): string[] {
 export function buildRoundPrompt(s: Session, max = DEFAULT_MAX_ROUNDS): string {
   const state = stateFor(s);
   const pastCap = roundsSaved(s) >= roundLimit(s, max);
-  const lines = [`Interview state (JSON):`, `<state>${JSON.stringify(state)}</state>`, ""];
+  const lines = [`Interview state (JSON):`, `<state>${serializeStateForTag(state)}</state>`, ""];
   if (!state.decisions.length && !state.reopened) lines.push("This is the first round. Map the idea and ask the first frontier.");
   else if (state.reopened) lines.push(`The user reopened: ${state.reopened.join(", ")}. Ask those again${pastCap ? "" : ", plus anything newly unblocked"}.`);
   else if (state.keepGoing)
@@ -149,7 +154,7 @@ export function buildSynthesisPrompt(s: Session): string {
   const notAsked = openFloor(s).filter((f) => !f.asked).map((f) => ({ key: f.key, label: f.label }));
   return [
     "Confirmed interview state (JSON):",
-    `<state>${JSON.stringify({ ...state, openDecisions: open.length ? open : undefined, notAsked: notAsked.length ? notAsked : undefined, wrappedUpEarly: s.wrappedUp || undefined })}</state>`,
+    `<state>${serializeStateForTag({ ...state, openDecisions: open.length ? open : undefined, notAsked: notAsked.length ? notAsked : undefined, wrappedUpEarly: s.wrappedUp || undefined })}</state>`,
     "",
     ...(notAsked.length
       ? ["The items in notAsked were never asked before the interview stopped. Keep them open: list each one by its label in openDecisions and don't decide them.", ""]

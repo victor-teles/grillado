@@ -1,19 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { parseArgs } from "../src/cli/args.ts";
 import { appLine, mcpLaunch, shellQuote } from "../src/cli/launch.ts";
-import { createMcpServer } from "../src/cli/mcp.ts";
+import { createMcpServer, type McpOptions } from "../src/cli/mcp.ts";
 import type { Store } from "../src/cli/store.ts";
 import { addCoderComment } from "../src/core/comments.ts";
 import { PLAN_MD, draftSession, platedSession, tempStore } from "./mcp-fixture.ts";
 
-async function connect(store: Store, name = "test-coder", app?: string) {
+async function connect(store: Store, name = "test-coder", app?: string, options?: McpOptions) {
   const [a, b] = InMemoryTransport.createLinkedPair();
-  await createMcpServer(store, "0.0.0-dev", app).connect(a);
+  await createMcpServer(store, "0.0.0-dev", app, options).connect(a);
   const client = new Client({ name, version: "1.0.0" });
   await client.connect(b);
   return client;
@@ -151,6 +152,33 @@ describe("grillado mcp tools", () => {
     expect(store.readPlan(id)).toBe("# A project plan\n");
   });
 
+  test("start_plan captures immutable project-plan context and returns metadata without text", async () => {
+    const store = tempStore();
+    const project = mkdtempSync(path.join(os.tmpdir(), "grillado-mcp-project-"));
+    mkdirSync(path.join(project, "docs", "plans"), { recursive: true });
+    const source = path.join(project, "docs", "plans", "existing.md");
+    writeFileSync(source, "Existing decision");
+
+    const result = await call(await connect(store), "start_plan", { idea: "A project plan", path: project });
+    expect(result.structuredContent.projectContext.sources).toEqual([{ path: "docs/plans/existing.md", truncated: false }]);
+    expect(JSON.stringify(result.structuredContent)).not.toContain("Existing decision");
+    const saved = store.load(result.structuredContent.id)!;
+    expect(saved.projectContext?.sources[0].text).toBe("Existing decision");
+    writeFileSync(source, "Changed later");
+    expect(store.load(saved.id)?.projectContext).toEqual(saved.projectContext);
+  });
+
+  test("start_plan honors explicit and environment scan opt-outs", async () => {
+    const store = tempStore();
+    const project = mkdtempSync(path.join(os.tmpdir(), "grillado-mcp-off-"));
+    writeFileSync(path.join(project, "PLAN.md"), "Must not be read");
+    const explicit = await call(await connect(store, "test-coder", undefined, { scan: false }), "start_plan", { idea: "x", path: project });
+    const environment = await call(await connect(store, "test-coder", undefined, { env: { GRILLADO_NO_SCAN: "1" } }), "start_plan", { idea: "y", path: project });
+    expect(store.load(explicit.structuredContent.id)?.projectContext).toBeUndefined();
+    expect(store.load(environment.structuredContent.id)?.projectContext).toBeUndefined();
+    expect(explicit.structuredContent.projectContext).toBeUndefined();
+  });
+
   test("add_comment: lands on the plan as the coding agent", async () => {
     const store = tempStore();
     const s = platedSession(store);
@@ -225,10 +253,11 @@ describe("two processes writing at once", () => {
 });
 
 describe("grillado mcp args", () => {
-  test("`mcp` takes only --data-dir", async () => {
+  test("`mcp` takes only --data-dir and --no-scan", async () => {
     expect(parseArgs(["mcp"])).toMatchObject({ command: "mcp" });
     expect(parseArgs(["mcp", "--data-dir", "/tmp/x"])).toMatchObject({ command: "mcp", dataDir: "/tmp/x" });
-    expect(() => parseArgs(["mcp", "--port", "5000"])).toThrow("mcp only takes --data-dir");
+    expect(parseArgs(["mcp", "--no-scan"])).toMatchObject({ command: "mcp", scan: false });
+    expect(() => parseArgs(["mcp", "--port", "5000"])).toThrow("mcp only takes --data-dir and --no-scan");
     expect(() => parseArgs(["--port", "5000", "mcp"])).toThrow('Unknown option "mcp"');
   });
 });

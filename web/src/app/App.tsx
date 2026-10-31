@@ -13,6 +13,25 @@ import { newer } from "./newer";
 const sessionIdFromPath = () => /^\/s\/([\w-]+)$/.exec(location.pathname)?.[1] ?? null;
 const stepOf = (s: SessionView) => (s.status === "confirm" ? 2 : s.status === "synthesizing" || s.status === "plated" ? 3 : 1);
 
+function ProjectSources({ context }: { context: SessionView["projectContext"] }) {
+  if (!context) return null;
+  const count = context.sources.length;
+  return (
+    <details className="project-sources" data-testid="project-context">
+      <summary>Using {count} project {count === 1 ? "plan" : "plans"}</summary>
+      <ul>
+        {context.sources.map((source) => (
+          <li key={source.path}>
+            <code>{source.path}</code>
+            {source.truncated ? " (excerpt)" : null}
+          </li>
+        ))}
+        {context.truncated ? <li>More project context was omitted by the snapshot limits.</li> : null}
+      </ul>
+    </details>
+  );
+}
+
 export function App() {
   const [app, setApp] = useState<AppState | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(sessionIdFromPath());
@@ -180,6 +199,7 @@ export function App() {
       <Header
         step={session && !picking ? stepOf(session) : undefined}
         title={session ? session.idea.split("\n")[0] : undefined}
+        afterTitle={session && !picking ? <ProjectSources context={session.projectContext} /> : undefined}
         // v1.2: no agent in the header before a session; the composer shows it.
         provider={showAgent && session && ready.length ? provider : undefined}
         onSwitch={onSwitch}

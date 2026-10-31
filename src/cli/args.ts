@@ -81,12 +81,12 @@ export function parseArgs(argv: string[]): CliArgs {
         throw new UsageError(`Unknown option "${raw}"`);
     }
   }
-  if (out.command === "mcp" && (maxRoundsSet || out.port !== undefined || out.provider || out.model || !out.open || !out.scan)) throw new UsageError("mcp only takes --data-dir");
+  if (out.command === "mcp" && (maxRoundsSet || out.port !== undefined || out.provider || out.model || !out.open)) throw new UsageError("mcp only takes --data-dir and --no-scan");
   return out;
 }
 
 export const HELP = `Usage: grillado [options]
-       grillado mcp [--data-dir <path>]
+       grillado mcp [--data-dir <path>] [--no-scan]
 
 Turn a raw idea into a plan, one round of questions at a time, on the coding agent you already use.
 

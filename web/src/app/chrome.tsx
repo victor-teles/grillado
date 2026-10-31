@@ -101,6 +101,7 @@ export function AgentChip({ provider, onSwitch }: { provider: ProviderView; comp
 export interface HeaderProps {
   step?: number;
   title?: string;
+  afterTitle?: ReactNode;
   provider?: ProviderView;
   onSwitch?: () => void;
   onHome?: () => void;
@@ -149,6 +150,7 @@ export function Header(p: HeaderProps) {
             {p.title}
           </span>
         ) : null}
+        {p.afterTitle}
       </div>
       {p.step !== undefined && !mobile ? <Steps step={p.step} /> : <span />}
       <div className="top-r">

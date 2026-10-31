@@ -176,10 +176,10 @@ describe("found in this project: scan", () => {
     await expect(svc.import(row.id, "claude")).rejects.toMatchObject({ code: "in_progress" });
   });
 
-  test("--no-scan turns it off; mcp doesn't take it", () => {
+  test("--no-scan turns it off for the app and MCP", () => {
     expect(parseArgs([]).scan).toBe(true);
     expect(parseArgs(["--no-scan"]).scan).toBe(false);
-    expect(() => parseArgs(["mcp", "--no-scan"])).toThrow("mcp only takes --data-dir");
+    expect(parseArgs(["mcp", "--no-scan"]).scan).toBe(false);
   });
 
   test("no scan from home, a filesystem root, the data folder, or when turned off", async () => {

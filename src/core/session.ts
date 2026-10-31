@@ -6,6 +6,7 @@ import type { ProviderId } from "./providers/types.ts";
 import type { CommentState } from "./comments.ts";
 import type { PlanIssues, Slice, SplitSource } from "./issues.ts";
 import { type AnswerEdit, answerEdits, blockKey, findDecisionBlocks, overrides, serializeDecision, updateDecisionBlock, userBlocks } from "./decision-block.ts";
+import type { ProjectContext } from "./project-context.ts";
 
 export type SessionStatus =
   | "asking" // waiting for the agent's next round
@@ -83,6 +84,8 @@ export interface Session extends CommentState {
   provider: ProviderId;
   idea: string;
   context: string;
+  /** Immutable project-plan references captured when this session was created. */
+  projectContext?: ProjectContext;
   status: SessionStatus;
   rounds: Round[];
   decisions: Record<string, Decision>;
@@ -174,7 +177,7 @@ export interface ImportedSource {
   agentFrom?: ProviderId;
 }
 
-export function createSession(input: { idea: string; context?: string; provider: ProviderId }): Session {
+export function createSession(input: { idea: string; context?: string; projectContext?: ProjectContext; provider: ProviderId }): Session {
   const now = new Date().toISOString();
   return {
     id: `${now.slice(0, 10)}-${randomUUID().slice(0, 8)}`,
@@ -183,6 +186,7 @@ export function createSession(input: { idea: string; context?: string; provider:
     provider: input.provider,
     idea: input.idea.trim(),
     context: (input.context ?? "").trim(),
+    projectContext: input.projectContext,
     status: "asking",
     rounds: [],
     decisions: {},

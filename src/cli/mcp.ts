@@ -13,6 +13,8 @@ import { ImportError } from "../core/found/import.ts";
 import { FoundService } from "./found.ts";
 import { shellQuote } from "./launch.ts";
 import { type Store, defaultDataDir } from "./store.ts";
+import { captureProjectContext } from "./project-context.ts";
+import { projectContextView } from "../core/project-context.ts";
 
 const URI = "grillado://plans/";
 const planId = z.string().regex(/^[\w-]{1,80}$/, "A plan id looks like 2026-10-26-1a2b3c4d (see list_plans).");
@@ -86,6 +88,12 @@ const json = (v: unknown) => text(JSON.stringify(v, null, 2));
 
 type Result = { content: ReturnType<typeof text>[]; structuredContent?: Record<string, unknown> };
 
+export interface McpOptions {
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  scan?: boolean;
+}
+
 /** Tool errors come back as `isError` results the agent can read, not protocol errors. */
 async function safely(fn: () => Result | Promise<Result>) {
   try {
@@ -101,8 +109,7 @@ export function createMcpServer(
   store: Store,
   version = "0.0.0-dev",
   appLine = `npx grillado${store.dir === defaultDataDir() ? "" : ` --data-dir ${shellQuote(store.dir)}`}`,
-  /** Where the coding agents keep their data (tests point it at fixtures). */
-  agentHome: { home?: string; env?: NodeJS.ProcessEnv } = {},
+  options: McpOptions = {},
 ): McpServer {
   const mcp = new McpServer({ name: "grillado", version });
   const clientName = () => mcp.server.getClientVersion()?.name;
@@ -171,18 +178,22 @@ export function createMcpServer(
       },
     },
     async ({ idea, context, path }) =>
-      safely(() => {
-        const s = createSession({ idea, context, provider: store.readConfig().defaultProvider ?? PROVIDER_IDS[0] });
+      safely(async () => {
+        const cwd = path ?? process.cwd();
+        const env = options.env ?? process.env;
+        const projectContext = await captureProjectContext({ cwd, dataDir: store.dir, home: options.home, off: options.scan === false || env.GRILLADO_NO_SCAN === "1" });
+        const s = createSession({ idea, context, projectContext, provider: store.readConfig().defaultProvider ?? PROVIDER_IDS[0] });
         s.queued = true;
         // Always marked editor-started; a client without a usable name reads "From your editor" (#108).
         s.from = (clientName() ?? "").slice(0, 80);
-        store.create(s, path ?? process.cwd());
+        store.create(s, cwd);
         const info = store.readServerInfo();
         const url = info ? `http://127.0.0.1:${info.port}/s/${s.id}?t=${info.token}` : null;
         const next = url
           ? `Open ${url} to answer Grillado's questions.`
           : `Grillado's web app isn't running. Run \`${appLine}\` and open this idea from Recent; the questions start there.`;
-        return { content: [text(`Started plan ${s.id}. ${next}`)], structuredContent: { id: s.id, url, uri: URI + s.id, next } };
+        const contextView = projectContextView(projectContext);
+        return { content: [text(`Started plan ${s.id}. ${next}`)], structuredContent: { id: s.id, url, uri: URI + s.id, next, ...(contextView ? { projectContext: contextView } : {}) } };
       }),
   );
 
@@ -223,7 +234,7 @@ export function createMcpServer(
   const found = (dir?: string) => {
     const cwd = dir || process.cwd();
     let f = services.get(cwd);
-    if (!f) services.set(cwd, (f = new FoundService({ store, cwd, ...agentHome, off: (agentHome.env ?? process.env).GRILLADO_NO_SCAN === "1" })));
+    if (!f) services.set(cwd, (f = new FoundService({ store, cwd, home: options.home, env: options.env, off: options.scan === false || (options.env ?? process.env).GRILLADO_NO_SCAN === "1" })));
     if (f.skip) throw new Error(f.skip === "off" ? "The project scan is off (GRILLADO_NO_SCAN)." : `Not a project folder (${f.skip === "home" ? "the home folder" : f.skip === "root" ? "a filesystem root" : "Grillado's data folder"}). Pass the project's path.`);
     return f;
   };
@@ -291,8 +302,8 @@ export function createMcpServer(
   return mcp;
 }
 
-export async function runMcp(store: Store, version: string, appLine?: string): Promise<void> {
-  const mcp = createMcpServer(store, version, appLine);
+export async function runMcp(store: Store, version: string, appLine?: string, options?: McpOptions): Promise<void> {
+  const mcp = createMcpServer(store, version, appLine, options);
   await mcp.connect(new StdioServerTransport());
   console.error(`grillado mcp: serving ${store.dir} over stdio`);
 }

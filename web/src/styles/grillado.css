@@ -94,6 +94,13 @@ button:disabled{cursor:default}
 .mark{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;background:var(--foreground);color:var(--background);flex:none}
 .mark svg{width:14px;height:14px}
 .top .title{font-size:var(--t-body);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.project-sources{position:relative;flex:none;color:var(--muted-foreground);font-size:var(--t-meta);line-height:16px}
+.project-sources summary{cursor:pointer;white-space:nowrap;list-style:none}
+.project-sources summary::-webkit-details-marker{display:none}
+.project-sources[open] summary{color:var(--foreground)}
+.project-sources ul{position:absolute;z-index:30;top:26px;left:0;width:max-content;max-width:min(440px,calc(100vw - 24px));margin:0;padding:10px 12px;list-style:none;border:1px solid var(--border);border-radius:10px;background:var(--popover);color:var(--muted-foreground);box-shadow:0 10px 30px color-mix(in oklab,black 16%,transparent)}
+.project-sources li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-sources code{font-size:11px;color:var(--foreground)}
 .stages{display:flex;gap:20px;list-style:none;margin:0;padding:0;font-size:var(--t-body);color:var(--muted-foreground)}
 .stages li{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .stages li[aria-current]{color:var(--foreground);font-weight:500}

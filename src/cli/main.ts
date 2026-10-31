@@ -40,7 +40,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   // stdout is the MCP protocol from here on: nothing else may write to it.
   if (args.command === "mcp") {
     const store = new Store(args.dataDir ?? defaultDataDir());
-    return runMcp(store, VERSION, appLine(fileURLToPath(import.meta.url), store.dir));
+    return runMcp(store, VERSION, appLine(fileURLToPath(import.meta.url), store.dir), { scan: args.scan });
   }
 
   const here = path.dirname(fileURLToPath(import.meta.url));
