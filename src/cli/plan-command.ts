@@ -7,10 +7,10 @@ import path from "node:path";
 import { UsageError } from "./args.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
 import { MAX_COMMENT, MAX_CONTEXT, MAX_IDEA, MAX_QUOTE, PLAN_ID, commentOnPlan, getPlan, listPlans, loadPlan, sessionUrl, startPlan } from "./plans.ts";
-import { Store, defaultDataDir } from "./store.ts";
+import { Store, defaultDataDir, resolvePlansDir } from "./store.ts";
 
 export const PLAN_HELP = `Usage: grillado plan start <idea> [--context <text>] [--context-file <path>] [--path <dir>]
-                            [--from <name>] [--no-open] [--json]
+                            [--plans-dir <path>] [--from <name>] [--no-open] [--json]
        grillado plan wait <id> [--timeout <seconds>] [--json]
        grillado plan get <id> [--json]
        grillado plan list [--json]
@@ -31,7 +31,7 @@ export const DEFAULT_WAIT_S = 540;
 const APP_START_MS = 15_000;
 
 type Flags = Record<string, string | true>;
-const VALUE = new Set(["--context", "--context-file", "--path", "--from", "--timeout", "--quote", "--text", "--data-dir"]);
+const VALUE = new Set(["--context", "--context-file", "--path", "--plans-dir", "--from", "--timeout", "--quote", "--text", "--data-dir"]);
 const BOOL = new Set(["--no-open", "--json"]);
 
 function parse(argv: string[]): { pos: string[]; flags: Flags } {
@@ -63,7 +63,7 @@ const str = (f: Flags, k: string) => (typeof f[k] === "string" ? (f[k] as string
 
 /** The options each command takes, besides --json and --data-dir. */
 const TAKES: Record<string, string[]> = {
-  start: ["--context", "--context-file", "--path", "--from", "--no-open"],
+  start: ["--context", "--context-file", "--path", "--plans-dir", "--from", "--no-open"],
   wait: ["--timeout"],
   get: [],
   list: [],
@@ -186,7 +186,8 @@ export async function runPlan(argv: string[], c: PlanCommandEnv): Promise<number
         if (context && context.length > MAX_CONTEXT) throw new UsageError(`The context is longer than ${MAX_CONTEXT} characters.`);
         const cwd = path.resolve(c.cwd ?? process.cwd(), str(flags, "--path") ?? ".");
         const appLine = c.appLine(store.dir);
-        const r = await startPlan(store, { idea, context, cwd, from: str(flags, "--from") ?? "", appLine, scanOff: env.GRILLADO_NO_SCAN === "1" });
+        const plansDir = str(flags, "--plans-dir");
+        const r = await startPlan(store, { idea, context, cwd, plansDir: plansDir ? resolvePlansDir(cwd, plansDir) : undefined, from: str(flags, "--from") ?? "", appLine, scanOff: env.GRILLADO_NO_SCAN === "1" });
         let app: "running" | "started" | "unavailable" = r.url ? "running" : "unavailable";
         let url = r.url;
         if (!url) {

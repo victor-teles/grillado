@@ -108,8 +108,10 @@ export function sessionUrl(store: Store, id: string): string | null {
 export interface StartInput {
   idea: string;
   context?: string;
-  /** The project folder; its docs/plans gets the plan. */
+  /** The project folder; its plans folder (docs/plans unless the user set another) gets the plan. */
   cwd: string;
+  /** Plan 005: an absolute plans folder for this plan, over the project's setting. */
+  plansDir?: string;
   /** Who started it, for Recent ("From Cursor"); "" reads "From your editor". */
   from?: string;
   /** How to start the web app, for the hint when none is running. */
@@ -126,7 +128,7 @@ export async function startPlan(store: Store, input: StartInput) {
   s.queued = true;
   // Always marked editor-started; a client without a usable name reads "From your editor" (#108).
   s.from = (input.from ?? "").slice(0, 80);
-  store.create(s, input.cwd);
+  store.create(s, input.cwd, input.plansDir);
   const url = sessionUrl(store, s.id);
   const next = url ? `Open ${url} to answer Grillado's questions.` : `Grillado's web app isn't running. Run \`${input.appLine}\` and open this idea from Recent; the questions start there.`;
   const contextView = projectContextView(projectContext);

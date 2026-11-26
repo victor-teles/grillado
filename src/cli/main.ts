@@ -87,6 +87,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     // Tests point Linear at a local fake; only a loopback URL is taken, so the key can't be sent anywhere else.
     issues: /^http:\/\/127\.0\.0\.1:\d+\/[\w/-]*$/.test(process.env.GRILLADO_LINEAR_URL ?? "") ? { linear: { url: process.env.GRILLADO_LINEAR_URL } } : undefined,
     found: new FoundService({ store, cwd: process.cwd(), off: !args.scan || process.env.GRILLADO_NO_SCAN === "1" }),
+    foundFor: (cwd) => new FoundService({ store, cwd, off: !args.scan || process.env.GRILLADO_NO_SCAN === "1" }),
+    plansDir: args.plansDir,
     noCode: !args.code || process.env.GRILLADO_NO_CODE === "1",
     // Plan 004: an app `plan start` opened in the background goes away on its own. GRILLADO_IDLE_MS is for tests.
     idleExitMs: args.exitWhenIdle ? Number(process.env.GRILLADO_IDLE_MS) || 30 * 60_000 : undefined,

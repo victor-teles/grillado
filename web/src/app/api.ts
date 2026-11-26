@@ -36,6 +36,8 @@ export const api = {
   createSession: (idea: string, context: string, read?: boolean) => call<SessionView>("POST", "/api/sessions", { idea, context, ...(read === undefined ? {} : { read }) }),
   /** Plan 002: let the agent read this project, or not (kept per project). */
   setProjectRead: (on: boolean) => call<AppState>("POST", "/api/project-read", { on }),
+  /** Plan 005: switch Home's project, or change where its plans are saved. */
+  setProject: (change: { folder?: string; plansDir?: string }) => call<AppState>("POST", "/api/project", change),
   session: (id: string) => call<SessionView>("GET", `/api/sessions/${encodeURIComponent(id)}`),
   /** Autosave of the edited plan. Small bodies use `keepalive` so a save started while leaving the page still lands. */
   savePlan: (id: string, markdown: string, base?: string, reask?: boolean) =>

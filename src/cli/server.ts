@@ -54,7 +54,7 @@ import { type AgentRun, type FoundService, type ImportResult, type Writer, store
 import { stripInvocation } from "../core/found/extract.ts";
 import { STOPPED } from "../core/reason.ts";
 import { ImportError } from "../core/found/import.ts";
-import type { Store } from "./store.ts";
+import { DEFAULT_PLANS_DIR, type Store, expandHome, resolvePlansDir } from "./store.ts";
 import { IssuesRoutes, type IssuesOptions } from "./issues/routes.ts";
 import { captureProjectContext } from "./project-context.ts";
 import { projectContextView } from "../core/project-context.ts";
@@ -78,8 +78,12 @@ export interface ServerOptions {
   mcpLaunch?: McpLaunch;
   /** "Found in this project" (v1.3 item 1): the launch folder's scan. None: the feature is off. */
   found?: FoundService;
+  /** Plan 005: the scan for another project folder, when the user picks one on Home. */
+  foundFor?: (cwd: string) => FoundService;
   /** The folder `npx grillado` ran in: the default repository for "Send to issues" (v1.3 item 2). */
   launchDir?: string;
+  /** `--plans-dir` (plan 005): where the launch folder's plans go this run, over its saved setting. */
+  plansDir?: string;
   /** "Send to issues": gh and Linear settings (tests point them at fakes). */
   issues?: IssuesOptions;
   /** `--max-rounds` (#32): this process's cap for every session and agent. Absent: DEFAULT_MAX_ROUNDS. */
@@ -148,8 +152,15 @@ export class GrilladoServer {
   /** The last run per thread, per "Add diagrams" and per interview, so Try again can say what it retries. */
   private lastRun = new Map<string, string>();
   private issues: IssuesRoutes;
-  /** The launch folder's project, for Home's "Reads {project}" chip (plan 002); set by detect(). */
+  /** Home's project's read access, for its "Reads {project}" chip (plan 002); set by detect(). */
   private place: ReadPlace | null = null;
+  /** Plan 005: the project folder Home works in, the launch folder until the user picks another. */
+  private folder?: string;
+  /** "Found in this project" for that folder; one scan per folder visited, kept for switching back. */
+  private found?: FoundService;
+  private foundBy = new Map<string, FoundService>();
+  /** `--plans-dir`, until the user sets the launch folder's plans folder on Home. */
+  private cliPlansDir?: string;
   /** Plan 003: what each running reading run has opened, for the wait screens. */
   private reading = new Map<string, ReadingTrail>();
   /** Plan 003: sessions whose next round or plan run skips reading, once (Skip reading, Ask without reading). */
@@ -160,7 +171,13 @@ export class GrilladoServer {
   port = 0;
 
   constructor(private opts: ServerOptions) {
-    if (opts.found) opts.found.onChange = () => this.broadcast({ type: "found" });
+    this.folder = opts.launchDir ? path.resolve(opts.launchDir) : undefined;
+    this.cliPlansDir = opts.plansDir;
+    this.found = opts.found;
+    if (opts.found) {
+      opts.found.onChange = () => this.broadcast({ type: "found" });
+      if (this.folder) this.foundBy.set(this.folder, opts.found);
+    }
     this.issues = new IssuesRoutes(
       {
         store: opts.store,
@@ -221,7 +238,7 @@ export class GrilladoServer {
     } else if (remembered && ready.includes(remembered)) this.selected = remembered;
     else if (ready.length === 1) this.selected = ready[0];
     else this.selected = null;
-    this.place = await readPlace(this.opts.launchDir, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
+    this.place = await readPlace(this.folder, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
     return this.providers;
   }
 
@@ -376,6 +393,7 @@ export class GrilladoServer {
         return;
       }
       if (req.method === "POST" && parts[0] === "project-read") return this.setProjectRead(res, body);
+      if (req.method === "POST" && parts[0] === "project") return await this.setProject(res, body);
       if (parts[0] === "sessions") return await this.sessionRoutes(req, res, parts.slice(1), body);
       if (parts[0] === "found") return await this.foundRoutes(req, res, parts.slice(1), body);
       if (parts[0] === "github" || parts[0] === "linear") return await this.issues.appRoutes(req, res, parts, body, url.searchParams, (r, st, d) => this.json(r, st, d));
@@ -601,6 +619,8 @@ export class GrilladoServer {
         ...(s.source ? { source: { app: s.source.app, kind: s.source.kind }, ...(s.source.title ? { title: s.source.title } : {}) } : {}),
         from: s.from,
         queued: !!s.queued,
+        // Plan 005: the project it was planned in, so Recent can say when it isn't Home's.
+        ...(s.project ? { project: { name: path.basename(s.project), folder: tildify(s.project) } } : {}),
       })),
       dataDir: tildify(this.opts.store.dir),
       // Always present (review N4): without one passed in, the build next to the web dir.
@@ -660,29 +680,29 @@ export class GrilladoServer {
   /** §5: the source's state for the plan's meta line, dated like its Activity entry (the source's date). */
   private sourceInfo(s: Session) {
     const at = (this.lines(s).find((l) => l.type === "import") as { at: string } | undefined)?.at ?? s.source!.importedAt;
-    const i = this.opts.found && !this.opts.found.skip ? this.opts.found.sourceInfo(s) : null;
+    const i = this.found && !this.found.skip ? this.found.sourceInfo(s) : null;
     return { ...(i ?? { state: existsSync(s.source!.path) ? ("current" as const) : ("gone" as const), row: "" }), date: at };
   }
 
   /** The launch scan. Errors stay local: a scan that fails shows nothing, it never stops the app. */
   async scanProject() {
-    if (!this.opts.found || this.opts.found.skip) return;
+    if (!this.found || this.found.skip) return;
     try {
-      await this.opts.found.scan();
+      await this.found.scan();
     } catch (err) {
       console.error(`grillado: project scan failed: ${(err as Error)?.message ?? err}`);
     }
   }
 
   private foundView() {
-    const f = this.opts.found;
+    const f = this.found;
     return f ? f.view() : { enabled: false as const, reason: "off" as const };
   }
 
   private static FOUND_STATUS: Record<ImportError["code"], number> = { unknown: 404, in_progress: 409, needs_agent: 409, busy: 409, not_qualified: 422, unreadable: 422, filtered: 422, stopped: 409, agent: 502 };
 
   private async foundRoutes(req: http.IncomingMessage, res: http.ServerResponse, parts: string[], body: any) {
-    const f = this.opts.found;
+    const f = this.found;
     const view = () => this.foundView();
     if (req.method === "GET" && parts.length === 0) return this.json(res, 200, view());
     if (req.method !== "POST" || parts.length !== 1) return this.json(res, 404, { error: "Not found" });
@@ -842,12 +862,106 @@ export class GrilladoServer {
 
   // ---------------------------------------------------------------- read access (plan 002)
 
-  /** Home's chip: the launch project, whether it can be read, and whether the user turned it off. */
+  /**
+   * Home's project chip: the folder new plans start in, where their plans are saved, the other
+   * projects to switch to, and whether the agent may read it (plan 002) and the user turned that off.
+   */
   private projectView() {
+    const folder = this.folder;
+    if (!folder) return null;
     const p = this.place;
-    if (!p || (!p.ok && !p.name)) return null;
-    if (!p.ok) return { name: p.name!, readable: false, reason: p.reason };
-    return { name: p.name, root: tildify(p.root), readable: true, on: !this.readOff(p.root) };
+    const base = {
+      name: p?.name ?? (path.basename(folder) || folder),
+      folder: tildify(folder),
+      plansDir: this.plansSetting(folder) ?? "",
+      plansAt: tildify(this.plansDirFor(folder)),
+      known: this.knownProjects(),
+    };
+    if (!p?.ok) return { ...base, readable: false as const, reason: p?.reason ?? ("no-project" as const) };
+    return { ...base, root: tildify(p.root), readable: true as const, on: !this.readOff(p.root) };
+  }
+
+  /** The saved plans folder setting for a project, `--plans-dir` first for the launch folder. */
+  private plansSetting(folder: string): string | undefined {
+    if (this.cliPlansDir !== undefined && this.opts.launchDir && folder === path.resolve(this.opts.launchDir)) return this.cliPlansDir;
+    return this.opts.store.plansSetting(folder);
+  }
+
+  private plansDirFor(folder: string) {
+    return resolvePlansDir(folder, this.plansSetting(folder), this.homeDir());
+  }
+
+  private homeDir() {
+    return this.opts.home ?? os.homedir();
+  }
+
+  /** Projects to switch to: picked on Home, then the ones sessions were planned in, newest first. */
+  private knownProjects() {
+    const seen = new Set<string>();
+    const out: { folder: string; name: string }[] = [];
+    const add = (dir: string | undefined) => {
+      if (!dir || out.length >= 8) return;
+      const abs = path.resolve(dir);
+      if (seen.has(abs) || !existsSync(abs)) return;
+      seen.add(abs);
+      out.push({ folder: tildify(abs), name: path.basename(abs) || abs });
+    };
+    add(this.folder);
+    for (const d of this.opts.store.readConfig().projects ?? []) add(d);
+    add(this.opts.launchDir);
+    for (const x of this.opts.store.list()) add(x.project);
+    return out;
+  }
+
+  /** Plan 005: pick the project Home works in, or where its plans are saved. */
+  private async setProject(res: http.ServerResponse, body: any) {
+    if (typeof body?.folder === "string") {
+      const typed = body.folder.trim();
+      if (!typed) throw new Error("Type the project’s folder.");
+      const dir = path.resolve(expandHome(typed, this.homeDir()));
+      if (!path.isAbsolute(expandHome(typed, this.homeDir()))) throw new Error("Type the full path, like ~/code/app.");
+      let isDir = false;
+      try {
+        isDir = statSync(dir).isDirectory();
+      } catch {
+        throw new Error("That folder doesn’t exist.");
+      }
+      if (!isDir) throw new Error("That’s a file. Pick its folder.");
+      if (path.dirname(dir) === dir) throw new Error("Pick a project folder, not the whole disk.");
+      await this.useFolder(dir);
+    }
+    if (typeof body?.plansDir === "string") {
+      const folder = this.folder;
+      if (!folder) throw new Error("Pick a project first.");
+      const v = body.plansDir.trim();
+      if (v.length > 500 || v.includes("\0")) throw new Error("That folder name can’t be used.");
+      const c = this.opts.store.readConfig();
+      const dirs = { ...(c.plansDirs ?? {}) };
+      if (!v || v === DEFAULT_PLANS_DIR) delete dirs[folder];
+      else dirs[folder] = v;
+      this.opts.store.writeConfig({ ...c, plansDirs: dirs });
+      if (this.opts.launchDir && folder === path.resolve(this.opts.launchDir)) this.cliPlansDir = undefined;
+    }
+    this.broadcast({ type: "app" });
+    return this.json(res, 200, this.appState());
+  }
+
+  private async useFolder(dir: string) {
+    if (dir === this.folder) return;
+    this.folder = dir;
+    const c = this.opts.store.readConfig();
+    this.opts.store.writeConfig({ ...c, projects: [dir, ...(c.projects ?? []).filter((d) => d !== dir)].slice(0, 12) });
+    this.place = await readPlace(dir, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
+    let f = this.foundBy.get(dir);
+    if (!f && this.opts.foundFor) {
+      f = this.opts.foundFor(dir);
+      this.foundBy.set(dir, f);
+    }
+    for (const x of this.foundBy.values()) x.onChange = undefined;
+    if (f) f.onChange = () => this.broadcast({ type: "found" });
+    this.found = f;
+    this.broadcast({ type: "found" });
+    if (f && f.state === "idle") void this.scanProject();
   }
 
   private readOff(root: string) {
@@ -1421,13 +1535,14 @@ export class GrilladoServer {
       if (!idea) throw new Error("Tell me the idea first.");
       if (!this.selected) throw new Error("Pick an agent first.");
       const projectContext = await captureProjectContext({
-        cwd: this.opts.launchDir ?? process.cwd(),
+        cwd: this.folder ?? process.cwd(),
         dataDir: this.opts.store.dir,
-        home: this.opts.found?.home,
-        off: !!this.opts.found?.skip,
+        home: this.found?.home,
+        off: !!this.found?.skip,
       });
       const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), projectContext, provider: this.selected });
-      this.opts.store.create(s, this.opts.launchDir);
+      if (this.folder) this.opts.store.create(s, this.folder, this.plansDirFor(this.folder));
+      else this.opts.store.create(s);
       // The composer's chip (plan 002): what it showed at Start applies, over the saved project preference
       // (a click just before Start may not be saved yet). On still needs the project and the agent to allow it.
       if (body?.read === false) s.codeRead = false;

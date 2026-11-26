@@ -11,12 +11,29 @@ export interface Config {
   foundHidden?: string[];
   /** Project roots whose agent must not read the code (plan 002): the composer's checkbox, off. */
   codeReadOff?: string[];
+  /** Where each project's plans are saved (plan 005), by project folder; absent: `docs/plans`. */
+  plansDirs?: Record<string, string>;
+  /** Project folders picked on Home (plan 005), newest first, for its project list. */
+  projects?: string[];
   /** "Send to issues" (v1.3 item 2): the last destination, per project too (#179), and the labels last used per target (#177). */
   issues?: {
     last?: "github" | "linear";
     byProject?: Record<string, "github" | "linear">;
     labels?: Record<string, string[]>;
   };
+}
+
+/** Where a project's plans go unless the user picks another folder (plan 005). */
+export const DEFAULT_PLANS_DIR = "docs/plans";
+
+/** `~/x` to the home folder; anything else as typed. */
+export function expandHome(p: string, home = os.homedir()) {
+  return p === "~" ? home : p.startsWith("~/") ? path.join(home, p.slice(2)) : p;
+}
+
+/** A plans folder setting as an absolute path: relative ones live in the project. */
+export function resolvePlansDir(project: string, setting: string | undefined, home = os.homedir()) {
+  return path.resolve(project, expandHome(setting?.trim() || DEFAULT_PLANS_DIR, home));
 }
 
 export function defaultDataDir(env = process.env): string {
@@ -131,14 +148,23 @@ export class Store {
     });
   }
 
-  /** Create a session, optionally binding its Markdown output to the launch project. */
-  create(s: Session, project?: string) {
+  /** The project's plans folder setting as saved (plan 005); undefined: the default. */
+  plansSetting(project: string): string | undefined {
+    return this.readConfig().plansDirs?.[path.resolve(project)];
+  }
+
+  /**
+   * Create a session, optionally binding its Markdown output to a project: the plan goes in
+   * `plansDir` when given (an absolute folder), else in the project's saved plans folder.
+   */
+  create(s: Session, project?: string, plansDir?: string) {
     const file = this.sessionFile(s.id);
     withLock(file, () => {
       if (existsSync(file)) throw new Error("Session already exists");
       if (project) {
         s.project = path.resolve(project);
-        s.planFile = path.join(s.project, "docs", "plans", `grillado-plan-${s.id}.md`);
+        const dir = plansDir ?? resolvePlansDir(s.project, this.plansSetting(s.project));
+        s.planFile = path.join(dir, `grillado-plan-${s.id}.md`);
       }
       writeAtomic(file, JSON.stringify(s, null, 2));
     });

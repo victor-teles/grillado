@@ -1480,3 +1480,25 @@ button.fchip[aria-expanded=true]{background:color-mix(in oklab,var(--foreground)
 .found-code li .fix input:focus-visible{outline:2px solid var(--ring);outline-offset:0}
 .found-code li .fix .err{font-size:var(--t-meta);color:var(--destructive-ink)}
 @media (max-width:767px){.found-code li .fix{grid-column:1}}
+
+/* Plan 005: the project chip's popover. Sections: the project, where plans are saved, reading. */
+.readpop{width:min(360px,calc(100vw - 32px));max-height:min(560px,calc(100vh - 96px));overflow-y:auto;gap:0;padding:6px 0}
+.readpop .psec{display:grid;gap:8px;padding:10px 16px}
+.readpop .psec+.psec{border-top:1px solid var(--border)}
+.readpop .plist{display:grid;gap:2px;margin:0 -8px;padding:0;list-style:none}
+.readpop .prow{display:grid;grid-template-columns:16px minmax(0,auto) minmax(0,1fr);align-items:center;gap:8px;width:100%;min-height:36px;padding:0 8px;border:0;border-radius:8px;background:none;color:var(--foreground);font:inherit;text-align:left;cursor:pointer;transition:background-color var(--d-quick) var(--ease-out)}
+.readpop .prow[aria-current]{cursor:default}
+@media (hover:hover){.readpop .prow:not([aria-current]):hover{background:var(--muted)}}
+.readpop .prow:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.readpop .prow .ck{display:inline-flex;color:var(--foreground)}
+.readpop .prow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.readpop .prow .at,.readpop .at1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground);font:400 12px/16px var(--mono)}
+.readpop .at1{margin:0}
+.readpop .pfield{display:grid;gap:6px;min-width:0}
+.readpop .pfield label{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.readpop .pfield .in{display:flex;gap:6px;min-width:0}
+.readpop .pfield input{flex:1;min-width:0;height:32px;padding:0 10px;border:0;border-radius:9px;background:var(--background);box-shadow:inset 0 0 0 1px var(--hair);color:var(--foreground);font:400 13px/16px var(--mono)}
+.readpop .pfield input:focus-visible{outline:2px solid var(--ring);outline-offset:0}
+.readpop .pfield .hint{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);overflow-wrap:anywhere}
+.readpop .err{font-size:var(--t-meta);color:var(--destructive-ink)}
+@media (max-width:767px){.readpop .pfield input{font-size:16px}}

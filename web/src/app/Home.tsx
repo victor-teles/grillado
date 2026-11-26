@@ -8,7 +8,7 @@ import { sourceLabel } from "../../../src/core/activity.ts";
 import { issuesText, statusText } from "./recent";
 import { Found } from "./found/Found";
 import { useFoundHandoff } from "./found/handoff";
-import { ReadChip, readsNow, useProjectRead } from "./project/ReadChip";
+import { ProjectChip, readsNow, useProjectRead } from "./project/ReadChip";
 
 // ---------------------------------------------------------------- 0c no agent
 
@@ -291,7 +291,7 @@ export function Landing({
           ) : null}
           <div className="ar">
             {provider ? <AgentChip provider={provider} onSwitch={onSwitch} /> : null}
-            <ReadChip project={project} provider={provider} onChange={setProjectRead} />
+            <ProjectChip project={project} provider={provider} onChange={setProjectRead} />
             {showContext ? null : (
               <button type="button" className="icon-btn" aria-label="Add context" onClick={() => setShowContext(true)}>
                 <IPlus s={16} />
@@ -304,14 +304,20 @@ export function Landing({
         </form>
         {/* Found in this project (v1.3 item 1): its one mount point. Q1 (placement) moves only this line. */}
         <Found agent={provider?.displayName ?? "Your agent"} initial={state.found} onOpen={onOpen} {...handoff.found} />
-        <Recent sessions={handoff.sessions} dataDir={state.dataDir} onOpen={onOpen} enter={handoff.enter} onEntered={handoff.entered} />
+        <Recent sessions={handoff.sessions} here={state.project?.folder} dataDir={state.dataDir} onOpen={onOpen} enter={handoff.enter} onEntered={handoff.entered} />
       </div>
     </main>
   );
 }
 
 /** The full status line as plain text, for hover where the desktop cap cuts it (review of #43). */
-function metaTitle(s: SessionSummary) {
+/** Plan 005: a session planned in another project than the one Home is on. */
+function elsewhere(s: SessionSummary, here: string | undefined) {
+  return !!s.project && !!here && s.project.folder !== here;
+}
+
+function metaTitle(s: SessionSummary, here?: string): string {
+  if (elsewhere(s, here)) return `${s.project!.name} (${s.project!.folder}) · ${metaTitle(s)}`;
   const rest = `${statusText(s)} · ${when(s.updatedAt)}`;
   if (s.source) return `From ${sourceLabel(s.source.app, s.source.kind).replace(/^Plan file$/, "plan file")} · ${rest}`;
   if (s.from !== undefined) return `${fromEditor(s.from)} · ${s.queued ? "waiting for your answers" : rest}`;
@@ -333,12 +339,15 @@ function when(iso: string) {
 
 function Recent({
   sessions,
+  here,
   dataDir,
   onOpen,
   enter,
   onEntered,
 }: {
   sessions: SessionSummary[];
+  /** Home's project folder (plan 005): rows from other projects name theirs. */
+  here?: string;
   dataDir: string;
   onOpen: (id: string) => void;
   /** A plan that just left Found (v1.3 item 1): its row opens in (220ms ease-out), nothing else moves. */
@@ -388,7 +397,13 @@ function Recent({
               }}
             >
               <span className="nm">{s.title || s.idea.split("\n")[0]}</span>
-              <span className="meta" title={metaTitle(s)}>
+              <span className="meta" title={metaTitle(s, here)}>
+                {elsewhere(s, here) ? (
+                  // Plan 005: planned in another project than Home's.
+                  <>
+                    <span className="src1">{s.project!.name}</span> ·{" "}
+                  </>
+                ) : null}
                 {s.source ? (
                   // Imported from a source found in the project (v1.3 item 1 §6, #143).
                   <>

@@ -8,6 +8,8 @@ export interface CliArgs {
   provider?: ProviderId;
   open: boolean;
   dataDir?: string;
+  /** `--plans-dir` (plan 005): where this folder's plans are saved; relative to it. */
+  plansDir?: string;
   model?: string;
   help: boolean;
   version: boolean;
@@ -76,6 +78,9 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--data-dir":
         out.dataDir = value();
         break;
+      case "--plans-dir":
+        out.plansDir = value();
+        break;
       case "--model":
         out.model = value();
         break;
@@ -91,7 +96,7 @@ export function parseArgs(argv: string[]): CliArgs {
         throw new UsageError(`Unknown option "${raw}"`);
     }
   }
-  if (out.command === "mcp" && (maxRoundsSet || out.port !== undefined || out.provider || out.model || !out.open || !out.code || out.exitWhenIdle)) throw new UsageError("mcp only takes --data-dir and --no-scan");
+  if (out.command === "mcp" && (maxRoundsSet || out.port !== undefined || out.provider || out.model || !out.open || !out.code || out.exitWhenIdle || out.plansDir !== undefined)) throw new UsageError("mcp only takes --data-dir and --no-scan");
   return out;
 }
 
@@ -110,6 +115,8 @@ Options:
   --no-scan           Don't look in this folder for plans and planning sessions from your
                       coding agent (also GRILLADO_NO_SCAN=1). Nothing is imported unless you click.
   --no-code           Don't let the agent read this project's files (also GRILLADO_NO_CODE=1)
+  --plans-dir <path>  Where this folder's plans are saved (default docs/plans; relative paths
+                      are inside the folder). Home can switch projects and change it too.
   --exit-when-idle    Quit after 30 minutes with no browser open and nothing running
   --data-dir <path>   Session data (default ~/.grillado, or $GRILLADO_HOME)
   -v, --version       Print the version

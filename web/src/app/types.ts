@@ -19,9 +19,23 @@ export interface ProviderView {
 }
 
 /** The launch folder's project, for Home's read chip (plan 002). */
-export type ProjectView =
-  | { name: string; readable: false; reason: "no-project" | "not-git" | "home" | "root" | "data-dir" | "off" }
-  | { name: string; readable: true; root: string; on: boolean };
+/** Plan 005: where new plans start and are saved, and the projects Home can switch to. */
+export interface ProjectPlace {
+  name: string;
+  /** The project folder, `~` for home. */
+  folder: string;
+  /** The plans folder setting as typed; "" is the default, docs/plans. */
+  plansDir: string;
+  /** Where new plans are saved, in full. */
+  plansAt: string;
+  known: { folder: string; name: string }[];
+}
+
+export type ProjectView = ProjectPlace &
+  (
+    | { readable: false; reason: "no-project" | "not-git" | "home" | "root" | "data-dir" | "off" }
+    | { readable: true; root: string; on: boolean }
+  );
 
 /** Plan 002: a fact the agent read from the project, so didn't ask; its paths were checked. */
 export interface Finding {
@@ -55,6 +69,8 @@ export interface SessionSummary {
   source?: { app: SourceApp; kind: SourceKind };
   /** The plan's export (friction 26): its parent issue, else how many issues it sent. */
   issues?: { parent: { number?: number; identifier?: string } | null; items: Record<string, unknown> } | null;
+  /** Plan 005: the project it was planned in. */
+  project?: { name: string; folder: string };
 }
 
 // ---------------------------------------------------------------- found in this project (v1.3 item 1)
