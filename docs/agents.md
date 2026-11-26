@@ -26,7 +26,7 @@ No setup: any agent with a shell can run them with `npx -y grillado`.
 
 ```
 grillado plan start <idea> [--context <text>] [--context-file <path>] [--path <dir>]
-                           [--from <name>] [--no-open] [--json]
+                           [--plans-dir <path>] [--from <name>] [--no-open] [--json]
 grillado plan wait <id> [--timeout <seconds>] [--json]
 grillado plan get <id> [--json]
 grillado plan list [--json]
@@ -34,7 +34,8 @@ grillado plan comment <id> --quote <text> --text <text> [--json]
 ```
 
 - `start` creates the plan (in `--path`, or the current folder; its Markdown goes to
-  `docs/plans/` there) and opens its questions in the browser. When the web app isn't running it
+  `docs/plans/` there, or to `--plans-dir`, or to the plans folder the user set for the project
+  in the web app) and opens its questions in the browser. When the web app isn't running it
   starts one in the background with `--exit-when-idle`, so it quits after 30 minutes with no
   browser open and nothing running. `--from` names the agent in Recent ("From Claude Code").
 - `wait` returns the plan once the user has finished. After `--timeout` (default 540 seconds,

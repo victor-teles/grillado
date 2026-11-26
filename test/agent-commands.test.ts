@@ -1,7 +1,7 @@
 // Plan 004: coding agents find Grillado (the skill stub, `grillado skills`) and use it from a shell
 // (`grillado plan …`), and an app started for them goes away on its own.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -193,6 +193,22 @@ describe("grillado plan", () => {
     const s = store.load(r.id)!;
     expect(s).toMatchObject({ idea: "Save carts", context: "Next.js, Prisma", queued: true, from: "claude-code", project });
     expect(s.planFile).toBe(path.join(project, "docs", "plans", `grillado-plan-${r.id}.md`));
+    store.clearServerInfo(process.pid);
+  });
+
+  test("start: --plans-dir, else the folder set on Home, picks where the plan is saved (plan 005)", async () => {
+    const store = tempStore();
+    store.writeServerInfo({ pid: process.pid, port: 4999, token: "tok" });
+    const project = realpathSync(mkdtempSync(path.join(os.tmpdir(), "grillado-proj-")));
+    const { c, env } = base(store, { cwd: project, open: () => {} });
+    expect(await runPlan(["start", "Save", "carts", "--plans-dir", "notes/plans", "--json"], env)).toBe(0);
+    const a = JSON.parse(c.o.out);
+    expect(store.load(a.id)!.planFile).toBe(path.join(project, "notes", "plans", `grillado-plan-${a.id}.md`));
+    store.writeConfig({ plansDirs: { [project]: "decisions" } });
+    c.o.out = "";
+    expect(await runPlan(["start", "Share", "carts", "--json"], env)).toBe(0);
+    const b = JSON.parse(c.o.out);
+    expect(store.load(b.id)!.planFile).toBe(path.join(project, "decisions", `grillado-plan-${b.id}.md`));
     store.clearServerInfo(process.pid);
   });
 });

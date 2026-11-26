@@ -2,10 +2,12 @@
 // checkbox kept across a reload and honoured at Start), a grounded round ("Found in your code",
 // "From your code" on the card that has evidence and not on the one without), number keys and Enter
 // unchanged, "In your code" in the plan, the header disclosure, phones at 390px, dark and light with
-// axe, and a folder outside git (no chip). Fake agent CLIs; one server and one browser at a time.
+// axe, and a folder outside git (the chip names it, no checkbox). Plan 005: switching Home to another
+// project from the chip, and saving its plans in another folder. Fake agent CLIs; one server and one
+// browser at a time.
 //   CHROME_PATH=… node e2e/grounded.mjs
 import { spawn, execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
@@ -120,11 +122,12 @@ try {
       // Off: the chip changes, survives a reload, and the next session runs tools-off.
       await chip.click();
       await pop.getByRole("checkbox").uncheck();
-      await until(async () => (await chip.innerText()).includes("Not reading files"), "chip off");
+      const offLabel = async () => { const t = await chip.innerText(); return t.includes("recipes") && !t.includes("Reads"); };
+      await until(offLabel, "chip off");
       await pg.keyboard.press("Escape");
       await pg.reload();
       await chip.waitFor();
-      check("off survives a reload", (await chip.innerText()).includes("Not reading files"));
+      check("off survives a reload, naming the project only", await offLabel());
       await pg.locator("textarea.tx").fill("A shopping list");
       await pg.keyboard.press("Enter");
       await pg.getByTestId("question").first().waitFor({ timeout: 15000 });
@@ -185,6 +188,11 @@ try {
   await mp.getByTestId("read-chip").waitFor();
   check("390px Home: no sideways scroll with a long project name", await noScroll(mp));
   check("390px: the composer row stays on one line", await mp.evaluate(() => { const r = [...document.querySelectorAll(".composer .ar > *")].map((e) => e.getBoundingClientRect().top); return Math.max(...r) - Math.min(...r) < 8; }));
+  await mp.getByTestId("read-chip").tap();
+  await mp.getByTestId("read-pop").waitFor();
+  check("390px: the project popover fits the screen", await mp.evaluate(() => { const r = document.querySelector("[data-testid=read-pop]").getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; }));
+  await mp.keyboard.press("Escape");
+  await until(async () => !(await mp.getByTestId("read-pop").isVisible()), "phone popover closed");
   await mp.locator("textarea.tx").fill("Save recipes offline");
   await mp.getByRole("button", { name: "Start" }).tap();
   await mp.getByTestId("question").first().waitFor({ timeout: 15000 });
@@ -194,18 +202,70 @@ try {
   await m.close();
   await srv2.stop();
 
-  // Outside git: no chip, and the session behaves as before.
+  // Outside git: the chip names the folder and can't turn reading on; the session behaves as before.
   const plain = path.join(WORK, "plain");
   mkdirSync(plain);
   const srv3 = await server(plain);
   const p = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
   await p.goto(srv3.url);
   await p.locator("textarea.tx").waitFor();
-  check("outside a git repository there is no chip", (await p.getByTestId("read-chip").count()) === 0);
+  const pchip = p.getByTestId("read-chip");
+  check("outside a git repository the chip names the folder, not reading", (await pchip.innerText()).trim() === "plain");
+  await pchip.click();
+  const ppop = p.getByTestId("read-pop");
+  await ppop.waitFor();
+  check("its popover says why it isn’t read, with no checkbox", (await ppop.innerText()).includes("only when it’s a git repository") && (await ppop.getByRole("checkbox").count()) === 0);
+  check("and where plans are saved", (await ppop.innerText()).includes(path.join(plain, "docs", "plans")));
+  await axe(p, "the project popover outside git");
+  await p.keyboard.press("Escape");
   await p.locator("textarea.tx").fill("A shopping list");
   await p.keyboard.press("Enter");
   await p.getByTestId("question").first().waitFor({ timeout: 15000 });
   check("and the round runs tools-off", srv3.calls().every((c) => !isRead(c)));
+
+  // Plan 005: switch Home to the git project from the chip, save its plans elsewhere, plan there.
+  await p.goto(srv3.url);
+  await pchip.waitFor();
+  check("Recent has no project label for this folder’s own session", !(await p.locator(".recent").innerText()).includes("recipes"));
+  await pchip.click();
+  await ppop.waitFor();
+  const other = p.getByTestId("project-other");
+  await other.fill("/nowhere/at/all");
+  await other.press("Enter");
+  await until(async () => (await ppop.innerText()).includes("That folder doesn’t exist."), "error shown");
+  check("a folder that doesn’t exist is refused in place", true);
+  await other.fill(project);
+  await other.press("Enter");
+  await until(async () => (await pchip.innerText()).includes("Reads recipes"), "switched");
+  check("Other folder switches Home’s project and the chip says it reads it", true);
+  check("the popover lists both projects, the new one current", (await p.getByTestId("project-list").innerText()).includes("plain") && (await p.locator(".prow[aria-current] .nm").innerText()) === "recipes");
+  check("the typed path is cleared", (await other.inputValue()) === "");
+  const plans = p.getByTestId("plans-dir");
+  await plans.fill("notes/plans");
+  await plans.press("Enter");
+  await until(async () => (await ppop.innerText()).includes(path.join(project, "notes", "plans")), "plans folder saved");
+  check("Save plans in shows where plans now go", true);
+  await axe(p, "the project popover with two projects");
+  await p.keyboard.press("Escape");
+  await p.locator("textarea.tx").fill("Save recipes offline");
+  await p.keyboard.press("Enter");
+  await p.getByTestId("question").first().waitFor({ timeout: 15000 });
+  const switched = srv3.calls().at(-1);
+  check("a session after the switch reads the new project", isRead(switched) && switched.cwd === project, switched?.cwd);
+  await p.getByRole("button", { name: "Send and wrap up" }).click();
+  await p.getByRole("button", { name: /Yes, plate it/ }).waitFor({ timeout: 15000 });
+  await p.keyboard.press("Enter");
+  await p.getByTestId("plan").waitFor({ timeout: 15000 });
+  const saved = (() => { try { return readdirSync(path.join(project, "notes", "plans")); } catch { return []; } })();
+  check("its plan is saved in the chosen folder", saved.some((f) => /^grillado-plan-.*\.md$/.test(f)), saved.join(","));
+  await p.goto(srv3.url);
+  await pchip.waitFor();
+  check("Home stays on the chosen project after a reload", (await pchip.innerText()).includes("Reads recipes"));
+  await pchip.click();
+  await p.locator(".prow", { hasText: "plain" }).click();
+  await until(async () => (await pchip.innerText()).trim() === "plain", "switched back");
+  await p.keyboard.press("Escape");
+  check("back on the first folder, Recent names the other project’s plan", /recipes ·/.test(await p.locator(".recent").innerText()));
   await srv3.stop();
   await srv.stop();
 } catch (err) {

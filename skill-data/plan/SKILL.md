@@ -40,7 +40,8 @@ Don't use it for a one-line fix, a question with one obvious answer, or when the
 
 ## Good to know
 
-- The plan is also saved in the project at `docs/plans/grillado-plan-<id>.md`.
+- The plan is also saved in the project at `docs/plans/grillado-plan-<id>.md` (or in the plans
+  folder the user set; pass `--plans-dir <path>` to `plan start` only when the user asks for one).
 - `npx -y grillado plan list` lists plans; `npx -y grillado plan get <id>` prints one.
 - Grillado runs on the user's own coding agent CLI and login (Claude Code, Codex, Grok or pi). It needs no API key. If none is installed, the browser says how to add one.
 - If Grillado's MCP tools are available to you (`start_plan`, `get_plan`), you can use them instead; `npx -y grillado skills get mcp` maps them.

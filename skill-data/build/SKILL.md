@@ -14,7 +14,8 @@ npx -y grillado plan list --json          # newest first; "draft": true means un
 npx -y grillado plan get <id> --json      # markdown, decisions, open
 ```
 
-The plan is also a file in the project: `docs/plans/grillado-plan-<id>.md`.
+The plan is also a file in the project: `docs/plans/grillado-plan-<id>.md`, unless the user
+picked another plans folder for the project.
 
 ## Rules
 

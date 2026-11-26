@@ -12,6 +12,11 @@ the answer behind every decision.
 
 Run Grillado from your project folder. New plans are saved as
 `docs/plans/grillado-plan-<session-id>.md` in that folder, so you can commit them with your code.
+
+To plan for another project without restarting, click the project name in the composer and pick a
+project you planned in before, or type its folder under **Other folder**. The same menu has
+**Save plans in**: a folder inside the project (like `notes/plans`) or a full path elsewhere (like
+`~/vault/plans`). Grillado remembers it per project. `--plans-dir <path>` sets it for one run.
 Session history, settings and credentials stay in `~/.grillado`. Each session remembers its
 project when you reopen it. Existing plans and imported copies keep their original storage location.
 
@@ -31,6 +36,8 @@ session. Explicit context and current answers take precedence. Use `--no-scan` o
 --no-open           Don't open a browser; just print the URL
 --no-scan           Don't read existing plans for context or import (also GRILLADO_NO_SCAN=1)
 --no-code           Don't let the agent read this project's files (also GRILLADO_NO_CODE=1)
+--plans-dir <path>  Where this folder's plans are saved (default docs/plans; relative paths
+                    are inside the folder). Home can switch projects and change it too.
 --exit-when-idle    Quit after 30 minutes with no browser open and nothing running
 --data-dir <path>   Session data (default ~/.grillado, or $GRILLADO_HOME)
 ```

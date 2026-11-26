@@ -342,3 +342,72 @@ describe("server: rounds and the plan read the project", () => {
     expect(calls().every((c) => !isReadArgv(c))).toBe(true);
   });
 });
+
+describe("server: Home's project is a choice (plan 005)", () => {
+  test("switching projects moves the chip, the scan, reading and where new plans are saved", async () => {
+    const plain = realpathSync(mkdtempSync(path.join(os.tmpdir(), "grillado-plain-")));
+    const { root } = gitProject();
+    const scanned: string[] = [];
+    const foundFor = (cwd: string) => {
+      scanned.push(cwd);
+      return { state: "done", skip: null, view: () => ({ enabled: false, reason: "off" }) } as any;
+    };
+    const { api, store, calls } = await start(plain, { foundFor });
+    expect((await api("GET", "/api/state")).json.project).toMatchObject({ readable: false, reason: "not-git", plansDir: "" });
+
+    const r = await api("POST", "/api/project", { folder: root });
+    expect(r.status).toBe(200);
+    expect(r.json.project).toMatchObject({ name: "recipes", readable: true, on: true });
+    expect(r.json.project.known.map((k: any) => k.name)).toEqual(["recipes", path.basename(plain)]);
+    expect(scanned).toEqual([root]);
+    expect(store.readConfig().projects).toEqual([root]);
+
+    const { id, idle } = await session(api);
+    const s = await idle("answering");
+    expect(s.project).toBe(root);
+    expect(s.readRoot).toBe(root);
+    expect(store.load(id)!.planFile).toBe(path.join(root, "docs", "plans", `grillado-plan-${id}.md`));
+    expect(isReadArgv(calls()[0])).toBe(true);
+
+    // Back to the first folder, Recent names the other project's session; a second visit reuses a scan.
+    const back = (await api("POST", "/api/project", { folder: plain })).json;
+    expect(back.sessions.find((x: any) => x.id === id).project).toMatchObject({ name: "recipes" });
+    await api("POST", "/api/project", { folder: root });
+    expect(scanned).toEqual([root, plain]);
+  });
+
+  test("a folder that can't be a project is refused with a reason", async () => {
+    const plain = realpathSync(mkdtempSync(path.join(os.tmpdir(), "grillado-plain-")));
+    writeFileSync(path.join(plain, "a.txt"), "x");
+    const { api } = await start(plain);
+    const err = async (folder: unknown) => (await api("POST", "/api/project", { folder })).json.error;
+    expect(await err(path.join(plain, "nope"))).toBe("That folder doesn’t exist.");
+    expect(await err("code/app")).toBe("Type the full path, like ~/code/app.");
+    expect(await err(path.join(plain, "a.txt"))).toBe("That’s a file. Pick its folder.");
+    expect(await err("/")).toBe("Pick a project folder, not the whole disk.");
+    expect(await err("  ")).toBe("Type the project’s folder.");
+    expect((await api("GET", "/api/state")).json.project.folder).toContain(path.basename(plain));
+  });
+
+  test("the plans folder: --plans-dir for this run, then what Home saves, per project", async () => {
+    const { root } = gitProject();
+    const { api, store } = await start(root, { plansDir: "notes" });
+    let p = (await api("GET", "/api/state")).json.project;
+    expect(p.plansDir).toBe("notes");
+    expect(p.plansAt.endsWith(path.join("recipes", "notes"))).toBe(true);
+
+    p = (await api("POST", "/api/project", { plansDir: "decisions/grillado" })).json.project;
+    expect(p.plansDir).toBe("decisions/grillado");
+    expect(store.readConfig().plansDirs).toEqual({ [root]: "decisions/grillado" });
+    const { id } = await session(api, { read: false });
+    expect(store.load(id)!.planFile).toBe(path.join(root, "decisions", "grillado", `grillado-plan-${id}.md`));
+
+    const abs = realpathSync(mkdtempSync(path.join(os.tmpdir(), "grillado-vault-")));
+    p = (await api("POST", "/api/project", { plansDir: abs })).json.project;
+    expect(p.plansAt).toBe(abs);
+
+    p = (await api("POST", "/api/project", { plansDir: "" })).json.project;
+    expect(p.plansDir).toBe("");
+    expect(store.readConfig().plansDirs).toEqual({});
+  });
+});

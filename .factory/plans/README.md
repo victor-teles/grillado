@@ -9,9 +9,10 @@ update your row when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001  | Grillado becomes the place where software decisions get made (direction, not executed) | P1 | L | — | ACTIVE |
-| 002  | Rounds and plans are grounded in the project's code, read-only | P1 | L | — | DONE (uncommitted; Codex doesn't read, see the plan's notes) |
-| 003  | The user sees what the agent reads, can skip it, and can correct a finding | P1 | M | 002 | DONE (uncommitted; trail on Claude Code only) |
-| 004  | Coding agents find Grillado and use it with no setup, and the README says how | P1 | M | — | DONE (uncommitted; `npx skills add` and npx resolution need a release) |
+| 002  | Rounds and plans are grounded in the project's code, read-only | P1 | L | — | DONE (Codex doesn't read, see the plan's notes) |
+| 003  | The user sees what the agent reads, can skip it, and can correct a finding | P1 | M | 002 | DONE (trail on Claude Code only) |
+| 004  | Coding agents find Grillado and use it with no setup, and the README says how | P1 | M | — | DONE (`npx skills add` and npx resolution need a release) |
+| 005  | Home's project is a choice: switch projects, pick where plans are saved (built from a user report, no written plan) | P1 | S | 002 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with
 one-line rationale). 001 is a direction plan: it stays ACTIVE while its slices are built.
@@ -29,6 +30,10 @@ one-line rationale). 001 is a direction plan: it stays ACTIVE while its slices a
   confirmed), D "Plan to build loop", E "Living docs", F "Real builds".
 
 ## Decisions behind these plans (2026-11-24)
+
+- 2026-11-25 (005): Home was bound to the launch folder. The project is now picked on Home (known
+  projects, or a typed folder); plans go to `docs/plans` unless the user sets another folder on
+  Home or with `--plans-dir`.
 
 - Project knowledge comes from read-only agent access, not a snapshot built by Grillado.
 - Prototypes start as previews on options; real builds in worktrees are a later phase.
