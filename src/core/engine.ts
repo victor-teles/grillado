@@ -7,10 +7,11 @@ import { findBanned } from "./filter.ts";
 import { StreamGuard } from "./stream-guard.ts";
 import { addPlanSystemPrompt, importSystemPrompt, groupSystemPrompt, splitSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
-import type { ProviderAdapter, RunRequest } from "./providers/types.ts";
+import type { Activity, ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
 import { checkAddPlan, citeId } from "./addplan.ts";
 import { type Slice, fallbackSlices, groupedSlices, planDecisions, todoIds } from "./issues.ts";
+import { type PathCheck, checkEvidence, checkTouches, mergeFindings } from "./project-read.ts";
 import {
   type AddPlanReply,
   AddPlanReplySchema,
@@ -27,6 +28,10 @@ import {
   importJsonSchema,
   type PlanReply,
   PlanReplySchema,
+  GroundedPlanReplySchema,
+  GroundedRoundReplySchema,
+  groundedPlanJsonSchema,
+  groundedRoundJsonSchema,
   type GroupReply,
   GroupReplySchema,
   groupJsonSchema,
@@ -71,6 +76,13 @@ export interface RunOptions {
    * goes away (a retry, or text the banned filter would reject). Only text that is safe to show.
    */
   onText?: (text: string) => void;
+  /**
+   * The agent may read the project (plan 002): `cwd` is the read root, and every path it names goes
+   * through `check` before it is kept. Only rounds and the plan get this.
+   */
+  read?: { check: PathCheck };
+  /** The agent opened a file or ran a search (plan 003): only reading runs whose CLI reports it. */
+  onActivity?: (a: Activity) => void;
 }
 
 export type Validated<T> = { ok: true; value: T } | { ok: false; code: FailureCode; message: string };
@@ -95,6 +107,14 @@ export function stateFor(s: Session) {
     reopened: s.reopened.length ? s.reopened : undefined,
     pendingQuestions: pendingQuestions.length ? pendingQuestions : undefined,
     keepGoing: s.keepGoing || undefined,
+    // What the agent already read in this project (plan 002): facts, not decisions.
+    // Plan 003: a finding the user corrected carries what's true instead.
+    findings: s.findings?.length
+      ? s.findings.map((f) => {
+          const c = s.corrections?.find((x) => x.finding === f.id);
+          return { label: f.label, fact: f.fact, paths: f.paths, ...(c ? { correction: c.text } : {}) };
+        })
+      : undefined,
     ...userState(s),
   };
 }
@@ -189,7 +209,7 @@ export async function runValidated<T>(
       attempt === 1
         ? base.userPrompt
         : `${base.userPrompt}\n\nYour previous reply was rejected. Return only JSON matching the schema; error: ${problem}`;
-    const req: RunRequest = { ...base, userPrompt, cwd: opts.cwd, timeoutMs: opts.timeoutMs, model: opts.model };
+    const req: RunRequest = { ...base, userPrompt, cwd: opts.cwd, timeoutMs: opts.timeoutMs, model: opts.model, ...(opts.read ? { access: "read" as const } : {}), ...(opts.read && opts.onActivity ? { watch: true } : {}) };
     if (!opts.onText) delete req.stream;
     let raw: unknown;
     let gotResult = false;
@@ -202,7 +222,8 @@ export async function runValidated<T>(
         else if (ev.type === "text-reset") {
           guard.reset();
           show("");
-        } else if (ev.type === "progress") opts.onProgress?.(attempt === 1 ? ev.label : "Taking another pass");
+        } else if (ev.type === "activity") opts.onActivity?.({ action: ev.action, target: ev.target });
+        else if (ev.type === "progress") opts.onProgress?.(attempt === 1 ? ev.label : "Taking another pass");
         else if (ev.type === "error") return { ok: false, code: ev.code, message: ev.message };
         else {
           raw = ev.raw;
@@ -244,12 +265,13 @@ export async function runValidated<T>(
 /** Ask for the next round and apply it to the session (or record the error). */
 export async function nextRound(s: Session, adapter: ProviderAdapter, opts: RunOptions, max = DEFAULT_MAX_ROUNDS): Promise<boolean> {
   if (!s.rounds.length) s.roundsStartedAt ??= new Date().toISOString(); // #41: kept across retries
+  const read = !!opts.read;
   const result = await runValidated<RoundReply>(
     adapter,
-    { kind: "round", systemPrompt: roundSystemPrompt(), userPrompt: buildRoundPrompt(s, max), jsonSchema: roundJsonSchema() },
+    { kind: "round", systemPrompt: roundSystemPrompt({ read }), userPrompt: buildRoundPrompt(s, max), jsonSchema: read ? groundedRoundJsonSchema() : roundJsonSchema() },
     // A plan during the interview is discarded (AC7): the round schema only admits ask_round | frontier_empty,
     // so an early plan fails validation and goes through the repair retry.
-    RoundReplySchema,
+    read ? GroundedRoundReplySchema : RoundReplySchema,
     (reply) => validateRound(s, reply),
     opts,
     userText(s),
@@ -259,8 +281,24 @@ export async function nextRound(s: Session, adapter: ProviderAdapter, opts: RunO
     setError(s, result.code, result.message);
     return false;
   }
+  if (opts.read) groundRound(s, result.value, opts.read.check);
   applyRound(s, result.value, max);
   return true;
+}
+
+/**
+ * A reading agent's round, checked before it is applied (plan 002): evidence keeps only paths that
+ * pass `check`, and findings with a valid source join the session's.
+ */
+export function groundRound(s: Session, reply: RoundReply, check: PathCheck): void {
+  for (const q of reply.questions) {
+    const evidence = checkEvidence(q.evidence, check);
+    if (evidence.length) q.evidence = evidence;
+    else delete q.evidence;
+  }
+  const { all, added } = mergeFindings(s.findings, reply.findings, s.rounds.length + 1, check);
+  if (added.length) s.findings = all;
+  delete reply.findings;
 }
 
 /** Synthesis: a separate call that writes the plan. Only valid after the user confirmed (AC7). */
@@ -271,10 +309,11 @@ export async function synthesize(
   max = DEFAULT_MAX_ROUNDS,
 ): Promise<{ ok: true; plan: PlanReply; markdown: string; open: string[] } | { ok: false }> {
   if (s.status !== "synthesizing") throw new Error("Synthesis requires the user’s confirmation.");
+  const read = !!opts.read;
   const result = await runValidated<PlanReply>(
     adapter,
-    { kind: "synthesis", systemPrompt: synthesisSystemPrompt(), userPrompt: buildSynthesisPrompt(s), jsonSchema: planJsonSchema() },
-    PlanReplySchema,
+    { kind: "synthesis", systemPrompt: synthesisSystemPrompt({ read }), userPrompt: buildSynthesisPrompt(s), jsonSchema: read ? groundedPlanJsonSchema() : planJsonSchema() },
+    read ? GroundedPlanReplySchema : PlanReplySchema,
     (plan) => validatePlan(s, plan),
     opts,
     userText(s),
@@ -284,6 +323,8 @@ export async function synthesize(
     setError(s, result.code, result.message);
     return { ok: false };
   }
+  if (opts.read) result.value.touches = checkTouches(result.value.touches, opts.read.check);
+  else delete result.value.touches;
   return { ok: true, plan: result.value, markdown: renderPlanMarkdown(s, result.value, { max, agent: adapter.displayName }), open: planOpen(s, result.value).open };
 }
 

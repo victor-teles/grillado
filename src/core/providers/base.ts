@@ -14,6 +14,8 @@ export interface Invocation {
 
 /** Per-run timeout for providers that don't set their own. */
 export const DEFAULT_TIMEOUT_MS = 180_000;
+/** A run that reads the project takes longer: its timeout is at least this (plan 002). */
+export const READ_TIMEOUT_MS = 600_000;
 
 export interface AdapterSpec {
   id: ProviderId;
@@ -23,6 +25,8 @@ export interface AdapterSpec {
   loginHint: string;
   /** Per-run timeout for this CLI; DEFAULT_TIMEOUT_MS when unset. */
   defaultTimeoutMs?: number;
+  /** buildInvocation honours `access: "read"` with read-only tools (plan 002). */
+  canRead?: boolean;
   /** Pure: request + file paths → argv. Asserted verbatim in tests (AC4). */
   buildInvocation(req: RunRequest, files: RunFiles): Invocation;
   /** Turn a finished process into a result or a classified error. */
@@ -35,6 +39,8 @@ export interface AdapterSpec {
   stream?: {
     buildInvocation(req: RunRequest, files: RunFiles): Invocation;
     reader(field: string): (line: string) => ProviderEvent[];
+    /** The agent's tool calls as `activity` events, for requests that `watch` (plan 003). */
+    activity?: () => (line: string) => ProviderEvent[];
   };
   /** Optional extra check that the binary on PATH is the CLI we support. */
   verify?(bin: string, env: NodeJS.ProcessEnv): Promise<string | null>;
@@ -56,6 +62,7 @@ export function createAdapter(spec: AdapterSpec, opts: AdapterOptions = {}): Pro
     installHint: spec.installHint,
     loginHint: spec.loginHint,
     defaultTimeoutMs: spec.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
+    canRead: !!spec.canRead,
 
     async detect(): Promise<Detection> {
       const e = env();
@@ -86,13 +93,16 @@ export function createAdapter(spec: AdapterSpec, opts: AdapterOptions = {}): Pro
       }
       const files = writeRunFiles(req);
       try {
-        const streaming = req.stream && spec.stream ? spec.stream : undefined;
+        const watching = !!(req.watch && spec.stream?.activity);
+        const streaming = (req.stream || watching) && spec.stream ? spec.stream : undefined;
         const inv = streaming ? streaming.buildInvocation(req, files) : spec.buildInvocation(req, files);
         yield { type: "progress", label: "Thinking" };
         // Events read from stdout while the process runs; the loop below hands them out in order.
         const queue: ProviderEvent[] = [];
         let wake: (() => void) | null = null;
-        const read = streaming && req.stream ? streaming.reader(req.stream.field) : undefined;
+        const field = streaming && req.stream ? streaming.reader(req.stream.field) : undefined;
+        const tools = streaming && watching ? streaming.activity!() : undefined;
+        const read = field || tools ? (line: string) => [...(field?.(line) ?? []), ...(tools?.(line) ?? [])] : undefined;
         let pending = "";
         const onStdout = read
           ? (chunk: string) => {

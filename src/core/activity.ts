@@ -26,6 +26,8 @@ export interface RunResult {
   diagrams?: number;
   skipped?: number;
   suggestions?: number;
+  /** Plan 003: how many project files a reading run opened (the first 50 are in `files`). */
+  files?: number;
 }
 
 export interface SuggestionRef {
@@ -50,6 +52,8 @@ export type ActivityLine =
       suggestions?: SuggestionRef[];
       asked?: string[];
       wrote?: string[];
+      /** Plan 003: project files a reading run opened (checked paths, the first 50). */
+      files?: string[];
       result?: RunResult;
       retryOf?: string | null;
     }
@@ -120,6 +124,7 @@ export interface Entry {
   suggestions?: SuggestionRef[];
   asked?: string[];
   wrote?: string[];
+  files?: string[];
   result?: RunResult;
   retryOf?: string | null;
   // review
@@ -166,7 +171,7 @@ export function fold(lines: ActivityLine[], live?: Map<string, string>): Entry[]
     } else if (l.type === "run.ended") {
       const e = runs.get(l.run);
       if (!e) continue;
-      Object.assign(e, { status: l.status, ms: l.ms, endedAt: l.at, reason: l.reason ?? null, read: l.read, notDone: l.notDone, suggestions: l.suggestions, asked: l.asked, wrote: l.wrote, result: l.result });
+      Object.assign(e, { status: l.status, ms: l.ms, endedAt: l.at, reason: l.reason ?? null, read: l.read, notDone: l.notDone, suggestions: l.suggestions, asked: l.asked, wrote: l.wrote, files: l.files, result: l.result });
       if (e.kind === "round" && l.result?.reask !== undefined) {
         const { reask: _, ...rest } = e.target ?? {};
         e.target = l.result.reask ? { ...rest, reask: true } : rest;

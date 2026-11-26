@@ -39,7 +39,7 @@ process.on("exit", () => {
 async function server(extra = {}) {
   const home = mkdtempSync(path.join(WORK, "home-"));
   const e = { PATH: `${fakeBins(["claude", "codex"])}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, ...extra };
-  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { env: e, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { cwd: home, env: e, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {

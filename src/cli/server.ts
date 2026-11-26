@@ -12,7 +12,7 @@ import { dropReasonLine, planOpenNow, putReasonLine, reasonLineIn, syncPlanOpen 
 import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, deleteThread, finishRun, pending, pruneSuggestions, refind, resolveThread, restoreThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
-import { DEFAULT_TIMEOUT_MS } from "../core/providers/base.ts";
+import { DEFAULT_TIMEOUT_MS, READ_TIMEOUT_MS } from "../core/providers/base.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
 import {
   type Answer,
@@ -20,6 +20,8 @@ import {
   type Session,
   answerOpenDecision,
   changeDecision,
+  correctFinding,
+  uncorrectFinding,
   createSession,
   editPlan,
   adoptExternalPlan,
@@ -56,6 +58,8 @@ import type { Store } from "./store.ts";
 import { IssuesRoutes, type IssuesOptions } from "./issues/routes.ts";
 import { captureProjectContext } from "./project-context.ts";
 import { projectContextView } from "../core/project-context.ts";
+import { type ReadPlace, pathCheck, readPlace } from "./project-read.ts";
+import { ReadingTrail } from "./reading.ts";
 
 export const LOOPBACK = "127.0.0.1";
 
@@ -82,6 +86,12 @@ export interface ServerOptions {
   maxRounds?: number;
   /** A line for the terminal running Grillado (main.ts prints it to stdout), e.g. the plan's timing (#41). */
   log?: (line: string) => void;
+  /** `--no-code` / GRILLADO_NO_CODE=1 (plan 002): no session's agent reads the project. */
+  noCode?: boolean;
+  /** The home folder, for what counts as too wide to read (tests point it at a temp folder). */
+  home?: string;
+  /** `--exit-when-idle` (plan 004): quit after this long with no browser connected and nothing running. */
+  idleExitMs?: number;
 }
 
 export interface ProviderInfo {
@@ -138,6 +148,15 @@ export class GrilladoServer {
   /** The last run per thread, per "Add diagrams" and per interview, so Try again can say what it retries. */
   private lastRun = new Map<string, string>();
   private issues: IssuesRoutes;
+  /** The launch folder's project, for Home's "Reads {project}" chip (plan 002); set by detect(). */
+  private place: ReadPlace | null = null;
+  /** Plan 003: what each running reading run has opened, for the wait screens. */
+  private reading = new Map<string, ReadingTrail>();
+  /** Plan 003: sessions whose next round or plan run skips reading, once (Skip reading, Ask without reading). */
+  private noReadOnce = new Set<string>();
+  /** Plan 004: when the app was last in use (a request, a connected browser, an agent run). */
+  private lastActive = Date.now();
+  private idleTimer?: ReturnType<typeof setInterval>;
   port = 0;
 
   constructor(private opts: ServerOptions) {
@@ -202,6 +221,7 @@ export class GrilladoServer {
     } else if (remembered && ready.includes(remembered)) this.selected = remembered;
     else if (ready.length === 1) this.selected = ready[0];
     else this.selected = null;
+    this.place = await readPlace(this.opts.launchDir, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
     return this.providers;
   }
 
@@ -238,6 +258,7 @@ export class GrilladoServer {
         // For `grillado mcp`: start_plan links straight to the new session (v1.2 item 1).
         this.opts.store.writeServerInfo({ pid: process.pid, port: this.port, token: this.token });
         this.watchSessions();
+        this.watchIdle();
         return this.port;
       } catch (err: any) {
         if (err?.code === "EADDRINUSE" && port < last) {
@@ -254,8 +275,25 @@ export class GrilladoServer {
     return this.server.address();
   }
 
+  /** `--exit-when-idle`: no browser connected and no agent run for `idleExitMs`, then quit as Ctrl+C would. */
+  private watchIdle() {
+    const idle = this.opts.idleExitMs;
+    if (!idle) return;
+    this.lastActive = Date.now();
+    this.idleTimer = setInterval(() => {
+      const inUse = this.clients.size > 0 || this.inflight.size > 0 || this.commentRuns.size > 0 || this.diagramRuns.size > 0 || this.addPlanRuns.size > 0;
+      if (inUse) this.lastActive = Date.now();
+      else if (Date.now() - this.lastActive >= idle) {
+        clearInterval(this.idleTimer);
+        this.opts.onQuit?.();
+      }
+    }, Math.min(60_000, Math.max(50, Math.floor(idle / 4))));
+    this.idleTimer.unref?.();
+  }
+
   /** Graceful stop (AC13): kill agent runs, flush sessions, close sockets. */
   async close() {
+    if (this.idleTimer) clearInterval(this.idleTimer);
     for (const c of this.inflight.values()) c.abort();
     for (const c of this.commentRuns.values()) c.abort();
     for (const c of this.diagramRuns.values()) c.abort();
@@ -308,6 +346,7 @@ export class GrilladoServer {
   // ---------------------------------------------------------------- http
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse) {
+    this.lastActive = Date.now();
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
     if (!this.hostAllowed(req)) return this.json(res, 403, { error: "Host not allowed" });
@@ -336,6 +375,7 @@ export class GrilladoServer {
         setTimeout(() => this.opts.onQuit?.(), 50);
         return;
       }
+      if (req.method === "POST" && parts[0] === "project-read") return this.setProjectRead(res, body);
       if (parts[0] === "sessions") return await this.sessionRoutes(req, res, parts.slice(1), body);
       if (parts[0] === "found") return await this.foundRoutes(req, res, parts.slice(1), body);
       if (parts[0] === "github" || parts[0] === "linear") return await this.issues.appRoutes(req, res, parts, body, url.searchParams, (r, st, d) => this.json(r, st, d));
@@ -540,8 +580,10 @@ export class GrilladoServer {
         status: p.detection.status,
         version: "version" in p.detection ? p.detection.version : undefined,
         reason: "reason" in p.detection ? p.detection.reason : undefined,
+        canRead: !!this.opts.adapters.find((a) => a.id === p.id)?.canRead,
       })),
       selected: this.selected,
+      project: this.projectView(),
       needsPicker: !this.selected && ready.length > 1,
       remembered: this.opts.store.readConfig().defaultProvider ?? null,
       sessions: this.opts.store.list().slice(0, 20).map((s) => ({
@@ -586,6 +628,8 @@ export class GrilladoServer {
       adding: this.addPlanRuns.has(s.id),
       addPlanRun: s.addPlanRun?.state === "running" && !this.addPlanRuns.has(s.id) ? { ...s.addPlanRun, state: "stopped" } : s.addPlanRun,
       progress: this.progress.get(s.id),
+      // Plan 003: what the reading run in progress has opened.
+      reading: this.inflight.has(s.id) ? this.reading.get(s.id)?.view() : undefined,
       planPath: s.plan?.path,
       tree: buildTree(s),
       activity: this.activityView(s),
@@ -796,6 +840,75 @@ export class GrilladoServer {
     return this.opts.timeoutMs ?? adapter?.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
+  // ---------------------------------------------------------------- read access (plan 002)
+
+  /** Home's chip: the launch project, whether it can be read, and whether the user turned it off. */
+  private projectView() {
+    const p = this.place;
+    if (!p || (!p.ok && !p.name)) return null;
+    if (!p.ok) return { name: p.name!, readable: false, reason: p.reason };
+    return { name: p.name, root: tildify(p.root), readable: true, on: !this.readOff(p.root) };
+  }
+
+  private readOff(root: string) {
+    return (this.opts.store.readConfig().codeReadOff ?? []).includes(root);
+  }
+
+  /** The composer's checkbox: reading this project on or off, kept per project in config.json. */
+  private setProjectRead(res: http.ServerResponse, body: any) {
+    if (typeof body?.on !== "boolean") throw new Error("Say whether to read this project.");
+    const p = this.place;
+    if (!p?.ok) throw new Error("This folder can’t be read.");
+    const c = this.opts.store.readConfig();
+    const off = new Set(c.codeReadOff ?? []);
+    if (body.on) off.delete(p.root);
+    else off.add(p.root);
+    this.opts.store.writeConfig({ ...c, codeReadOff: [...off] });
+    this.broadcast({ type: "app" });
+    return this.json(res, 200, this.appState());
+  }
+
+  /**
+   * Decided once, when the first round starts (sessions from `grillado mcp` are created elsewhere
+   * and open later): the agent reads its project when the project can be read, the user didn't turn
+   * it off for the project or this session, and the session's agent can be limited to reading.
+   */
+  private async decideRead(s: Session, o: { chosen?: boolean } = {}) {
+    if (s.codeRead !== undefined || s.rounds.length) return;
+    const place = await readPlace(s.project, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
+    const adapter = this.opts.adapters.find((a) => a.id === s.provider);
+    s.codeRead = place.ok && (o.chosen || !this.readOff(place.root)) && !!adapter?.canRead;
+    if (s.codeRead && place.ok) s.readRoot = place.root;
+  }
+
+  /** Round and plan runs of a reading session: the read root as cwd, the path check, a longer timeout. */
+  private readOptions(s: Session, adapter: ProviderAdapter) {
+    if (this.noReadOnce.delete(s.id)) return {};
+    if (!s.codeRead || !s.readRoot || !adapter.canRead || !existsSync(s.readRoot)) return {};
+    const check = pathCheck(s.readRoot);
+    // Plan 003: the trail of what it opens, shown while the run goes and logged when it ends.
+    const trail = new ReadingTrail(check, () => this.broadcast({ type: "reading", sessionId: s.id, reading: trail.view() }));
+    this.dropTrail(s);
+    this.reading.set(s.id, trail);
+    return {
+      cwd: s.readRoot,
+      read: { check },
+      timeoutMs: this.opts.timeoutMs ?? Math.max(adapter.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS, READ_TIMEOUT_MS),
+      onActivity: (a: Parameters<ReadingTrail["push"]>[0]) => trail.push(a),
+    };
+  }
+
+  private dropTrail(s: Session) {
+    this.reading.get(s.id)?.stop();
+    this.reading.delete(s.id);
+  }
+
+  /** The files a reading run opened, for its line in the activity log (plan 003). */
+  private readLog(s: Session) {
+    const l = this.reading.get(s.id)?.logged();
+    return l?.count ? { files: l.files, count: l.count } : null;
+  }
+
   /** `adapter` is the one that will run: the session's own, or the one picked for a split. */
   private runOptions(s: Session, controller: AbortController, adapter = this.opts.adapters.find((x) => x.id === s.provider)) {
     return {
@@ -823,6 +936,7 @@ export class GrilladoServer {
         if (this.inflight.get(s.id) === controller) {
           this.inflight.delete(s.id);
           this.runAt.delete(s.id);
+          this.dropTrail(s);
         }
         this.progress.delete(s.id);
         this.changed(s);
@@ -846,7 +960,8 @@ export class GrilladoServer {
     this.lastRun.set(`session:${s.id}`, rec.id);
     this.run(s, async (c) => {
       rec.step("Read the session", "{agent} is picking questions");
-      const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is picking questions") };
+      await this.decideRead(s);
+      const opts = { ...this.runOptions(s, c), ...this.readOptions(s, this.adapterFor(s)), onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is picking questions") };
       try {
         const ok = await nextRound(s, this.adapterFor(s), opts, this.maxRounds);
         if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was picking questions" });
@@ -855,12 +970,14 @@ export class GrilladoServer {
         if (!r) {
           // Past the cap a reply with nothing owed in it is dropped (stop "cap"); otherwise the frontier is empty.
           rec.step(s.stop === "cap" ? "{agent} asked only new questions, so the rounds are done" : "{agent} found nothing left to ask");
-          return rec.end("done", { result: { questions: 0 } });
+          const log = this.readLog(s);
+          return rec.end("done", { result: { questions: 0, ...(log ? { files: log.count } : {}) }, ...(log ? { files: log.files } : {}) });
         }
         rec.step(`{agent} picked ${r.questions.length} ${r.questions.length === 1 ? "question" : "questions"}`);
         rec.step(`Round ${n} ready`);
         // The saved round decides whether it was a re-ask (it asked an owed decision), not the start guess.
-        rec.end("done", { result: { questions: r.questions.length, reask: !!r.reask }, asked: r.questions.map((q) => q.key) });
+        const log = this.readLog(s);
+        rec.end("done", { result: { questions: r.questions.length, reask: !!r.reask, ...(log ? { files: log.count } : {}) }, asked: r.questions.map((q) => q.key), ...(log ? { files: log.files } : {}) });
       } finally {
         rec.end("failed", { reason: "unknown", last: reasonText("unknown", "{agent}") });
       }
@@ -884,7 +1001,7 @@ export class GrilladoServer {
     {
       const n = Object.keys(s.decisions).length;
       rec.step(`Read ${n} ${n === 1 ? "decision" : "decisions"}`, "{agent} is writing the plan");
-      const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s plan didn’t fit the format; asked again", "{agent} is writing the plan") };
+      const opts = { ...this.runOptions(s, c), ...this.readOptions(s, this.adapterFor(s)), onRepair: () => rec.step("{agent}’s plan didn’t fit the format; asked again", "{agent} is writing the plan") };
       const out = await synthesize(s, this.adapterFor(s), opts, this.maxRounds);
       if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was writing the plan" });
       if (!out.ok) return rec.end("failed", { reason: s.error?.code ?? null, last: reasonText(s.error?.code, "{agent}") });
@@ -898,7 +1015,8 @@ export class GrilladoServer {
       this.watchPlan(s);
       const sections = planSections(out.markdown).map((x) => x.title);
       rec.step("Saved plan.md");
-      rec.end("done", { result: { decisions: n, sections: sections.length }, wrote: sections });
+      const log = this.readLog(s);
+      rec.end("done", { result: { decisions: n, sections: sections.length, ...(log ? { files: log.count } : {}) }, wrote: sections, ...(log ? { files: log.files } : {}) });
     }
   }
 
@@ -1284,6 +1402,7 @@ export class GrilladoServer {
   private abort(s: Session) {
     this.inflight.get(s.id)?.abort();
     this.inflight.delete(s.id);
+    this.dropTrail(s);
   }
 
   private selectProvider(res: http.ServerResponse, body: any) {
@@ -1309,6 +1428,10 @@ export class GrilladoServer {
       });
       const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), projectContext, provider: this.selected });
       this.opts.store.create(s, this.opts.launchDir);
+      // The composer's chip (plan 002): what it showed at Start applies, over the saved project preference
+      // (a click just before Start may not be saved yet). On still needs the project and the agent to allow it.
+      if (body?.read === false) s.codeRead = false;
+      else if (body?.read === true) await this.decideRead(s, { chosen: true });
       this.sessions.set(s.id, s);
       this.watchSession(s);
       this.startRound(s);
@@ -1354,6 +1477,8 @@ export class GrilladoServer {
       }
       case "retry": {
         if (busy) break;
+        // "Ask without reading" (plan 003): this one run reads nothing; later ones read again.
+        if (body?.read === false && (s.status === "asking" || s.status === "synthesizing")) this.noReadOnce.add(s.id);
         if (s.status === "asking") this.startRound(s, true);
         else if (s.status === "synthesizing") this.startPlan(s, true);
         break;
@@ -1372,6 +1497,27 @@ export class GrilladoServer {
       case "stop": {
         this.abort(s);
         setError(s, "unknown", STOPPED);
+        this.changed(s);
+        break;
+      }
+      case "skip-read": {
+        // Plan 003: stop the reading run and ask the same thing again without reading, this once.
+        if (!busy || !s.codeRead || (s.status !== "asking" && s.status !== "synthesizing")) break;
+        this.abort(s);
+        this.noReadOnce.add(s.id);
+        s.error = undefined;
+        if (s.status === "asking") this.startRound(s, true);
+        else this.startPlan(s, true);
+        break;
+      }
+      case "correct": {
+        // Plan 003: "Not right" on a finding. The user's words win over what was read.
+        correctFinding(s, String(body?.finding ?? ""), String(body?.text ?? ""));
+        this.changed(s);
+        break;
+      }
+      case "uncorrect": {
+        uncorrectFinding(s, String(body?.finding ?? ""));
         this.changed(s);
         break;
       }

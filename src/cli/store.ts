@@ -9,6 +9,8 @@ export interface Config {
   defaultProvider?: ProviderId;
   /** Project roots where the user hid "Found in this project" (v1.3 item 1, #141). */
   foundHidden?: string[];
+  /** Project roots whose agent must not read the code (plan 002): the composer's checkbox, off. */
+  codeReadOff?: string[];
   /** "Send to issues" (v1.3 item 2): the last destination, per project too (#179), and the labels last used per target (#177). */
   issues?: {
     last?: "github" | "linear";

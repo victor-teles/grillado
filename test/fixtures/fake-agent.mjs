@@ -6,6 +6,10 @@
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
 // FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25), FAKE_GATE (stream only once this file exists),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
+// Read access (plan 002): a round or plan prompt that asks for findings/touches gets evidence, findings and touches back, some of them
+// paths Grillado must drop (outside the project, sensitive, missing); FAKE_READ_FINDING overrides the good finding's fact.
+// FAKE_READ_TRAIL (plan 003): Claude's stream-json prints these tool calls first, comma-separated Tool:target (Read:package.json,
+// Grep:autosave, Glob:**/*), FAKE_READ_TRAIL_MS apart; Read targets are made absolute like Claude's.
 // FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS, FAKE_SPLIT_LOG (a file that gets one line per split run), FAKE_GROUP (empty | missing | dup | invent).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -112,6 +116,10 @@ const isAddPlan = /"type":"addplan"/.test(system);
 const isImport = /"type":"decisions"/.test(system);
 const isGroup = /"type":"groups"/.test(system);
 const isSplit = /"type":"slices"/.test(system) || isGroup;
+/** The grounded prompts (plan 002) ask for findings in rounds and touches in the plan. */
+const grounded = /"findings":\[/.test(system) || /"touches":\[/.test(system);
+const GOOD_EVIDENCE = { path: "package.json", note: "Scripts and dependencies" };
+const BAD_EVIDENCE = [{ path: "../outside.txt", note: "Outside the project" }, { path: ".env", note: "A secret" }, { path: "src/missing.ts", note: "Not there" }];
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -174,6 +182,16 @@ function roundReply() {
       label: t.label,
       dependsOn: t.deps,
     }));
+    if (grounded) {
+      q.forEach((x) => (x.evidence = []));
+      // Grok names absolute paths: Grillado makes one inside the project relative. The other cards have none.
+      q[0].evidence = [GOOD_EVIDENCE, { path: path.join(process.cwd(), "README.md"), note: "What the project says it is" }, ...BAD_EVIDENCE];
+      const findings = [
+        { label: "Stack", fact: process.env.FAKE_READ_FINDING ?? "The project is a Node package.", paths: ["package.json", "nope.json"] },
+        { label: "Secrets", fact: "An API key is set.", paths: [".env"] },
+      ];
+      return { type: "ask_round", summary: `Round ${state.nextRound}`, questions: q, upcoming, findings };
+    }
     return { type: "ask_round", summary: `Round ${state.nextRound}`, questions: q, upcoming };
   }
   if (state.keepGoing && !settled.has("extras")) {
@@ -219,6 +237,7 @@ function planReply() {
     markdown: mode === "long" ? longMarkdown(ds) : `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`,
     decisions: ds.map((d) => ({ round: d.round, questionId: d.key, statement: `Decided: ${d.answer}.` })),
     openDecisions: state.openDecisions ?? [],
+    ...(grounded ? { touches: [{ path: "package.json", why: "Add the new script" }, { path: "src/nope.ts", why: "Not there" }, { path: ".env", why: "A secret" }] } : {}),
   };
 }
 
@@ -380,13 +399,21 @@ if (name === "claude" && flag("--output-format") === "stream-json") {
 // ends it), fail errors halfway, retry-once makes a first StructuredOutput call that Claude Code
 // rejects and calls again (the streamed text starts over).
 async function claudeStream(reply, text) {
-  const pause = () => new Promise((r) => setTimeout(r, Number(process.env.FAKE_STREAM_MS ?? 25)));
+  // Comment replies stream slowly enough to watch (#97); rounds and plans (plan 003: reading runs stream too) don't wait.
+  const pause = () => new Promise((r) => setTimeout(r, Number(process.env.FAKE_STREAM_MS ?? (isComment || isEdit ? 25 : 0))));
   const line = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
   const ev = (event) => line({ type: "stream_event", event, session_id: "fake", uuid: "u" });
   const mode = process.env.FAKE_STREAM ?? "";
   // FAKE_GATE: hold everything until this file exists, so a test can look at "before the first delta" for as long as it needs.
   if (process.env.FAKE_GATE) for (const end = Date.now() + 60_000; !existsSync(process.env.FAKE_GATE) && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));
   line({ type: "system", subtype: "init", session_id: "fake", tools: ["StructuredOutput"] });
+  for (const [i, item] of (process.env.FAKE_READ_TRAIL ?? "").split(",").filter(Boolean).entries()) {
+    const [tool, ...rest] = item.split(":");
+    const target = rest.join(":");
+    const input = tool === "Read" ? { file_path: path.isAbsolute(target) ? target : path.join(process.cwd(), target) } : { pattern: target };
+    line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `read${i}`, name: tool, input }] } });
+    await new Promise((r) => setTimeout(r, Number(process.env.FAKE_READ_TRAIL_MS ?? 50)));
+  }
   ev({ type: "message_start", message: { id: "m1", role: "assistant", content: [] } });
   ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
   ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Here is my reply." } });

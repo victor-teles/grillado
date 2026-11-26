@@ -8,7 +8,8 @@ import { confirmCounts, countText, stillOpen } from "./counts";
 import { IAlert, IClock, IKey, ITerm } from "./icons";
 import { PlanView } from "./Plan";
 import { capAction, capReached, owedKeys, roundStatus, settledLine } from "./rounds";
-import { FiringUp, RoundView, SessionBody, StatusLine, Strip, WaitingView } from "./Round";
+import { FiringUp, RoundView, SessionBody, Strip, WaitingView } from "./Round";
+import { WaitStatus } from "./project/Reading";
 import type { AppState, Decision, DecisionNode, SessionView, TreeState } from "./types";
 
 export type Act = (action: string, body?: unknown) => Promise<void>;
@@ -118,6 +119,12 @@ export function ProblemBanner({ session, app, act, onSwitch }: { session: Sessio
         </div>
         <div className="acts">
           {code === "auth" ? null : sw}
+          {/* Plan 003: a reading run that failed can be asked again without reading, this once. */}
+          {session.codeRead && !stopped && (code === "timeout" || code === "malformed" || code === "unknown") ? (
+            <button type="button" className="btn quiet" data-testid="ask-without-reading" onClick={() => quiet(act("retry", { read: false }))}>
+              {COPY.askWithoutReading}
+            </button>
+          ) : null}
           <button type="button" className="btn primary" ref={retryRef} onClick={retry}>
             {copy.retry}
           </button>
@@ -412,7 +419,7 @@ function Plating({ session, act, banner }: { session: SessionView; act: Act; ban
             <Strip session={session} />
             <div className="col">
               {banner}
-              {busy ? <StatusLine label={label} note={COPY.platingWaitNote} onStop={elapsed >= 60 ? () => quiet(act("stop")) : undefined} /> : null}
+              {busy ? <WaitStatus session={session} label={label} note={COPY.platingWaitNote} elapsed={elapsed} onStop={elapsed >= 60 ? () => quiet(act("stop")) : undefined} onSkip={() => quiet(act("skip-read"))} /> : null}
               <article className="plate" aria-label="Plan draft">
                 <h1>{session.idea.split("\n")[0]}</h1>
                 {groups.map((g) => (

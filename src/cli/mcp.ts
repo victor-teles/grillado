@@ -1,87 +1,37 @@
 // `grillado mcp` (v1.2 item 1): a stdio MCP server over the same data dir as the web app, so the
 // coding agent the user builds with can read plans and decisions, start a new plan, and comment.
 // Local only: no network. stdout carries the protocol; anything else goes to stderr.
-import { planOpenNow } from "../core/floor.ts";
-import { issuesOf } from "../core/issues.ts";
+// The operations themselves live in plans.ts (plan 004), shared with `grillado plan …`.
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { MAX_COMMENT, MAX_QUOTE, addCoderComment } from "../core/comments.ts";
 import { PROVIDER_IDS } from "../core/providers/types.ts";
-import { type Session, createSession } from "../core/session.ts";
 import { ImportError } from "../core/found/import.ts";
 import { FoundService } from "./found.ts";
 import { shellQuote } from "./launch.ts";
 import { type Store, defaultDataDir } from "./store.ts";
-import { captureProjectContext } from "./project-context.ts";
-import { projectContextView } from "../core/project-context.ts";
+import {
+  MAX_COMMENT,
+  MAX_CONTEXT,
+  MAX_IDEA,
+  MAX_QUOTE,
+  PLAN_ID,
+  URI,
+  commentOnPlan,
+  getDecisions,
+  getPlan,
+  isDraft,
+  listPlans,
+  loadPlan,
+  markdownOf,
+  sessionUrl,
+  startPlan,
+  titleOf,
+} from "./plans.ts";
 
-const URI = "grillado://plans/";
-const planId = z.string().regex(/^[\w-]{1,80}$/, "A plan id looks like 2026-10-26-1a2b3c4d (see list_plans).");
+export { UnknownPlan, decisionsOf, markdownOf, summary } from "./plans.ts";
 
-export class UnknownPlan extends Error {
-  constructor(id: string) {
-    super(`No plan with id "${id}". Call list_plans to see the ids.`);
-  }
-}
-
-const titleOf = (s: Session) => s.plan?.title || s.idea.split("\n")[0].slice(0, 80);
-/** Not confirmed yet: no plan written, or the interview reopened after it was. */
-const isDraft = (s: Session) => s.status !== "plated" || !s.plan;
-
-export function summary(s: Session) {
-  return {
-    id: s.id,
-    title: titleOf(s),
-    status: s.status,
-    draft: isDraft(s),
-    decisions: Object.keys(s.decisions).length,
-    updatedAt: s.updatedAt,
-    // Friction 26: the export shows in list_plans, as it does in get_plan.
-    issues: issuesOf(s),
-    uri: URI + s.id,
-  };
-}
-
-/** `md`: the plan text the reader sees (plan.md on disk); the open list is derived from it (PR46 r3 M2). */
-export function decisionsOf(s: Session, md: string = s.plan?.markdown ?? "") {
-  return {
-    id: s.id,
-    draft: isDraft(s),
-    decisions: Object.values(s.decisions)
-      .sort((a, b) => a.round - b.round)
-      .map((d) => ({
-        key: d.key,
-        title: d.title,
-        answer: d.answer,
-        round: d.round,
-        /** "unknown" means the user left the call to the agent. */
-        kind: d.kind,
-        acceptedRecommendation: d.accepted_recommendation,
-        dependsOn: d.dependsOn,
-      })),
-    open: s.plan ? planOpenNow(s, md) : [],
-    stale: Object.values(s.stale ?? {}).map((d) => ({ key: d.key, title: d.title, reason: d.reason })),
-  };
-}
-
-/** The plan's Markdown (plan.md is the source of truth), or a draft built from the decisions so far. */
-export function markdownOf(store: Store, s: Session): string {
-  const md = s.plan ? (store.readPlan(s.id) ?? s.plan.markdown) : null;
-  if (md !== null && !isDraft(s)) return md;
-  const note = `> **Draft.** This plan isn't confirmed yet (status: ${s.status}). Finish the interview in Grillado for the final plan.`;
-  if (md !== null) return `${note}\n\n${md}`;
-  const lines = Object.values(s.decisions)
-    .sort((a, b) => a.round - b.round)
-    .map((d) => `- **${d.title}**: ${d.answer}`);
-  return [`# Draft: ${titleOf(s)}`, "", note, "", "## Idea", "", s.idea, ...(s.context ? ["", "## Context", "", s.context] : []), "", "## Decisions so far", "", ...(lines.length ? lines : ["None yet."]), ""].join("\n");
-}
-
-function load(store: Store, id: string): Session {
-  const s = store.load(id);
-  if (!s) throw new UnknownPlan(id);
-  return s;
-}
+const planId = z.string().regex(PLAN_ID, "A plan id looks like 2026-10-26-1a2b3c4d (see list_plans).");
 
 const text = (t: string) => ({ type: "text" as const, text: t });
 const json = (v: unknown) => text(JSON.stringify(v, null, 2));
@@ -124,7 +74,7 @@ export function createMcpServer(
     },
     async () =>
       safely(() => {
-        const plans = store.list().map(summary);
+        const plans = listPlans(store);
         return { content: [plans.length ? json(plans) : text("No plans yet. Use start_plan to send an idea to Grillado.")], structuredContent: { plans } };
       }),
   );
@@ -139,13 +89,10 @@ export function createMcpServer(
     },
     async ({ plan }) =>
       safely(() => {
-        const s = load(store, plan);
-        const markdown = markdownOf(store, s);
-        const d = decisionsOf(s, markdown);
-        const issues = issuesOf(s);
+        const p = getPlan(store, plan);
         return {
-          content: [text(markdown), json({ id: s.id, title: titleOf(s), status: s.status, draft: d.draft, decisions: d.decisions, open: d.open, issues })],
-          structuredContent: { ...summary(s), markdown, decisions: d.decisions, open: d.open, issues },
+          content: [text(p.markdown), json({ id: p.id, title: p.title, status: p.status, draft: p.draft, decisions: p.decisions, open: p.open, issues: p.issues })],
+          structuredContent: p,
         };
       }),
   );
@@ -159,8 +106,7 @@ export function createMcpServer(
     },
     async ({ plan }) =>
       safely(() => {
-        const s = load(store, plan);
-        const d = decisionsOf(s, markdownOf(store, s));
+        const d = getDecisions(store, plan);
         return { content: [json(d)], structuredContent: d };
       }),
   );
@@ -172,28 +118,16 @@ export function createMcpServer(
       description:
         "Send a new idea to Grillado to be planned. Creates the session and returns its local URL; the user answers the interview questions in the browser. Give the URL to the user.",
       inputSchema: {
-        idea: z.string().trim().min(1, "Describe the idea.").max(8000).describe("The idea, in the user's words"),
-        context: z.string().max(20_000).optional().describe("Optional background: the codebase, constraints, what exists already"),
+        idea: z.string().trim().min(1, "Describe the idea.").max(MAX_IDEA).describe("The idea, in the user's words"),
+        context: z.string().max(MAX_CONTEXT).optional().describe("Optional background: the codebase, constraints, what exists already"),
         path: projectPath,
       },
     },
     async ({ idea, context, path }) =>
       safely(async () => {
-        const cwd = path ?? process.cwd();
         const env = options.env ?? process.env;
-        const projectContext = await captureProjectContext({ cwd, dataDir: store.dir, home: options.home, off: options.scan === false || env.GRILLADO_NO_SCAN === "1" });
-        const s = createSession({ idea, context, projectContext, provider: store.readConfig().defaultProvider ?? PROVIDER_IDS[0] });
-        s.queued = true;
-        // Always marked editor-started; a client without a usable name reads "From your editor" (#108).
-        s.from = (clientName() ?? "").slice(0, 80);
-        store.create(s, cwd);
-        const info = store.readServerInfo();
-        const url = info ? `http://127.0.0.1:${info.port}/s/${s.id}?t=${info.token}` : null;
-        const next = url
-          ? `Open ${url} to answer Grillado's questions.`
-          : `Grillado's web app isn't running. Run \`${appLine}\` and open this idea from Recent; the questions start there.`;
-        const contextView = projectContextView(projectContext);
-        return { content: [text(`Started plan ${s.id}. ${next}`)], structuredContent: { id: s.id, url, uri: URI + s.id, next, ...(contextView ? { projectContext: contextView } : {}) } };
+        const r = await startPlan(store, { idea, context, cwd: path ?? process.cwd(), from: clientName() ?? "", appLine, home: options.home, scanOff: options.scan === false || env.GRILLADO_NO_SCAN === "1" });
+        return { content: [text(`Started plan ${r.id}. ${r.next}`)], structuredContent: r };
       }),
   );
 
@@ -211,21 +145,8 @@ export function createMcpServer(
     },
     async ({ plan, quote, text: body }) =>
       safely(() => {
-        const t = store.update(plan, (s) => {
-          if (s.status !== "plated" || !s.plan) throw new Error(`Plan "${plan}" is still a draft: comments open once its plan is written.`);
-          const view = { comments: s.comments, plan: { markdown: store.readPlan(s.id) ?? s.plan.markdown } };
-          let thread;
-          try {
-            thread = addCoderComment(view, { quote, text: body, client: clientName() });
-          } catch {
-            throw new Error("That quote isn't in the plan. Copy it exactly from get_plan's Markdown.");
-          }
-          s.comments = view.comments;
-          s.updatedAt = new Date().toISOString();
-          return thread;
-        });
-        if (!t) throw new UnknownPlan(plan);
-        return { content: [text(`Comment added to plan ${plan}. It's in Grillado's Comments rail.`)], structuredContent: { plan, thread: t.id } };
+        const r = commentOnPlan(store, { plan, quote, text: body, client: clientName() });
+        return { content: [text(`Comment added to plan ${plan}. It's in Grillado's Comments rail.`)], structuredContent: r };
       }),
   );
 
@@ -269,8 +190,7 @@ export function createMcpServer(
       safely(async () => {
         try {
           const r = await found(path).import(id, store.readConfig().defaultProvider ?? PROVIDER_IDS[0]);
-          const info = store.readServerInfo();
-          const url = info ? `http://127.0.0.1:${info.port}/s/${r.planId}?t=${info.token}` : null;
+          const url = sessionUrl(store, r.planId);
           const what = { created: "Imported as", updated: "Updated", unchanged: "Already imported, unchanged:", conflict: "The plan was edited in Grillado; the new version is in plan.conflict.md of" }[r.result];
           return { content: [text(`${what} plan ${r.planId}.${url ? ` Open ${url}` : ""}`)], structuredContent: { ...r, url, uri: URI + r.planId } };
         } catch (err) {
@@ -294,7 +214,7 @@ export function createMcpServer(
     }),
     { title: "Grillado plan", description: "One plan's Markdown (a draft while its interview isn't finished)", mimeType: "text/markdown" },
     async (uri, { id }) => {
-      const s = load(store, String(id));
+      const s = loadPlan(store, String(id));
       return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: markdownOf(store, s) }] };
     },
   );

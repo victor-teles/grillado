@@ -33,7 +33,9 @@ export const api = {
   rescan: () => call<AppState>("POST", "/api/rescan"),
   selectProvider: (id: string, remember: boolean) => call<AppState>("POST", "/api/provider", { id, remember }),
   quit: () => call<{ ok: true }>("POST", "/api/quit"),
-  createSession: (idea: string, context: string) => call<SessionView>("POST", "/api/sessions", { idea, context }),
+  createSession: (idea: string, context: string, read?: boolean) => call<SessionView>("POST", "/api/sessions", { idea, context, ...(read === undefined ? {} : { read }) }),
+  /** Plan 002: let the agent read this project, or not (kept per project). */
+  setProjectRead: (on: boolean) => call<AppState>("POST", "/api/project-read", { on }),
   session: (id: string) => call<SessionView>("GET", `/api/sessions/${encodeURIComponent(id)}`),
   /** Autosave of the edited plan. Small bodies use `keepalive` so a save started while leaving the page still lands. */
   savePlan: (id: string, markdown: string, base?: string, reask?: boolean) =>
@@ -116,6 +118,8 @@ export interface DestBody {
 export type ServerEvent =
   | { type: "session"; session: SessionView }
   | { type: "progress"; sessionId: string; label: string }
+  /** Plan 003: what a reading run has opened so far. */
+  | { type: "reading"; sessionId: string; reading: { files: number; recent: string[]; at: string } }
   /** A comment reply's text so far, where the agent streams (#97); "" when it starts over. */
   | { type: "reply-text"; sessionId: string; threadId: string; text: string }
   | { type: "app" }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type FloorItem, dropReasonLine, notAskedLine, openFloor, reasonLine, stopReason, syncPlanOpen, unaskedPlanItems } from "./floor.ts";
 import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
+import type { Finding, Touch } from "./project-read.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
 import type { CommentState } from "./comments.ts";
@@ -86,6 +87,17 @@ export interface Session extends CommentState {
   context: string;
   /** Immutable project-plan references captured when this session was created. */
   projectContext?: ProjectContext;
+  /**
+   * Plan 002: whether the agent reads the project for rounds and the plan. Decided once, when the
+   * first round starts; absent before then (and on sessions from before 002, which never read).
+   */
+  codeRead?: boolean;
+  /** The folder the agent may read (the project's git top level), when `codeRead`. */
+  readRoot?: string;
+  /** Facts the agent read from the project and so did not ask, each with its checked sources. */
+  findings?: Finding[];
+  /** Plan 003: findings the user said were wrong, with what's true instead. Their words win. */
+  corrections?: Correction[];
   status: SessionStatus;
   rounds: Round[];
   decisions: Record<string, Decision>;
@@ -175,6 +187,41 @@ export interface ImportedSource {
   conflict?: string;
   /** The source's own agent, when it wasn't installed and the import used another (demo finding MUST 2). */
   agentFrom?: ProviderId;
+}
+
+/** Plan 003: "Not right" on a finding. `round` is the round it was made in: it can be undone until that round is sent. */
+export interface Correction {
+  finding: string;
+  text: string;
+  round: number;
+  at: string;
+}
+
+export const MAX_CORRECTION = 500;
+
+/** Save what's true instead of a finding (replacing an earlier correction of it). */
+export function correctFinding(s: Session, finding: string, text: string): Correction {
+  const f = s.findings?.find((x) => x.id === finding);
+  if (!f) throw new Error("That finding isn’t in this session.");
+  const t = text.trim();
+  if (!t) throw new Error("Say what’s true instead.");
+  if (t.length > MAX_CORRECTION) throw new Error(`Keep it under ${MAX_CORRECTION} characters.`);
+  const round = s.rounds.at(-1)?.n ?? 0;
+  const c = { finding, text: t, round, at: new Date().toISOString() };
+  s.corrections = [...(s.corrections ?? []).filter((x) => x.finding !== finding), c];
+  touch(s);
+  return c;
+}
+
+/** Undo a correction while the round it was made in is still being answered. */
+export function uncorrectFinding(s: Session, finding: string): void {
+  const c = s.corrections?.find((x) => x.finding === finding);
+  if (!c) return;
+  const open = currentRound(s);
+  if (!open || open.n !== c.round) throw new Error("That correction was already sent with your answers.");
+  s.corrections = s.corrections!.filter((x) => x !== c);
+  if (!s.corrections.length) delete s.corrections;
+  touch(s);
 }
 
 export function createSession(input: { idea: string; context?: string; projectContext?: ProjectContext; provider: ProviderId }): Session {
@@ -521,7 +568,8 @@ export function userText(s: Session): string {
   const answers = Object.values(s.decisions)
     .filter((d) => d.kind === "other")
     .map((d) => d.answer);
-  return [s.idea, s.context, ...answers].join("\n");
+  // Plan 003: corrections are the user's own words too.
+  return [s.idea, s.context, ...answers, ...(s.corrections ?? []).map((c) => c.text)].join("\n");
 }
 
 /** Validate a plan's citations (AC16). Returns an error for the repair retry, or null. */
@@ -635,6 +683,8 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply, stop?: PlanStop)
     for (const b of sec.blocks) lines.push(b, "");
   }
   if (!opened) pushOpen();
+  // Plan 002: the files the work touches, as the agent read them and Grillado checked them.
+  if (plan.touches?.length) lines.push(...inYourCode(plan.touches), "");
   if (rest.length) {
     lines.push("## More decisions", "");
     for (const b of rest) lines.push(b, "");
@@ -642,6 +692,11 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply, stop?: PlanStop)
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
   lines.push("");
   return lines.join("\n");
+}
+
+/** "## In your code": one line per touched file (plan 002). Backticks in a path end its code span early, so they're dropped. */
+export function inYourCode(touches: Touch[]): string[] {
+  return ["## In your code", "", ...touches.map((t) => `- \`${t.path.replace(/`/g, "")}\`${t.why ? `: ${t.why.replace(/\s+/g, " ")}` : ""}`)];
 }
 
 /** Everything a pick in an inline decision block can be. */

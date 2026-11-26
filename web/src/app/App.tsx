@@ -13,20 +13,28 @@ import { newer } from "./newer";
 const sessionIdFromPath = () => /^\/s\/([\w-]+)$/.exec(location.pathname)?.[1] ?? null;
 const stepOf = (s: SessionView) => (s.status === "confirm" ? 2 : s.status === "synthesizing" || s.status === "plated" ? 3 : 1);
 
-function ProjectSources({ context }: { context: SessionView["projectContext"] }) {
-  if (!context) return null;
-  const count = context.sources.length;
+function ProjectSources({ context, reads }: { context: SessionView["projectContext"]; reads?: { name: string; root: string } }) {
+  if (!context && !reads) return null;
+  const count = context?.sources.length ?? 0;
+  const plans = `${count} project ${count === 1 ? "plan" : "plans"}`;
+  // Plan 002: one disclosure for both kinds of project context, "Reads grillado · 3 plans".
+  const summary = reads ? `Reads ${reads.name}${count ? ` · ${count} ${count === 1 ? "plan" : "plans"}` : ""}` : `Using ${plans}`;
   return (
     <details className="project-sources" data-testid="project-context">
-      <summary>Using {count} project {count === 1 ? "plan" : "plans"}</summary>
+      <summary>{summary}</summary>
       <ul>
-        {context.sources.map((source) => (
+        {reads ? (
+          <li>
+            Reads files in <code title={reads.root}>{reads.root}</code> to ask and write the plan. It can’t change them.
+          </li>
+        ) : null}
+        {(context?.sources ?? []).map((source) => (
           <li key={source.path}>
             <code>{source.path}</code>
             {source.truncated ? " (excerpt)" : null}
           </li>
         ))}
-        {context.truncated ? <li>More project context was omitted by the snapshot limits.</li> : null}
+        {context?.truncated ? <li>More project context was omitted by the snapshot limits.</li> : null}
       </ul>
     </details>
   );
@@ -70,6 +78,7 @@ export function App() {
         if (e.type === "app") void refreshApp();
         else if (e.type === "session") setSession((cur) => (cur && cur.id === e.session.id ? newer(cur, e.session) : cur));
         else if (e.type === "progress") setSession((cur) => (cur && cur.id === e.sessionId ? { ...cur, progress: e.label } : cur));
+        else if (e.type === "reading") setSession((cur) => (cur && cur.id === e.sessionId && cur.busy ? { ...cur, reading: e.reading } : cur));
         // Not React state: the streaming message appends it itself (#97).
         else if (e.type === "reply-text") setReplyText(e.threadId, e.text);
       },
@@ -177,8 +186,8 @@ export function App() {
         state={app}
         provider={provider}
         onSwitch={onSwitch}
-        onStart={async (idea, context) => {
-          const s = await api.createSession(idea, context);
+        onStart={async (idea, context, read) => {
+          const s = await api.createSession(idea, context, read);
           setSession((cur) => (cur && cur.id === s.id ? newer(cur, s) : s));
           go(s.id);
         }}
@@ -199,7 +208,7 @@ export function App() {
       <Header
         step={session && !picking ? stepOf(session) : undefined}
         title={session ? session.idea.split("\n")[0] : undefined}
-        afterTitle={session && !picking ? <ProjectSources context={session.projectContext} /> : undefined}
+        afterTitle={session && !picking ? <ProjectSources context={session.projectContext} reads={session.codeRead && session.readRoot ? { name: session.readRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? session.readRoot, root: session.readRoot } : undefined} /> : undefined}
         // v1.2: no agent in the header before a session; the composer shows it.
         provider={showAgent && session && ready.length ? provider : undefined}
         onSwitch={onSwitch}

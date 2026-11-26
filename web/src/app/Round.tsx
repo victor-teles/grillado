@@ -20,6 +20,8 @@ import { waitLabel } from "./wait";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
 import { MobileStrip, SidePanel } from "./Tree";
+import { FoundInCode, FromYourCode } from "./project/Findings";
+import { WaitStatus } from "./project/Reading";
 import { type Answer, type DecisionNode, OTHER_OPTION, type Question, type Round, type SessionView, UNKNOWN_OPTION } from "./types";
 
 type Act = (action: string, body?: unknown) => Promise<void>;
@@ -202,6 +204,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
             <p>
               {finishing ? "These decisions were left open in your plan." : first ? "The first calls on your idea." : round.reask ? COPY.reaskSub : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
             </p>
+            <FoundInCode findings={session.findings} round={round.n} corrections={session.corrections} act={act} />
           </div>
           <AgentQuestionStack className="cards">
             {round.questions.map((q, i) => {
@@ -263,6 +266,7 @@ function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; open
       <AgentQuestionTitle className="q-t">{q.title}</AgentQuestionTitle>
       <CardHead openedBy={openedBy} yours={yours} />
       {q.body ? <AgentQuestionDescription className="q-d">{q.body}</AgentQuestionDescription> : null}
+      <FromYourCode evidence={q.evidence} />
       <AgentQuestionOptions>
         {q.options.map((o) => (
           <AgentQuestionOption key={o.id} value={o.id} label={o.label} description={o.description || undefined} recommended={o.id === q.recommendedOptionId} />
@@ -292,12 +296,13 @@ export function SkeletonCard({ wide }: { wide?: boolean }) {
 }
 
 /** One status line under the title. The ember dot is static; no elapsed timer (DECISIONS #21). */
-export function StatusLine({ label, dot, onStop, note }: { label: string; dot?: boolean; onStop?: () => void; note?: string }) {
+export function StatusLine({ label, dot, onStop, note, actions }: { label: string; dot?: boolean; onStop?: () => void; note?: string; actions?: React.ReactNode }) {
   return (
     <>
     <div className="status" role="status" aria-live="polite" data-has-note={note ? true : undefined}>
       {dot ? <span className="ember" aria-hidden="true" /> : null}
       <span>{label}</span>
+      {actions}
       {onStop ? (
         <button type="button" className="btn quiet sm" onClick={onStop}>
           <ISq s={12} />
@@ -331,7 +336,7 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
               {banner}
               <div className="intro">
                 <h1>{session.idea.split("\n")[0]}</h1>
-                {busy ? <StatusLine label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <WaitStatus session={session} label={label} note={COPY.roundWaitNote} elapsed={elapsed} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} onSkip={() => void act("skip-read").catch(() => {})} /> : null}
               </div>
               {busy ? <SkeletonCard wide /> : null}
             </div>
@@ -375,7 +380,7 @@ export function FiringUp({ session, act, banner }: { session: SessionView; act: 
               {banner}
               <div className="intro">
                 <h1>{idea}</h1>
-                {busy ? <StatusLine dot label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <WaitStatus session={session} dot label={label} note={COPY.roundWaitNote} elapsed={elapsed} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} onSkip={() => void act("skip-read").catch(() => {})} /> : null}
               </div>
               {busy ? (
                 <>

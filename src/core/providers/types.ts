@@ -16,8 +16,13 @@ export interface RunRequest {
   userPrompt: string;
   /** Derived from the Zod schema. */
   jsonSchema: object;
-  /** Empty temp dir per session. */
+  /** Empty temp dir per session, or the project's read root when `access` is "read" (plan 002). */
   cwd: string;
+  /**
+   * "read": the agent may read files under `cwd` and nothing more (no writes, no commands Grillado
+   * gives it, no network). Absent or "none": tools off, as always. Only rounds and the plan use "read".
+   */
+  access?: "none" | "read";
   model?: string;
   timeoutMs: number;
   /**
@@ -25,7 +30,15 @@ export interface RunRequest {
    * real deltas (#97: Claude Code only for now). Providers that can't ignore it and reply whole.
    */
   stream?: { field: string };
+  /**
+   * Report the agent's file reads and searches as `activity` events while it works (plan 003), where
+   * the CLI prints its tool calls (Claude Code only for now). Others ignore it.
+   */
+  watch?: boolean;
 }
+
+/** What a reading agent is doing right now: a file it opened, or a search or listing it ran. */
+export type Activity = { action: "read" | "search" | "list"; target: string };
 
 export type ProviderEvent =
   | { type: "progress"; label: string }
@@ -33,6 +46,8 @@ export type ProviderEvent =
   | { type: "text-delta"; text: string }
   /** The provider started the reply over (e.g. its own schema retry): drop the streamed text. */
   | { type: "text-reset" }
+  /** A file read or search the agent started (plan 003). The target is untrusted: paths are checked by the caller. */
+  | ({ type: "activity" } & Activity)
   | { type: "result"; raw: unknown }
   | { type: "error"; code: FailureCode; message: string };
 
@@ -44,6 +59,8 @@ export interface ProviderAdapter {
   loginHint: string;
   /** How long one run may take before it times out, unless GRILLADO_TIMEOUT_MS overrides it. */
   defaultTimeoutMs?: number;
+  /** The CLI can be limited to read-only file tools, so sessions may read the project (plan 002). Absent: it can't. */
+  canRead?: boolean;
   detect(): Promise<Detection>;
   run(req: RunRequest, signal: AbortSignal): AsyncIterable<ProviderEvent>;
 }

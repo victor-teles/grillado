@@ -459,6 +459,22 @@ function Body({ id, e, p, A, animate }: { id: string; e: Entry; p: ActivityProps
                 <span className="k">Read</span> plan.md · {e.read.join(", ")}
               </p>
             ) : null}
+            {e.files?.length ? (
+              // Plan 003: the project files a reading run opened.
+              <details className="kv rfiles" data-testid="read-files">
+                <summary>
+                  <span className="k">Read</span> {(e.result?.files ?? e.files.length) === 1 ? "1 file" : `${e.result?.files ?? e.files.length} files`}
+                </summary>
+                <ul>
+                  {e.files.map((f) => (
+                    <li key={f}>
+                      <code>{f}</code>
+                    </li>
+                  ))}
+                  {(e.result?.files ?? 0) > e.files.length ? <li>and {(e.result?.files ?? 0) - e.files.length} more</li> : null}
+                </ul>
+              </details>
+            ) : null}
             {e.notDone?.length ? (
               <p className="kv">
                 <span className="k">Not done</span> {e.notDone.join(", ")} {e.notDone.length === 1 ? "wasn’t" : "weren’t"} started

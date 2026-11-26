@@ -14,6 +14,26 @@ export interface ProviderView {
   status: "ready" | "missing" | "broken" | "outdated";
   version?: string;
   reason?: string;
+  /** Its CLI can be limited to read-only file tools (plan 002). */
+  canRead?: boolean;
+}
+
+/** The launch folder's project, for Home's read chip (plan 002). */
+export type ProjectView =
+  | { name: string; readable: false; reason: "no-project" | "not-git" | "home" | "root" | "data-dir" | "off" }
+  | { name: string; readable: true; root: string; on: boolean };
+
+/** Plan 002: a fact the agent read from the project, so didn't ask; its paths were checked. */
+export interface Finding {
+  id: string;
+  round: number;
+  label: string;
+  fact: string;
+  paths: string[];
+}
+export interface Evidence {
+  path: string;
+  note: string;
 }
 
 export interface SessionSummary {
@@ -109,6 +129,8 @@ export interface AppState {
   found?: FoundView;
   /** How an editor starts `grillado mcp`; always sent. */
   mcp: McpLaunch;
+  /** The launch folder's project and whether its code can be read (plan 002); null outside a project. */
+  project?: ProjectView | null;
 }
 
 export type SessionStatus = "asking" | "answering" | "confirm" | "synthesizing" | "plated";
@@ -127,6 +149,8 @@ export interface Question {
   options: Option[];
   recommendedOptionId: string;
   dependsOn: string[];
+  /** Plan 002: project files the question rests on (checked paths). */
+  evidence?: Evidence[];
 }
 export interface Answer {
   questionId: string;
@@ -204,6 +228,14 @@ export interface SessionView {
   provider: ProviderId;
   idea: string;
   context: string;
+  /** Plan 002: the agent reads the project for rounds and the plan; `readRoot` is where. */
+  codeRead?: boolean;
+  readRoot?: string;
+  findings?: Finding[];
+  /** Plan 003: findings the user said were wrong; `round` is where it was made (undo until it's sent). */
+  corrections?: { finding: string; text: string; round: number; at: string }[];
+  /** Plan 003: what the reading run in progress has opened. */
+  reading?: { files: number; recent: string[]; at: string };
   /** Source-only view of the immutable project-plan snapshot. */
   projectContext?: {
     capturedAt: string;

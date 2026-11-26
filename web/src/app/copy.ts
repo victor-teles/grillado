@@ -27,6 +27,29 @@ export const COPY = {
   stoppedTitle: "You stopped {agent}",
   stoppedBody: "Your answers are saved. Retry when you’re ready.",
   timeoutBody: "Nothing came back in time. Your answers are saved.",
+  // Plan 002: reading the project.
+  readOn: "Reads {project}",
+  readOff: "Not reading files",
+  readTitle: "Reads your project, changes nothing",
+  readBody: "{agent} can open files in {root} to ask better questions. It can’t change files or go online.",
+  readCheck: "Read this project",
+  readCantAgent: "{agent} can’t read files yet. Switch agents to use this.",
+  foundInCode: "Found in your code",
+  foundCount: "{n} things it didn’t need to ask",
+  foundCountOne: "1 thing it didn’t need to ask",
+  fromYourCode: "From your code",
+  moreFiles: "+{n} more",
+  // Plan 003: while it reads, a way out, and corrections.
+  readingProject: "Reading {project}…",
+  readingNote: "Reading a project can take a few minutes.",
+  readingCount: "{n} files read",
+  readingCountOne: "1 file read",
+  skipReading: "Skip reading",
+  askWithoutReading: "Ask without reading",
+  notRight: "Not right",
+  whatsTrue: "What’s true instead?",
+  correctionSave: "Save",
+  correctionUndo: "Undo",
 } as const;
 
 /** Fill `{name}` slots. Unknown slots are left as they are so a missing value is visible, not silent. */

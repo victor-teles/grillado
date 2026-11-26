@@ -45,6 +45,17 @@ for (const term of [...BANNED, ...fragments]) {
 }
 await client.close();
 
+// Plan 004: what `grillado skills get` and the skill stub show a coding agent.
+for (const file of [...walk("skills"), ...walk("dist/skill-data")]) {
+  const text = readFileSync(file, "utf8").toLowerCase();
+  for (const term of [...BANNED, ...fragments]) {
+    if (text.includes(term)) {
+      console.error(`check-banned: ${file} contains "${term.slice(0, 60)}"`);
+      bad++;
+    }
+  }
+}
+
 // review-pr26 r2 n1: on-screen strings use ’, never a straight ' between letters (strings only, never comments or code).
 const { straightApostrophes } = await import("./apostrophes.mjs");
 const straight = straightApostrophes();
@@ -52,4 +63,4 @@ for (const h of straight) console.error(`check-banned: straight apostrophe on sc
 bad += straight.length;
 
 if (bad) process.exit(1);
-console.log(`check-banned: dist/web and the MCP tools clean (${BANNED.length} terms, ${fragments.length} prompt fragments); no straight apostrophes in on-screen strings`);
+console.log(`check-banned: dist/web, the MCP tools and the skills clean (${BANNED.length} terms, ${fragments.length} prompt fragments); no straight apostrophes in on-screen strings`);

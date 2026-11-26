@@ -49,7 +49,7 @@ const freePort = () =>
   });
 
 async function webApp() {
-  const child = spawn(NODE, [CLI, "--no-open", "--port", String(await freePort())], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [CLI, "--no-open", "--port", String(await freePort())], { cwd: HOME, env, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {
@@ -67,7 +67,7 @@ async function webApp() {
 }
 
 async function mcpClient(args = [], name = "e2e-coder") {
-  const transport = new StdioClientTransport({ command: NODE, args: [CLI, "mcp", ...args], env, stderr: "pipe" });
+  const transport = new StdioClientTransport({ command: NODE, args: [CLI, "mcp", ...args], env, cwd: HOME, stderr: "pipe" });
   let stderr = "";
   transport.stderr?.on("data", (d) => (stderr += d));
   const client = new Client({ name, version: "1.0.0" });
@@ -79,7 +79,7 @@ const textOf = (r) => r.content.map((x) => x.text).join("\n");
 
 // stdout carries the protocol only: every line a raw `grillado mcp` writes is JSON-RPC.
 {
-  const child = spawn(NODE, [CLI, "mcp"], { env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(NODE, [CLI, "mcp"], { cwd: HOME, env, stdio: ["pipe", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   let err = "";

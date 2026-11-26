@@ -46,7 +46,7 @@ async function server(extra = {}) {
   const ctl = path.join(home, "ctl.json");
   writeFileSync(ctl, "{}");
   const e = { PATH: `${fakeBins(["claude", "codex"])}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, FAKE_CTL: ctl, ...extra };
-  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { env: e, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { cwd: home, env: e, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {

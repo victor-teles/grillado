@@ -8,6 +8,7 @@ import { sourceLabel } from "../../../src/core/activity.ts";
 import { issuesText, statusText } from "./recent";
 import { Found } from "./found/Found";
 import { useFoundHandoff } from "./found/handoff";
+import { ReadChip, readsNow, useProjectRead } from "./project/ReadChip";
 
 // ---------------------------------------------------------------- 0c no agent
 
@@ -216,13 +217,14 @@ export function Landing({
   state: AppState;
   provider?: ProviderView;
   onSwitch?: () => void;
-  onStart: (idea: string, context: string) => Promise<void>;
+  onStart: (idea: string, context: string, read: boolean) => Promise<void>;
   onOpen: (id: string) => void;
 }) {
   const mobile = useMobile();
   const [idea, setIdea] = useState("");
   const handoff = useFoundHandoff(state.sessions);
   const [context, setContext] = useState("");
+  const [project, setProjectRead] = useProjectRead(state.project);
   const [showContext, setShowContext] = useState(false);
   const [sending, setSending] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -238,7 +240,7 @@ export function Landing({
     if (!idea.trim() || sending) return;
     setSending(true);
     try {
-      await onStart(idea.trim(), context.trim());
+      await onStart(idea.trim(), context.trim(), readsNow(project, provider));
     } finally {
       setSending(false);
     }
@@ -289,6 +291,7 @@ export function Landing({
           ) : null}
           <div className="ar">
             {provider ? <AgentChip provider={provider} onSwitch={onSwitch} /> : null}
+            <ReadChip project={project} provider={provider} onChange={setProjectRead} />
             {showContext ? null : (
               <button type="button" className="icon-btn" aria-label="Add context" onClick={() => setShowContext(true)}>
                 <IPlus s={16} />
