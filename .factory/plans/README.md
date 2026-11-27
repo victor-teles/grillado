@@ -15,6 +15,7 @@ update your row when done.
 | 005  | Home's project is a choice: switch projects, pick where plans are saved (built from a user report, no written plan) | P1 | S | 002 | DONE |
 | 006  | Slice B, "See before you choose": option previews, Compare, Show me another. Planned in Grillado itself: `docs/plans/grillado-plan-2026-11-26-b7e14b3d.md` | P1 | L | 002 | DONE (real-agent trial on Claude Code only) |
 | 007  | Diagrams are drawn by pele (https://pele.run) instead of Mermaid's own renderer; the diagram language is unchanged (built from a user request, no written plan) | P2 | S | — | DONE |
+| 008  | Slice D, plan-to-build loop: build steps, `grillado build`, asks, change notices. Planned in Grillado: `docs/plans/grillado-plan-2026-11-27-6f344d58.md`; layout in `008-plan-to-build-loop.md` | P1 | L | 004 | DONE (uncommitted; see the plan's notes for deviations) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with
 one-line rationale). 001 is a direction plan: it stays ACTIVE while its slices are built.

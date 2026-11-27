@@ -4,7 +4,9 @@
 import { planOpenNow } from "../core/floor.ts";
 import { issuesOf } from "../core/issues.ts";
 import { MAX_COMMENT, MAX_QUOTE, addCoderComment } from "../core/comments.ts";
-import { PROVIDER_IDS } from "../core/providers/types.ts";
+import { type ProviderId, PROVIDER_IDS } from "../core/providers/types.ts";
+import { createAdapters } from "../core/providers/adapters.ts";
+import { emptyBuild, snapshot, stepNumber, withBuildAppendix } from "../core/build.ts";
 import { type Session, createSession } from "../core/session.ts";
 import { projectContextView } from "../core/project-context.ts";
 import { captureProjectContext } from "./project-context.ts";
@@ -86,12 +88,47 @@ export function listPlans(store: Store) {
   return store.list().map(summary);
 }
 
-/** One plan: its Markdown, decisions, what's still open, and its issue links. */
+/** The build state a coding agent sees with the plan: revision, steps and asks. Absent for a plan with none. */
+export function buildOf(s: Session) {
+  const b = s.build;
+  if (!b || (!b.steps.length && !b.asks.length)) return undefined;
+  return {
+    rev: b.rev,
+    steps: b.steps.map((x, i) => ({ n: i + 1, key: x.key, title: x.title, done: x.done, status: x.status })),
+    asks: b.asks.map((a) => ({ key: a.key, title: a.title, state: a.state, ...(a.step ? { step: stepNumber(b, a.step) || undefined } : {}), ...(a.answer !== undefined ? { answer: a.answer } : {}) })),
+  };
+}
+
+/**
+ * One plan: its Markdown (with its build steps and log, as in the file), decisions, what's still
+ * open, and its issue links. Reading it is what later build replies compare against ("the plan
+ * changed since you last read it").
+ */
 export function getPlan(store: Store, id: string) {
   const s = loadPlan(store, id);
-  const markdown = markdownOf(store, s);
-  const d = decisionsOf(s, markdown);
-  return { ...summary(s), markdown, decisions: d.decisions, open: d.open, issues: issuesOf(s) };
+  const text = markdownOf(store, s);
+  const d = decisionsOf(s, text);
+  const build = isDraft(s) ? undefined : buildOf(s);
+  if (!isDraft(s) && s.build)
+    store.update(id, (x) => {
+      x.build ??= emptyBuild();
+      x.build.seen = snapshot(x.build, { markdown: store.readPlan(id) ?? x.plan?.markdown ?? "", decisions: Object.values(x.decisions) });
+    });
+  return { ...summary(s), markdown: isDraft(s) ? text : withBuildAppendix(text, s.build), decisions: d.decisions, open: d.open, issues: issuesOf(s), ...(build ? { build } : {}) };
+}
+
+/**
+ * The agent a plan started from a shell runs on (`plan start --agent`). It must be one that can
+ * read the project: a plan written without the code is the thing this option is for avoiding.
+ */
+export function agentFor(id: string | undefined): ProviderId | undefined {
+  if (id === undefined) return undefined;
+  const all = createAdapters();
+  const can = all.filter((a) => a.canRead).map((a) => `${a.id} (${a.displayName})`).join(", ");
+  const a = all.find((x) => x.id === id.trim());
+  if (!a) throw new Error(`Unknown agent "${id}". Agents that can read the project: ${can}.`);
+  if (!a.canRead) throw new Error(`${a.displayName} can’t read the project yet, so its questions and plan wouldn’t know the code. Agents that can: ${can}.`);
+  return a.id;
 }
 
 export function getDecisions(store: Store, id: string) {
@@ -119,13 +156,16 @@ export interface StartInput {
   home?: string;
   /** The shared project scan opt-out. */
   scanOff?: boolean;
+  /** `--agent`: the agent that asks and writes this plan, over the one selected in the web app. Checked with agentFor(). */
+  agent?: ProviderId;
 }
 
 /** Send an idea to Grillado: a queued session whose first round starts when the web app opens it. */
 export async function startPlan(store: Store, input: StartInput) {
   const projectContext = await captureProjectContext({ cwd: input.cwd, dataDir: store.dir, home: input.home, off: !!input.scanOff });
-  const s = createSession({ idea: input.idea, context: input.context, projectContext, provider: store.readConfig().defaultProvider ?? PROVIDER_IDS[0] });
+  const s = createSession({ idea: input.idea, context: input.context, projectContext, provider: input.agent ?? store.readConfig().defaultProvider ?? PROVIDER_IDS[0] });
   s.queued = true;
+  if (input.agent) s.agentPinned = true;
   // Always marked editor-started; a client without a usable name reads "From your editor" (#108).
   s.from = (input.from ?? "").slice(0, 80);
   store.create(s, input.cwd, input.plansDir);

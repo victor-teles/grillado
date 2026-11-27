@@ -36,7 +36,7 @@ Don't use it for a one-line fix, a question with one obvious answer, or when the
    - `"result": "ready"`: the plan is in `markdown`, with `decisions` (each question's answer) and `open` (decisions still open).
    - `"result": "waiting"`: run the same command again. If you can't keep waiting (your session limits it), tell the user the questions are open in their browser and to tell you when they're done; then run `npx -y grillado plan get <id>`. If it says the last agent run failed, tell the user to retry in the browser.
 
-4. Show the user a short summary of the plan and ask whether to start building. To build from it, run `npx -y grillado skills get build`.
+4. Show the user a short summary of the plan and ask whether to start building. To build from it step by step, run `npx -y grillado skills get build`.
 
 ## Good to know
 

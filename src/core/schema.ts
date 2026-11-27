@@ -111,6 +111,9 @@ export const PlanReplySchema = z.object({
     )
     .min(0),
   openDecisions: z.array(z.string().max(400)),
+  /** The build steps (plan-to-build loop): thin end-to-end slices, each with a check that tells it is done. */
+  // Lenient: a bad step is dropped; a plan with none gets the repair pass once (engine.ts) and is kept either way.
+  steps: lenient(z.object({ title: z.string().min(1).max(300), done: z.string().max(600) }), 30),
 });
 
 /** A plan from an agent that can read the project: it lists the files the work touches. */
@@ -210,7 +213,7 @@ export type ReplyQuestion = Omit<Question, "options"> & { options: (Omit<Option,
 export type RoundReply = Omit<z.infer<typeof RoundReplySchema>, "questions"> & { questions: ReplyQuestion[]; findings?: z.infer<typeof FindingReplySchema>[] };
 export type AnotherOptionReply = z.infer<typeof AnotherOptionReplySchema>;
 export type GroundedRoundReply = z.infer<typeof GroundedRoundReplySchema>;
-export type PlanReply = z.infer<typeof PlanReplySchema> & { touches?: z.infer<typeof TouchSchema>[] };
+export type PlanReply = Omit<z.infer<typeof PlanReplySchema>, "steps"> & { steps?: { title: string; done: string }[]; touches?: z.infer<typeof TouchSchema>[] };
 export type CommentReply = z.infer<typeof CommentReplySchema>;
 export type EditReply = z.infer<typeof EditReplySchema>;
 export type DiagramReply = z.infer<typeof DiagramReplySchema>;

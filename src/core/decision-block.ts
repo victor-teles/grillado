@@ -39,7 +39,7 @@ export type DecisionParse =
 
 const LINE = /^([A-Za-z_][\w-]*)\s*:\s?(.*)$/;
 // Round ids (R3·1) or a decision you added yourself (U1, item 4; never collides with a round).
-const ID = /^(R\d+[·.:]\S+|U\d+)$/;
+const ID = /^(R\d+[·.:]\S+|U\d+|B[·.:]\S+)$/;
 const KNOWN = ["id", "key", "question", "answer", "note", "by", "kept_suggestion", "at", "status"];
 
 const unquote = (v: string) => {

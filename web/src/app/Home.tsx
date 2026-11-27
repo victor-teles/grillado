@@ -9,6 +9,7 @@ import { issuesText, statusText } from "./recent";
 import { Found } from "./found/Found";
 import { useFoundHandoff } from "./found/handoff";
 import { ProjectChip, readsNow, useProjectRead } from "./project/ReadChip";
+import { COPY } from "./copy";
 
 // ---------------------------------------------------------------- 0c no agent
 
@@ -406,7 +407,15 @@ function Recent({
                 onOpen(s.id);
               }}
             >
-              <span className="nm">{s.title || s.idea.split("\n")[0]}</span>
+              <span className="nm">
+                {s.title || s.idea.split("\n")[0]}
+                {s.asks ? (
+                  // Plan-to-build loop: a coding agent is waiting on an answer in this plan.
+                  <span className="ask-badge" data-testid="ask-badge">
+                    {COPY.askWaiting}
+                  </span>
+                ) : null}
+              </span>
               <span className="meta" title={metaTitle(s, here)}>
                 {elsewhere(s, here) ? (
                   // Plan 005: planned in another project than Home's.

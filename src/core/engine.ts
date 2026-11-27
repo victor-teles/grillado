@@ -12,6 +12,7 @@ import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts"
 import { checkAddPlan, citeId } from "./addplan.ts";
 import { type Slice, fallbackSlices, groupedSlices, planDecisions, todoIds } from "./issues.ts";
 import { type PathCheck, checkEvidence, checkTouches, mergeFindings } from "./project-read.ts";
+import { cleanSteps } from "./build.ts";
 import { hasPreview, previewIssue, previewKindOf, previewProblem, uiAdvice } from "./previews.ts";
 import {
   AnotherOptionReplySchema,
@@ -344,6 +345,14 @@ export function groundRound(s: Session, reply: RoundReply, check: PathCheck): vo
   delete reply.findings;
 }
 
+/** What is wrong with a plan's build steps, for the repair pass. */
+export function stepsProblem(steps: { title: string; done: string }[] | undefined): string | null {
+  const usable = cleanSteps(steps);
+  if (!usable.length) return 'Add "steps": the build steps, each with a "title" and a "done" check.';
+  const bare = usable.find((x) => !x.done);
+  return bare ? `Step "${bare.title}" needs "done": one sentence that says how to tell it is done.` : null;
+}
+
 /** Synthesis: a separate call that writes the plan. Only valid after the user confirmed (AC7). */
 export async function synthesize(
   s: Session,
@@ -357,7 +366,9 @@ export async function synthesize(
     adapter,
     { kind: "synthesis", systemPrompt: synthesisSystemPrompt({ read }), userPrompt: buildSynthesisPrompt(s), jsonSchema: read ? groundedPlanJsonSchema() : planJsonSchema() },
     read ? GroundedPlanReplySchema : PlanReplySchema,
-    (plan) => validatePlan(s, plan),
+    // A plan with no usable build steps gets the one repair pass; if there are still none it is kept
+    // without them (the plan is worth more than its steps, and the user can add them).
+    (plan, attempt) => validatePlan(s, plan) ?? (attempt === 1 ? stepsProblem(plan.steps) : null),
     opts,
     userText(s),
   );

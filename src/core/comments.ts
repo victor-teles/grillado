@@ -503,7 +503,7 @@ export function undoReview(s: CommentState & { plan?: { markdown: string } }): {
 /** Plain words of a quote, for the thread's quote bar and prompts: no Markdown marks or citations. */
 export function plainQuote(md: string): string {
   return md
-    .replace(/\[(R\d+:[^\]]*)\]/g, "")
+    .replace(/\[((?:R\d+|B):[^\]]*)\]/g, "")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/[*_~`]/g, "")
     .replace(/\s+/g, " ")

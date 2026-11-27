@@ -6,11 +6,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { UsageError } from "./args.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
-import { MAX_COMMENT, MAX_CONTEXT, MAX_IDEA, MAX_QUOTE, PLAN_ID, commentOnPlan, getPlan, listPlans, loadPlan, sessionUrl, startPlan } from "./plans.ts";
+import { MAX_COMMENT, MAX_CONTEXT, MAX_IDEA, MAX_QUOTE, PLAN_ID, agentFor, commentOnPlan, getPlan, listPlans, loadPlan, sessionUrl, startPlan } from "./plans.ts";
 import { Store, defaultDataDir, resolvePlansDir } from "./store.ts";
 
 export const PLAN_HELP = `Usage: grillado plan start <idea> [--context <text>] [--context-file <path>] [--path <dir>]
-                            [--plans-dir <path>] [--from <name>] [--no-open] [--json]
+                            [--plans-dir <path>] [--agent <id>] [--from <name>] [--no-open] [--json]
        grillado plan wait <id> [--timeout <seconds>] [--json]
        grillado plan get <id> [--json]
        grillado plan list [--json]
@@ -18,10 +18,12 @@ export const PLAN_HELP = `Usage: grillado plan start <idea> [--context <text>] [
 All take --data-dir <path> (default ~/.grillado, or $GRILLADO_HOME).
 
 start   Send an idea to Grillado and open its questions in the browser (starts the web app if
-        it isn't running). The user answers there; nothing is answered for them.
+        it isn't running). The user answers there; nothing is answered for them. --agent picks
+        the agent that asks and writes the plan (claude, grok): one that can read the project.
 wait    Wait for the user to finish and print the plan. Prints a waiting status (exit 0) when
         --timeout passes first (default 540 s); run it again.
-get     Print a plan's Markdown (a draft while its interview isn't finished).
+get     Print a plan's Markdown, with its build steps (a draft while its interview isn't finished).
+        To build from it step by step: grillado build --help
 list    List the plans, newest first.
 comment Leave a comment on a passage of a written plan (quote it exactly from \`get\`).
 `;
@@ -31,7 +33,7 @@ export const DEFAULT_WAIT_S = 540;
 const APP_START_MS = 15_000;
 
 type Flags = Record<string, string | true>;
-const VALUE = new Set(["--context", "--context-file", "--path", "--plans-dir", "--from", "--timeout", "--quote", "--text", "--data-dir"]);
+const VALUE = new Set(["--context", "--context-file", "--path", "--plans-dir", "--from", "--timeout", "--quote", "--text", "--data-dir", "--agent"]);
 const BOOL = new Set(["--no-open", "--json"]);
 
 function parse(argv: string[]): { pos: string[]; flags: Flags } {
@@ -63,7 +65,7 @@ const str = (f: Flags, k: string) => (typeof f[k] === "string" ? (f[k] as string
 
 /** The options each command takes, besides --json and --data-dir. */
 const TAKES: Record<string, string[]> = {
-  start: ["--context", "--context-file", "--path", "--plans-dir", "--from", "--no-open"],
+  start: ["--context", "--context-file", "--path", "--plans-dir", "--from", "--no-open", "--agent"],
   wait: ["--timeout"],
   get: [],
   list: [],
@@ -187,7 +189,8 @@ export async function runPlan(argv: string[], c: PlanCommandEnv): Promise<number
         const cwd = path.resolve(c.cwd ?? process.cwd(), str(flags, "--path") ?? ".");
         const appLine = c.appLine(store.dir);
         const plansDir = str(flags, "--plans-dir");
-        const r = await startPlan(store, { idea, context, cwd, plansDir: plansDir ? resolvePlansDir(cwd, plansDir) : undefined, from: str(flags, "--from") ?? "", appLine, scanOff: env.GRILLADO_NO_SCAN === "1" });
+        const agent = agentFor(str(flags, "--agent"));
+        const r = await startPlan(store, { idea, context, cwd, agent, plansDir: plansDir ? resolvePlansDir(cwd, plansDir) : undefined, from: str(flags, "--from") ?? "", appLine, scanOff: env.GRILLADO_NO_SCAN === "1" });
         let app: "running" | "started" | "unavailable" = r.url ? "running" : "unavailable";
         let url = r.url;
         if (!url) {
@@ -217,7 +220,7 @@ export async function runPlan(argv: string[], c: PlanCommandEnv): Promise<number
  * Start the web app in the background for this data dir, in the project folder, so the user can
  * answer. It quits on its own once nobody has used it for a while (--exit-when-idle).
  */
-async function startApp(c: PlanCommandEnv, store: Store, cwd: string): Promise<string | null> {
+export async function startApp(c: PlanCommandEnv, store: Store, cwd: string): Promise<string | null> {
   const args = [c.cliFile, "--no-open", "--exit-when-idle", "--data-dir", store.dir];
   try {
     const child = spawn(c.node ?? process.execPath, args, { cwd, env: c.env ?? process.env, detached: true, stdio: "ignore" });

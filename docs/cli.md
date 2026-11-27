@@ -19,6 +19,20 @@ to six per question. The source of each preview you chose is saved in the plan u
 "Chosen previews". Limits per preview: 32 KiB for a UI mock, 16 KiB and 200 lines for code,
 16 KiB and 150 lines for a diagram.
 
+## Building from a plan
+
+A written plan has a **Build** tab: its build steps, each with a check that tells it is done.
+Your coding agent works through them with `grillado build` (see [agents.md](agents.md)) and the
+tab shows what it started, what it finished and what it verified.
+
+- Edit a step's title or done check, move it with the arrows or Alt+↑ / Alt+↓, add one, remove
+  one. Reopen a step the agent marked done when it isn't.
+- When the agent needs a decision the plan doesn't cover, its question appears as a card above
+  the plan, marked "Agent is waiting". Pick an option with a number key and press Enter, or type
+  your own answer. Your answer is added to the plan as a decision; nothing ever answers for you.
+  While a question is waiting, the browser tab's title says so and Home marks the plan.
+- Send to issues uses the build steps: one issue per step.
+
 ## Where plans are saved
 
 Run Grillado from your project folder. New plans are saved as

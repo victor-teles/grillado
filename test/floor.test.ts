@@ -50,7 +50,7 @@ function writer(openDecisions: string[]): ProviderAdapter & { requests: RunReque
     },
     async *run(req: RunRequest): AsyncIterable<ProviderEvent> {
       requests.push(req);
-      yield { type: "result", raw: { type: "plan", title: "Plan", markdown: "## Problem\n\nText.", decisions: [], openDecisions } };
+      yield { type: "result", raw: { type: "plan", title: "Plan", markdown: "## Problem\n\nText.", decisions: [], openDecisions, steps: [{ title: "Build it", done: "It runs." }] } };
     },
   };
 }

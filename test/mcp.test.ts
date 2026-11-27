@@ -24,10 +24,12 @@ const call = async (c: Client, name: string, args: Record<string, unknown> = {})
 const textOf = (r: any) => r.content.map((x: any) => x.text).join("\n");
 
 describe("grillado mcp tools", () => {
-  test("lists exactly the seven tools", async () => {
+  test("lists exactly the thirteen tools: seven for plans, six for building from one", async () => {
     const c = await connect(tempStore());
     const { tools } = await c.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["add_comment", "get_decisions", "get_plan", "import_source", "list_plans", "list_project_sources", "start_plan"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["add_comment", "build_ask", "build_done", "build_next", "build_start", "build_wait", "build_withdraw", "get_decisions", "get_plan", "import_source", "list_plans", "list_project_sources", "start_plan"]);
+    // No tool answers an ask or confirms anything for the user: that is done in the browser only.
+    expect(tools.some((t) => /answer|confirm|decide/.test(t.name))).toBe(false);
     for (const t of tools) expect(JSON.stringify(t).toLowerCase()).not.toMatch(/grill-me|grilling|pocock/);
     // v1.3 item 2: issues are only created from the browser, after its preview and confirm.
     expect(tools.some((t) => /issue/.test(t.name))).toBe(false);

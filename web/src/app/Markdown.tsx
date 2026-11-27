@@ -1,6 +1,7 @@
 import { Fragment, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { type Block, citedKeys, parseBlocks, passageId, sentences } from "./editor/blocks";
 import { Diagram } from "./editor/DiagramView";
+import { ChosenPreview } from "./preview/Preview";
 import { IEdit } from "./icons";
 import { CalloutIcon, PlusIcon } from "./editor/SlashMenu";
 
@@ -9,7 +10,7 @@ const KIND = { para: "paragraph", heading: "heading", list: "list", fence: "code
 export function editLabel(b: Block): string {
   const words = b.raw
     .replace(/^```.*$/gm, "")
-    .replace(/\[R\d+:[^\]]*\]/g, "")
+    .replace(/\[(?:R\d+|B):[^\]]*\]/g, "")
     .replace(/[#*_`>]|^\s*([-+]|\d+[.)])\s+/gm, "")
     .split(/\s+/)
     .filter(Boolean);
@@ -278,6 +279,9 @@ export function Markdown({
       <Fragment key={b.start}>{node}</Fragment>
     );
 
+  // The section a block is in (its level-2 heading, lower case) and the level-3 heading above it.
+  let section = "";
+  let sub = "";
   const inserts = [...(marks?.inserts ?? [])].sort((a, b) => a.at - b.at);
   const flushInserts = (upTo: number) => {
     while (inserts.length && inserts[0].at <= upTo) {
@@ -311,10 +315,15 @@ export function Markdown({
         </div>,
       );
     } else if (b.kind === "fence") {
+      // Under "Chosen previews" a block is the preview the user chose: shown as what it is (a UI mock
+      // in its sandboxed frame, a code sketch highlighted), with its source one click away.
+      const chosen = section === "chosen previews" && b.lang !== "mermaid" && b.lang !== "decision" && b.body.trim();
       push(
         wrap(
           b,
-          b.lang === "mermaid" ? (
+          chosen ? (
+            <ChosenPreview lang={b.lang} source={b.body} label={sub} />
+          ) : b.lang === "mermaid" ? (
             <Diagram code={b.body} onEdit={onBlock ? () => onBlock(b) : undefined} />
           ) : b.lang === "diff" ? (
             <Pre className="diff4">
@@ -343,6 +352,8 @@ export function Markdown({
         continue;
       }
       if (b.level <= 2) closeOpen();
+      if (b.level <= 2) section = b.level === 2 ? b.text.trim().toLowerCase() : "";
+      if (b.level === 3) sub = b.text.trim();
       if (b.level <= 2) inScope = b.level === 2 && /^out of scope$/i.test(plain.kind === "heading" ? plain.text.trim() : "");
       if (b.level === 2 && /^open decisions$/i.test(b.text.trim())) {
         openSection = [];
@@ -513,7 +524,8 @@ function Tabs({ body }: { body: string }) {
   );
 }
 
-const CITE = /\[(R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*)\]/;
+// A round's decision is cited [R2:key]; one made during the build (plan-to-build loop) is cited [B:ask-key].
+const CITE = /\[((?:R\d+|B):[^\]\s,]+(?:\s*,\s*(?:R\d+|B):[^\]\s,]+)*)\]/;
 
 interface Ctx {
   cite?: CiteRenderer;

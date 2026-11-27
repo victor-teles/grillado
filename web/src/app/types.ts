@@ -3,6 +3,9 @@ import type { Entry } from "../../../src/core/activity.ts";
 import type { DiagramRun } from "../../../src/core/diagrams.ts";
 import type { AddPlanRun } from "../../../src/core/addplan.ts";
 import type { AnotherRun, Preview } from "../../../src/core/previews.ts";
+import type { BuildState } from "../../../src/core/build.ts";
+
+export type { AskOption, BuildAsk, BuildLogEntry, BuildState, BuildStep, StepStatus } from "../../../src/core/build.ts";
 
 export type { Preview, PreviewKind } from "../../../src/core/previews.ts";
 // Mirrors of what the local server sends. Kept separate from server code on purpose.
@@ -74,6 +77,8 @@ export interface SessionSummary {
   issues?: { parent: { number?: number; identifier?: string } | null; items: Record<string, unknown> } | null;
   /** Plan 005: the project it was planned in. */
   project?: { name: string; folder: string };
+  /** Plan-to-build loop: a coding agent is waiting on this many answers. */
+  asks?: number;
 }
 
 // ---------------------------------------------------------------- found in this project (v1.3 item 1)
@@ -310,6 +315,8 @@ export interface SessionView {
   addPlanRun?: AddPlanRun;
   /** "Show me another": the request in progress, or how the last one ended. */
   anotherRun?: AnotherRun;
+  /** Plan-to-build loop: the build steps, the coding agent's progress on them, and its asks. */
+  build?: BuildState;
   adding?: boolean;
   progress?: string;
   /** The activity log (item 6): the latest entries, newest first. */
@@ -330,7 +337,7 @@ export interface SessionView {
 
 // Mirrors src/core/issues.ts (importing it would pull session.ts and node types into the web build).
 export type Tracker = "github" | "linear";
-export type SplitSource = "agent" | "todos" | "stories" | "none";
+export type SplitSource = "agent" | "steps" | "todos" | "stories" | "none";
 export interface IssueItem {
   key: string;
   title: string;

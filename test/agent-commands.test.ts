@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { UsageError } from "../src/cli/args.ts";
 import { checkPlanArgs, runPlan } from "../src/cli/plan-command.ts";
+import { checkBuildArgs, runBuild } from "../src/cli/build-command.ts";
 import { getPlan, listPlans } from "../src/cli/plans.ts";
 import { loadSkills, parseSkill, runSkills } from "../src/cli/skills-command.ts";
 import { GrilladoServer } from "../src/cli/server.ts";
@@ -60,7 +61,7 @@ describe("grillado skills", () => {
 /** Every `grillado plan …` / `grillado skills get …` line in a skill's text, as argv. */
 function commandsIn(text: string): string[][] {
   const out: string[][] = [];
-  for (const m of text.matchAll(/(?:npx -y |npx )?grillado ((?:plan|skills) [^\n`|]*)/g)) {
+  for (const m of text.matchAll(/(?:npx -y |npx )?grillado ((?:plan|skills|build) [^\n`|]*)/g)) {
     const argv = (m[1].match(/"[^"]*"|\S+/g) ?? []).map((a) => a.replace(/^"|"$/g, "")).map((a) => (a === "<id>" ? "2026-01-01-aaaaaaaa" : a));
     // Stop at prose or a shell comment after the command.
     const cut = argv.findIndex((a) => a === "#" || a.startsWith("(") || /[.,;]$/.test(a) && !a.startsWith("--"));
@@ -83,12 +84,15 @@ describe("the skill text matches the CLI", () => {
           if (argv[1] === "get") for (const n of argv.slice(2).filter((a) => !a.startsWith("-"))) expect(names).toContain(n);
           continue;
         }
-        expect(() => checkPlanArgs(argv.slice(1)), `${path.basename(path.dirname(f))}: grillado ${argv.join(" ")}`).not.toThrow();
+        const check = argv[0] === "build" ? checkBuildArgs : checkPlanArgs;
+        expect(() => check(argv.slice(1)), `${path.basename(path.dirname(f))}: grillado ${argv.join(" ")}`).not.toThrow();
       }
     }
     expect(seen).toBeGreaterThan(10);
     expect(() => checkPlanArgs(["start", "x", "--bogus"])).toThrow(UsageError);
     expect(() => checkPlanArgs(["wait", "x", "--quote", "y"])).toThrow(UsageError);
+    expect(() => checkBuildArgs(["done", "x", "--bogus"])).toThrow(UsageError);
+    expect(() => checkBuildArgs(["next", "x", "--verified", "y"])).toThrow(UsageError);
   });
 
   test("the stub: name, a matchable description, allowed tools, and it points at skills get", () => {

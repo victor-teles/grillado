@@ -5,6 +5,7 @@ import { HELP, UsageError, parseArgs } from "./args.ts";
 import { appLine, mcpLaunch } from "./launch.ts";
 import { runMcp } from "./mcp.ts";
 import { runPlan } from "./plan-command.ts";
+import { runBuild } from "./build-command.ts";
 import { runSkills } from "./skills-command.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
 import { FoundService } from "./found.ts";
@@ -28,19 +29,22 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     process.exit(1);
   }
   // Plan 004: the commands coding agents run from a shell.
-  if (argv[0] === "skills" || argv[0] === "plan") {
+  if (argv[0] === "skills" || argv[0] === "plan" || argv[0] === "build") {
     const cliFile = fileURLToPath(import.meta.url);
+    const io = {
+      version: VERSION,
+      out: (s: string) => void process.stdout.write(s),
+      err: (s: string) => void process.stderr.write(s),
+      cliFile,
+      appLine: (dataDir: string) => appLine(cliFile, dataDir),
+    };
     try {
       const code =
         argv[0] === "skills"
           ? runSkills(argv.slice(1), VERSION, (s) => process.stdout.write(s))
-          : await runPlan(argv.slice(1), {
-              version: VERSION,
-              out: (s) => process.stdout.write(s),
-              err: (s) => process.stderr.write(s),
-              cliFile,
-              appLine: (dataDir) => appLine(cliFile, dataDir),
-            });
+          : argv[0] === "build"
+            ? await runBuild(argv.slice(1), io)
+            : await runPlan(argv.slice(1), io);
       process.exitCode = code;
     } catch (err) {
       if (!(err instanceof UsageError)) throw err;

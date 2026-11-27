@@ -1572,3 +1572,83 @@ button.fchip[aria-expanded=true]{background:color-mix(in oklab,var(--foreground)
 .cmp-foot{display:flex;align-items:center;justify-content:center;gap:12px;min-height:44px;padding:0 16px;border-top:1px solid var(--hair)}
 .fs5.cmp.m .cmp-foot{justify-content:space-between}
 @media (max-width:767px){.pv-row{grid-auto-columns:minmax(220px,72%)}.pv-pick{min-height:44px}}
+
+/* Plan-to-build loop. The ask card is the round's question card (.q), pinned above the plan with an
+   ember tag: a coding agent is waiting on it. */
+.asks{display:grid;gap:10px;width:calc(100% - 40px);max-width:720px;margin:4px auto 10px}
+.askc[data-slot=agent-question]{max-width:none;width:auto;font-size:inherit;line-height:inherit;animation:none;gap:0;border:0;background:var(--sel);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--gr-ember) 55%,transparent);padding:14px 20px 12px;border-radius:14px}
+.askc>[data-slot=agent-question-body],.askc>[data-slot=agent-question-body]>div,.askc>[data-slot=agent-question-body]>div>div{display:contents}
+.askc>[data-slot=agent-question-record]{display:none}
+.askc .q{margin:0;padding:6px 0 4px;background:none}
+.askc .ask-tag{display:flex;align-items:center;gap:8px;margin:0;color:var(--gr-ember-ink);font-size:var(--t-meta);line-height:16px;font-weight:500}
+.askc .ask-tag .dot{width:7px;height:7px;border-radius:50%;background:var(--gr-ember)}
+.askc .ask-tag .at{color:var(--muted-foreground);font-weight:400}
+.askc .ask-foot{padding:4px 0 0}
+.askc .ask-foot>div{display:flex;align-items:center;gap:12px;min-width:0}
+.askc .ask-foot .spacer{flex:1}
+.askc .ask-foot [data-slot=agent-question-continue]{height:32px;padding:0 14px;border-radius:9px;font-size:var(--t-body);font-weight:500;box-shadow:none}
+.askc:not([aria-busy]) .ask-foot [data-slot=agent-question-continue]::after{content:"↵" / "";margin-left:8px;font:400 var(--t-meta)/1 var(--sans);opacity:.75}
+.askc .ask-foot [data-slot=agent-question-footer-hints],.askc .ask-foot kbd{display:none}
+.ask-badge{flex:none;margin-left:8px;color:var(--gr-ember-ink);font-size:var(--t-meta);font-weight:500;white-space:nowrap}
+
+/* The Build tab: the plan's steps, their status, and what was asked. */
+.btab{max-width:720px;margin:0 auto;padding:20px 20px 48px;display:grid;gap:10px}
+.btab-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.btab-h h1{margin:0;font-size:var(--t-h);line-height:24px;font-weight:600}
+.btab .err{margin:0;font-size:var(--t-meta);color:var(--destructive-ink)}
+.bsteps{display:grid;gap:2px;margin:6px 0 0;padding:0;list-style:none}
+.bstep{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 8px 10px 10px;border-radius:12px;transition:background-color var(--d-quick) var(--ease-out)}
+.bstep:focus-within{background:var(--sel)}
+@media (hover:hover){.bstep:hover{background:var(--sel)}}
+.bmark{display:grid;place-items:center;width:16px;height:16px;margin-top:3px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--subtle-foreground);color:var(--background)}
+.bmark[data-status=started]{box-shadow:inset 0 0 0 1.5px var(--gr-ember);background:conic-gradient(var(--gr-ember) 0 50%,transparent 0)}
+.bmark[data-status=done]{box-shadow:none;background:var(--foreground)}
+.bbody{min-width:0;display:grid;gap:2px}
+.btab .bt{margin:0;font-size:var(--t-body);line-height:22px;font-weight:500;overflow-wrap:anywhere}
+.btab .bn{color:var(--muted-foreground);font-weight:400;font-variant-numeric:tabular-nums}
+.btab .btag{margin-left:8px;color:var(--gr-ember-ink);font-size:var(--t-meta);font-weight:500}
+.btab .bd{margin:0;color:var(--muted-foreground);font-size:var(--t-meta);line-height:18px;overflow-wrap:anywhere}
+.btab .bd>span:first-child{color:var(--foreground)}
+.bstep[data-status=done] .bt{color:var(--muted-foreground)}
+.bacts{display:flex;align-items:center;gap:2px;opacity:0;transition:opacity var(--d-quick) var(--ease-out)}
+.bstep:hover .bacts,.bstep:focus-within .bacts{opacity:1}
+.bacts .icon-btn{width:28px;height:28px}
+.bacts .flip{display:inline-flex;transform:rotate(180deg)}
+.bform{grid-column:2/-1;display:grid;gap:6px;min-width:0}
+.bform label{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.bform input{min-width:0;height:32px;padding:0 10px;border:0;border-radius:9px;background:var(--background);box-shadow:inset 0 0 0 1px var(--hair);color:var(--foreground);font:inherit}
+.bform input:focus-visible{outline:2px solid var(--ring);outline-offset:0}
+.bform-acts{display:flex;gap:6px;margin-top:2px}
+.badd{margin-top:4px;padding:0 10px}
+.badd summary{display:inline-flex;align-items:center;gap:6px;min-height:32px;cursor:pointer;list-style:none;border-radius:8px;color:var(--muted-foreground);font-size:var(--t-body)}
+.badd summary::-webkit-details-marker{display:none}
+.badd summary:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.badd[open] summary{color:var(--foreground)}
+.badd .bform{margin:6px 0 4px}
+.basks{margin-top:14px;padding:0 10px}
+.basks h2{margin:0 0 6px;font-size:var(--t-meta);line-height:16px;font-weight:500;color:var(--muted-foreground)}
+.basks ul{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.basks li[data-state=open] .bd{color:var(--gr-ember-ink)}
+@media (max-width:767px){
+  .asks{width:calc(100% - 24px);margin:4px auto 10px}
+  .askc[data-slot=agent-question]{padding:12px 14px 12px}
+  .askc .ask-foot [data-slot=agent-question-continue]{flex:1;height:44px;border-radius:12px}
+  .btab{padding:16px 12px 40px}
+  .bstep{grid-template-columns:20px minmax(0,1fr)}
+  .bacts{grid-column:2;opacity:1;flex-wrap:wrap}
+  .bacts .icon-btn{width:44px;height:44px}
+  .bform input{height:44px;font-size:16px}
+}
+
+/* A chosen UI preview in the plan: the mock in its frame, its source behind a disclosure. */
+.doc .pv-chosen{margin:12px 0;border-radius:12px;background:var(--sel);overflow:hidden}
+.doc .pv-chosen-view{height:320px;resize:vertical;overflow:hidden;min-height:160px;max-height:720px}
+.doc .pv-chosen details{border-top:1px solid var(--hair)}
+.doc .pv-chosen summary{display:flex;align-items:center;min-height:36px;padding:0 16px;cursor:pointer;list-style:none;color:var(--muted-foreground);font-size:var(--t-meta)}
+.doc .pv-chosen summary::-webkit-details-marker{display:none}
+.doc .pv-chosen summary:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.doc .pv-chosen details[open] summary{color:var(--foreground)}
+.doc .pv-chosen pre.pv-code{margin:0;border-radius:0;background:none;max-height:320px;overflow:auto}
+.doc pre.pv-code.wrap{white-space:pre-wrap;overflow-wrap:anywhere}
+.doc pre.pv-code{font:400 13px/21px var(--mono)}
+@media (max-width:767px){.doc .pv-chosen-view{height:280px}.doc .pv-chosen summary{min-height:44px}}

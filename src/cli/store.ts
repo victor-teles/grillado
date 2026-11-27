@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ProviderId } from "../core/providers/types.ts";
 import { adoptThreads } from "../core/comments.ts";
+import { stripBuildAppendix, withBuildAppendix } from "../core/build.ts";
 import type { Session } from "../core/session.ts";
 
 export interface Config {
@@ -143,7 +144,12 @@ export class Store {
     const file = this.sessionFile(s.id);
     withLock(file, () => {
       const disk = this.load(s.id);
-      if (disk) adoptThreads(s, disk);
+      if (disk) {
+        adoptThreads(s, disk);
+        // Build state (steps, progress, asks) is only ever changed through update(), by the web app, the
+        // CLI and `grillado mcp` alike: what is on disk is the current one.
+        s.build = disk.build;
+      }
       writeAtomic(file, JSON.stringify(s, null, 2));
     });
   }
@@ -213,10 +219,18 @@ export class Store {
     return this.load(id)?.planFile ?? legacy;
   }
 
+  /** Write the plan file: the text, then the build steps and log Grillado keeps at its end. */
   writePlan(id: string, markdown: string) {
     const file = this.planPath(id);
-    writeAtomic(file, markdown);
+    writeAtomic(file, withBuildAppendix(markdown, this.load(id)?.build));
     return file;
+  }
+
+  /** The plan file again, with the build state as it is now (after a step or an ask changed). */
+  refreshPlan(id: string) {
+    const s = this.load(id);
+    if (!s?.plan) return;
+    this.writePlan(id, this.readPlan(id) ?? s.plan.markdown);
   }
 
   /** Copy an edited plan.md aside before a new plan replaces it. Returns the copy's path. */
@@ -235,7 +249,14 @@ export class Store {
     return file;
   }
 
+  /** The plan text from its file, without the build steps and log Grillado keeps at the file's end. */
   readPlan(id: string): string | null {
+    const file = this.planPath(id);
+    return existsSync(file) ? stripBuildAppendix(readFileSync(file, "utf8")) : null;
+  }
+
+  /** The plan file as it is on disk, build steps and log included: what a coding agent reads. */
+  readPlanFile(id: string): string | null {
     const file = this.planPath(id);
     return existsSync(file) ? readFileSync(file, "utf8") : null;
   }

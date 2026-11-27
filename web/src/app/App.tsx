@@ -10,6 +10,8 @@ import type { PlanSeed } from "./Plan";
 import { SessionScreen } from "./Session";
 import type { AppState, ProviderId, SessionView } from "./types";
 import { newer } from "./newer";
+import { COPY, fmt } from "./copy";
+import { openAsks } from "./build/Build";
 
 const sessionIdFromPath = () => /^\/s\/([\w-]+)$/.exec(location.pathname)?.[1] ?? null;
 const stepOf = (s: SessionView) => (s.status === "confirm" ? 2 : s.status === "synthesizing" || s.status === "plated" ? 3 : 1);
@@ -53,6 +55,11 @@ export function App() {
   const [seed, setSeed] = useState<PlanSeed | null>(null);
   const [theme, toggleTheme] = useTheme();
   const mobile = useMobile();
+  // Plan-to-build loop: a coding agent waiting on an answer shows in the tab's title, whatever plan it is in.
+  const waiting = (app?.sessions ?? []).reduce((n, x) => n + (x.id === session?.id ? 0 : (x.asks ?? 0)), 0) + openAsks(session?.build).length;
+  useEffect(() => {
+    document.title = waiting ? `${fmt(COPY.titleWaiting, { n: String(waiting) })} · Grillado` : "Grillado";
+  }, [waiting]);
   // v1.2 item 1: "Use in your editor" on Home (desktop header button; phones: More sheet row).
   const [ue, setUe] = useState(false);
   const ueBtn = useRef<HTMLButtonElement>(null);

@@ -33,6 +33,12 @@
   - Previews are saved with the session, and the source of each preview you chose is written
     into the plan file as a fenced code block. Nothing is written anywhere else in your project.
   - "Show me another" is one more agent run with tools off, like a comment reply.
+- **Building from a plan.** `grillado build` and the `build_*` MCP tools only read and write
+  Grillado's own data: the session, and the "Build steps" and "Build log" sections at the end of
+  the plan file. They run nothing and write no other file. A coding agent can report progress,
+  ask a question and withdraw its own question; it cannot answer one. Answers only come from the
+  browser, through the same token-protected local server as everything else. The text an agent
+  sends (step reports, a question and its options) is shown as text.
 - Comment replies, edits, diagrams, imports, "Show me another" and the issue split run in an empty temporary folder
   with tools off (Claude Code, Grok, pi) or in Codex's read-only sandbox. "Tools off" means the
   CLI's built-in tools: in these runs Codex and Grok may still offer MCP tools from your own

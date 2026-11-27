@@ -26,6 +26,7 @@ import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "..
 import { Provenance } from "./found/Provenance";
 import { AddPlanButton, AddPlanLine, AddPlanLive, addPlanFor } from "./addplan/AddPlan";
 import { useIssues } from "./issues/Issues";
+import { AskCards, BuildTab } from "./build/Build";
 import { type FloorItem, unaskedPlanItems } from "../../../src/core/floor.ts";
 import { textHash } from "../../../src/core/text-hash.ts";
 
@@ -47,7 +48,7 @@ function questionRound(s: SessionView, key: string): number | undefined {
   return s.rounds.find((r) => r.questions.some((q) => q.key === key))?.n;
 }
 
-type Tab = "doc" | "decisions";
+type Tab = "doc" | "decisions" | "build";
 
 /** What Home's composer is filled with when a line of this plan starts a new one. */
 export interface PlanSeed {
@@ -320,6 +321,21 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp, on
         </>
       ),
     },
+    {
+      // Plan-to-build loop: the steps and the coding agent's progress on them.
+      id: "build",
+      label: (
+        <>
+          {COPY.buildTab}
+          {session.build?.steps.length ? (
+            <span className="ptab-ct">
+              {" "}
+              {session.build.steps.filter((x) => x.status === "done").length}/{session.build.steps.length}
+            </span>
+          ) : null}
+        </>
+      ),
+    },
   ];
 
   return (
@@ -483,6 +499,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp, on
           </span>
         </div>
       ) : null}
+      <AskCards session={session} act={act} />
       <div className="pvrow">
         <div className="pvmain">
       <div className="docwrap" ref={docRef}>
@@ -524,6 +541,9 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp, on
             <DecisionsTab session={session} openKeys={openKeys} unasked={unasked} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} jump={rowJump} act={act} onReview={reviewSuggestion} />
           ) : null}
         </div>
+        <div id="ppanel-build" role="tabpanel" aria-labelledby="ptab-build" hidden={tab !== "build"} className="dtab">
+          {tab === "build" ? <BuildTab session={session} act={act} /> : null}
+        </div>
       </div>
           {cm.overlay}
           <AddPlanLive session={session} />
@@ -553,7 +573,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp, on
 /** An Out of scope line without its Markdown marks and citations, as a sentence a person would type. */
 const plainLine = (line: string) =>
   line
-    .replace(/\s*\[R\d+:[^\]]*\]/g, "")
+    .replace(/\s*\[(?:R\d+|B):[^\]]*\]/g, "")
     .replace(/[*_`~]/g, "")
     .trim();
 

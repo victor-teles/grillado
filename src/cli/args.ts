@@ -125,6 +125,8 @@ Options:
 Commands:
   plan                Plan from your coding agent's shell: start, wait, get, list, comment
                       (grillado plan --help).
+  build               Build a plan step by step from your coding agent's shell: next, start, done,
+                      ask, wait, withdraw (grillado build --help).
   skills              Instructions for coding agents that match this version
                       (grillado skills get plan).
   mcp                 Run an MCP server over stdio for your coding agent: list and read plans

@@ -5,6 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { Preview } from "../core/previews.ts";
+import { type BuildState, BuildError, addDecisionLine, addStep, answerAsk, decisionBullet, editStep, emptyBuild, moveStep, openAsks, removeStep, reopenStep, setSteps } from "../core/build.ts";
 import { anotherOption, decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
@@ -144,6 +145,8 @@ export class GrilladoServer {
   private diagramRuns = new Map<string, AbortController>();
   /** "Add to plan" (#104), by session: one decision at a time. */
   private addPlanRuns = new Map<string, AbortController>();
+  /** Plan-to-build loop: the plan text and answers as last seen per session, to move the revision when they change. */
+  private planSeen = new Map<string, string>();
   /** "Show me another" (option previews): the one request in progress per session. */
   private anotherRuns = new Map<string, AbortController>();
   private progress = new Map<string, string>();
@@ -304,7 +307,7 @@ export class GrilladoServer {
     if (!idle) return;
     this.lastActive = Date.now();
     this.idleTimer = setInterval(() => {
-      const inUse = this.clients.size > 0 || this.inflight.size > 0 || this.commentRuns.size > 0 || this.diagramRuns.size > 0 || this.addPlanRuns.size > 0 || this.anotherRuns.size > 0;
+      const inUse = this.clients.size > 0 || this.inflight.size > 0 || this.commentRuns.size > 0 || this.diagramRuns.size > 0 || this.addPlanRuns.size > 0 || this.anotherRuns.size > 0 || [...this.sessions.values()].some((x) => openAsks(x.build).length > 0); // a coding agent is waiting on an answer
       if (inUse) this.lastActive = Date.now();
       else if (Date.now() - this.lastActive >= idle) {
         clearInterval(this.idleTimer);
@@ -520,8 +523,16 @@ export class GrilladoServer {
   private adoptExternal(id: string, push: boolean) {
     const live = this.sessions.get(id);
     const disk = live && this.opts.store.load(id);
-    if (!live || !disk || !adoptThreads(live, disk)) return;
-    if (push) this.broadcast({ type: "session", session: this.view(live) });
+    if (!live || !disk) return;
+    // The build state too (a step started or done, an ask made or withdrawn, from a shell or `grillado mcp`).
+    const built = JSON.stringify(live.build ?? null) !== JSON.stringify(disk.build ?? null);
+    if (built) live.build = disk.build;
+    if (!adoptThreads(live, disk) && !built) return;
+    if (push) {
+      this.broadcast({ type: "session", session: this.view(live) });
+      // An ask made or settled changes Home's badge and the tab title everywhere.
+      if (built) this.broadcast({ type: "app" });
+    }
   }
 
   // ---------------------------------------------------------------- activity log (item 6)
@@ -584,9 +595,34 @@ export class GrilladoServer {
       this.log(s, { v: 1, type: "review", run, accepted: field === "accepted" ? list : [], rejected: field === "rejected" ? list : [], ...(field === "undone" ? { undone: list } : {}), at });
   }
 
+  /**
+   * Change the build state (steps, asks, revision) under the session's lock: a shell command or
+   * `grillado mcp` may be changing it too. The plan file then shows it.
+   */
+  private buildUpdate<T>(s: Session, fn: (b: BuildState, disk: Session) => T): T {
+    let out!: T;
+    const disk = this.opts.store.update(s.id, (x) => {
+      x.build ??= emptyBuild();
+      out = fn(x.build, x);
+      return x;
+    });
+    if (disk) s.build = disk.build;
+    return out;
+  }
+
+  /** The revision moves when the plan's text or a decision's answer changes, whatever changed it. */
+  private trackRevision(s: Session) {
+    if (s.status !== "plated" || !s.plan) return;
+    const now = `${textHash(s.plan.markdown)}|${Object.values(s.decisions).map((d) => `${d.key}=${d.answer}`).join("|")}`;
+    const was = this.planSeen.get(s.id);
+    this.planSeen.set(s.id, now);
+    if (was !== undefined && was !== now) this.buildUpdate(s, (b) => void b.rev++);
+  }
+
   private changed(s: Session) {
     // Whatever changed the plan, each comment's position follows its quote inside its section (#114).
     settleThreads(s);
+    this.trackRevision(s);
     this.opts.store.save(s);
     this.broadcast({ type: "session", session: this.view(s) });
   }
@@ -626,6 +662,8 @@ export class GrilladoServer {
         ...(s.source ? { source: { app: s.source.app, kind: s.source.kind }, ...(s.source.title ? { title: s.source.title } : {}) } : {}),
         from: s.from,
         queued: !!s.queued,
+        // Plan-to-build loop: a coding agent is waiting on this many answers.
+        ...(openAsks(s.build).length ? { asks: openAsks(s.build).length } : {}),
         // Plan 005: the project it was planned in, so Recent can say when it isn't Home's.
         ...(s.project ? { project: { name: path.basename(s.project), folder: tildify(s.project) } } : {}),
       })),
@@ -654,6 +692,8 @@ export class GrilladoServer {
       diagramRun: s.diagramRun?.state === "running" && !this.diagramRuns.has(s.id) ? { ...s.diagramRun, state: "stopped", current: undefined } : s.diagramRun,
       adding: this.addPlanRuns.has(s.id),
       anotherRun: s.anotherRun?.state === "running" && !this.anotherRuns.has(s.id) ? { ...s.anotherRun, state: "stopped" } : s.anotherRun,
+      // What the coding agent last read is Grillado's own bookkeeping.
+      build: s.build ? { ...s.build, seen: undefined } : undefined,
       addPlanRun: s.addPlanRun?.state === "running" && !this.addPlanRuns.has(s.id) ? { ...s.addPlanRun, state: "stopped" } : s.addPlanRun,
       progress: this.progress.get(s.id),
       // Plan 003: what the reading run in progress has opened.
@@ -828,6 +868,8 @@ export class GrilladoServer {
       }
       for (const t of s.comments ?? []) if (t.run?.state === "running") finishRun(t, { ok: false, message: "Interrupted. Retry to continue." });
       this.sessions.set(id, s);
+      // The plan as it is now is what later changes are measured against (plan-to-build loop).
+      this.trackRevision(s);
       // Runs with no end were cut off when Grillado closed: written as interrupted now (#57).
       const lines = this.lines(s);
       const ended = interrupted(lines).map((run): ActivityLine => {
@@ -841,7 +883,8 @@ export class GrilladoServer {
       if (queued) {
         // Started from a coding agent (`grillado mcp` start_plan): the first round runs when it's
         // opened here, on the agent picked here.
-        if (this.selected) s.provider = this.selected;
+        // Unless the coding agent named one (`plan start --agent`).
+        if (this.selected && !s.agentPinned) s.provider = this.selected;
         this.startRound(s);
       }
     }
@@ -1130,8 +1173,15 @@ export class GrilladoServer {
       rec.step("{agent} wrote the plan", "Saving plan.md");
       // The new plan overwrites plan.md; keep the user's edited version next to it.
       if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
+      // The plan's build steps. A plan written again keeps the progress of steps whose title didn't change, and is a new revision.
+      const again = !!s.plan;
+      this.buildUpdate(s, (b) => {
+        setSteps(b, out.plan.steps ?? []);
+        if (again) b.rev++;
+      });
       const file = this.opts.store.writePlan(s.id, out.markdown);
       setPlan(s, { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.open });
+      this.planSeen.delete(s.id);
       const timing = planTiming(s);
       if (timing) this.opts.log?.(timing);
       this.watchPlan(s);
@@ -1381,6 +1431,41 @@ export class GrilladoServer {
     this.startAddPlan(s, d.key, op === "retry");
   }
 
+  /** The user's side of the plan-to-build loop. Every one of these moves the plan's revision. */
+  private buildRoute(s: Session, body: any) {
+    const op = String(body?.op ?? "");
+    const step = body?.step as string | undefined;
+    try {
+      if (op === "answer") {
+        const key = String(body?.key ?? "");
+        const { ask, bullet } = this.buildUpdate(s, (b) => {
+          const ask = answerAsk(b, key, { optionId: typeof body?.optionId === "string" ? body.optionId : undefined, text: typeof body?.text === "string" ? body.text : undefined });
+          return { ask, bullet: decisionBullet(b, ask) };
+        });
+        // The answer is a decision of the plan from now on: one cited line under Implementation decisions.
+        editPlan(s, addDecisionLine(s.plan!.markdown, bullet));
+        // The revision already moved with the answer; the new line is the same change.
+        this.planSeen.delete(s.id);
+        this.opts.store.writePlan(s.id, s.plan!.markdown);
+        void ask;
+      } else {
+        this.buildUpdate(s, (b) => {
+          if (op === "edit") editStep(b, step ?? "", { title: typeof body?.title === "string" ? body.title : undefined, done: typeof body?.done === "string" ? body.done : undefined });
+          else if (op === "move") moveStep(b, step ?? "", body?.by === -1 ? -1 : 1);
+          else if (op === "add") addStep(b, { title: String(body?.title ?? ""), done: typeof body?.done === "string" ? body.done : "" }, typeof body?.after === "string" ? body.after : undefined);
+          else if (op === "remove") removeStep(b, step ?? "");
+          else if (op === "reopen") reopenStep(b, step ?? "");
+          else throw new BuildError("Unknown build action.");
+        });
+        this.opts.store.refreshPlan(s.id);
+      }
+    } catch (err) {
+      // BuildError messages are written for whoever acted; here that is the user.
+      throw err instanceof BuildError ? new Error(err.message) : err;
+    }
+    this.broadcast({ type: "app" });
+  }
+
   /**
    * "Show me another": one agent call, tools off, for one more option with a preview. A request that
    * fails leaves the question's options as they were, with the reason on `anotherRun` for Try again.
@@ -1628,6 +1713,13 @@ export class GrilladoServer {
       return this.json(res, 200, this.view(s));
     }
     switch (action) {
+      case "build": {
+        // Plan-to-build loop: the user edits the steps, reopens one, or answers the coding agent's ask.
+        if (s.status !== "plated" || !s.plan) throw new Error("Build steps come with the written plan.");
+        this.buildRoute(s, body);
+        this.changed(s);
+        break;
+      }
       case "another": {
         // Option previews: one more option, with a preview, for a question of the open round.
         if (busy) throw new Error("The agent is still working.");

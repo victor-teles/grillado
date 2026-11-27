@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type FloorItem, dropReasonLine, notAskedLine, openFloor, outOfScopeItems, reasonLine, stopReason, syncPlanOpen, topicKey, unaskedPlanItems } from "./floor.ts";
 import type { Option, PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
+import type { BuildState } from "./build.ts";
 import { type AnotherRun, MAX_OPTIONS, type Preview, chosenPreviews, previewKindOf, settlePreviews } from "./previews.ts";
 import type { Finding, Touch } from "./project-read.ts";
 import type { FailureCode } from "./classify.ts";
@@ -78,6 +79,10 @@ export interface SessionError {
 }
 
 export interface Session extends CommentState {
+  /** The plan-to-build loop: build steps, the agent's progress on them, its asks and the log (core/build.ts). */
+  build?: BuildState;
+  /** The agent was chosen when the plan was started from a shell (`plan start --agent`): opening it doesn't switch to the app's. */
+  agentPinned?: boolean;
   /** "Show me another" (option previews): its request in progress, or how the last one ended. */
   anotherRun?: AnotherRun;
   id: string;

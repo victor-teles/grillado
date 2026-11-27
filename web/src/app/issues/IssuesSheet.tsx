@@ -256,7 +256,8 @@ export function IssuesSheet(p: {
     if (!autoSplit.current || !pv || !st || run) return;
     autoSplit.current = false;
     // Once exported, the issues' split stays until "Split again" (the agent would re-key them).
-    if (!st.split && !st.issues && pv.source !== "agent" && pv.source !== "todos") void split();
+    // A plan with build steps is already sliced: its issues are its steps.
+    if (!st.split && !st.issues && pv.source !== "agent" && pv.source !== "todos" && pv.source !== "steps") void split();
   }, [pv, st]);
 
   const items = pv?.items ?? [];
@@ -861,7 +862,9 @@ export function IssuesSheet(p: {
     </button>
   );
   let source: ReactNode = null;
-  if (!run && pv) {
+  if (!run && pv && pv.source === "steps")
+    source = <p className="ipv-src">One issue per build step of the plan ({plural(kids.length, "step")}). Edit the steps in the Build tab.</p>;
+  else if (!run && pv) {
     // No decisions: {agent} groups the plan's work into slices rather than covering decisions (review r5, #188).
     const group = pv.decisions === 0;
     const now = pv.source === "stories" ? "one issue per user story" : pv.source === "todos" ? "one issue per to-do" : "the parent alone";

@@ -22,7 +22,7 @@ const TOUCHES = /[\p{L}\p{N}}]'|'[\p{L}\p{N}]/u;
 const CSS_ATTR = /\[[\w-]+[~|^$*]?='[^'\]]*'\]/g;
 const SERVER = ["src/cli", "src/core"];
 // What `grillado mcp` and `grillado plan` return is read by a coding agent in a terminal, not shown on screen (plan 004).
-const NOT_SHOWN = new Set(["src/cli/mcp.ts", "src/cli/plans.ts", "src/cli/plan-command.ts"]);
+const NOT_SHOWN = new Set(["src/cli/mcp.ts", "src/cli/plans.ts", "src/cli/plan-command.ts", "src/cli/build.ts", "src/cli/build-command.ts"]);
 const SHOWN_PROPS = new Set(["message", "error", "answer", "loginHint", "installHint"]);
 
 const walk = (d) => readdirSync(d).flatMap((f) => {

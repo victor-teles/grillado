@@ -189,8 +189,8 @@ export class IssuesRoutes {
     let out: { source: SplitSource; slices: Slice[] } | null = null;
     const fb = fallbackSlices(s, md);
     const grouping = groupsTodos(s, fb);
-    // Imported to-dos can be split too, when asked (PO, review round 4).
-    if (!fallback) {
+    // Imported to-dos can be split too, when asked (PO, review round 4). A plan with build steps is never split again.
+    if (!fallback && fb.source !== "steps") {
       const c = new AbortController();
       this.splits.set(s.id, c);
       try {

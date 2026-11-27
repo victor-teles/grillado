@@ -56,7 +56,7 @@ const errorField = StateField.define<DecorationSet>({
 });
 
 // [R1:key] citations stand out (primary ink).
-const citeMatcher = new MatchDecorator({ regexp: /\[R\d+:[^\]\s]+\]/g, decoration: Decoration.mark({ class: "cm-cite" }) });
+const citeMatcher = new MatchDecorator({ regexp: /\[(?:R\d+|B):[^\]\s]+\]/g, decoration: Decoration.mark({ class: "cm-cite" }) });
 const cites = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;

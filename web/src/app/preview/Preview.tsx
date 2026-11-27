@@ -89,6 +89,31 @@ export function PreviewView({ preview, label, thumb = false }: { preview: Previe
   );
 }
 
+/**
+ * A preview the user chose, as the plan shows it under "Chosen previews": the mock or the sketch
+ * itself, not a line of markup. The plan file keeps the source as a fenced block; here it is one
+ * click away. An `html` block is a UI mock (same sandboxed frame as in a round); anything else is a
+ * code sketch in that language.
+ */
+export function ChosenPreview({ lang, source, label }: { lang: string; source: string; label: string }) {
+  const ui = lang === "html";
+  const preview: Preview = ui ? { kind: "ui", source } : { kind: "code", source, ...(lang ? { lang } : {}) };
+  if (!ui) return <PreviewView preview={preview} label={label} />;
+  return (
+    <figure className="pv-chosen" data-testid="chosen-preview">
+      <div className="pv-chosen-view">
+        <PreviewView preview={preview} label={label || COPY.previewChosen} />
+      </div>
+      <details>
+        <summary>{COPY.previewSource}</summary>
+        <pre className="pv-code wrap">
+          <code>{source}</code>
+        </pre>
+      </details>
+    </figure>
+  );
+}
+
 function Unavailable() {
   return <p className="pv-none">{COPY.previewUnavailable}</p>;
 }

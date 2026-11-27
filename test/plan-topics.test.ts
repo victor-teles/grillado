@@ -34,7 +34,7 @@ function writer(openDecisions: string[]): ProviderAdapter {
       return { status: "ready", version: "1", path: "/fake" };
     },
     async *run(_req: RunRequest): AsyncIterable<ProviderEvent> {
-      yield { type: "result", raw: { type: "plan", title: "Plan", markdown: `## Problem\n\nText.\n\n${SCOPE}`, decisions: [], openDecisions } };
+      yield { type: "result", raw: { type: "plan", title: "Plan", markdown: `## Problem\n\nText.\n\n${SCOPE}`, decisions: [], openDecisions, steps: [{ title: "Build it", done: "It runs." }] } };
     },
   };
 }

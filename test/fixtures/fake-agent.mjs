@@ -14,6 +14,7 @@
 // are over the limit; partial: one option's never fits; evil: ui previews with a script and requests to FAKE_PREVIEW_EVIL_URL),
 // FAKE_ANOTHER (fail | dup: "Show me another" never works), FAKE_ANOTHER_DELAY_MS.
 // FAKE_PLAN_OPEN (open lines the plan writer lists by itself, "|"-separated), FAKE_PLAN_SCOPE (the plan's Out of scope lines, "|"-separated).
+// FAKE_STEPS (none | none-once | bare-once): the plan's build steps (plan-to-build loop).
 // FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS, FAKE_SPLIT_LOG (a file that gets one line per split run), FAKE_GROUP (empty | missing | dup | invent).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -275,6 +276,15 @@ function longMarkdown(ds) {
   return `## Problem\n${state.idea}. Ideas show up while walking or in the middle of something else, and most of them are gone by the time a laptop is open.\n\n${body}`;
 }
 
+/** The plan's build steps, one per decision. FAKE_STEPS: none (never any), none-once (the first reply has none), bare-once (the first reply's have no done check). */
+function planSteps(ds) {
+  const m = process.env.FAKE_STEPS;
+  if (m === "none" || (m === "none-once" && once("no-steps"))) return [];
+  const bare = m === "bare-once" && once("bare-steps");
+  const steps = ds.map((d) => ({ title: `Build ${d.key}: ${d.answer}`, done: bare ? "" : `The ${d.key} choice works end to end and its test passes.` }));
+  return steps.length ? steps : [{ title: "Build the first version", done: bare ? "" : "It runs end to end." }];
+}
+
 function planReply() {
   // FAKE_PLAN_OMIT: the text leaves these decisions out, so they read "Not in the plan text yet" (#104).
   const omit = new Set((process.env.FAKE_PLAN_OMIT ?? "").split(",").filter(Boolean));
@@ -291,6 +301,7 @@ function planReply() {
     markdown: (mode === "long" ? longMarkdown(ds) : `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`) + extra,
     decisions: ds.map((d) => ({ round: d.round, questionId: d.key, statement: `Decided: ${d.answer}.` })),
     openDecisions: [...(state.openDecisions ?? []), ...ownOpen],
+    steps: planSteps(ds),
     ...(grounded ? { touches: [{ path: "package.json", why: "Add the new script" }, { path: "src/nope.ts", why: "Not there" }, { path: ".env", why: "A secret" }] } : {}),
   };
 }

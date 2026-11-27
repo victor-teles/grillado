@@ -10,6 +10,7 @@ import { ImportError } from "../core/found/import.ts";
 import { FoundService } from "./found.ts";
 import { shellQuote } from "./launch.ts";
 import { type Store, defaultDataDir } from "./store.ts";
+import { buildAsk, buildDone, buildNext, buildStart, buildWait, buildWithdraw } from "./build.ts";
 import {
   MAX_COMMENT,
   MAX_CONTEXT,
@@ -17,6 +18,7 @@ import {
   MAX_QUOTE,
   PLAN_ID,
   URI,
+  agentFor,
   commentOnPlan,
   getDecisions,
   getPlan,
@@ -121,12 +123,13 @@ export function createMcpServer(
         idea: z.string().trim().min(1, "Describe the idea.").max(MAX_IDEA).describe("The idea, in the user's words"),
         context: z.string().max(MAX_CONTEXT).optional().describe("Optional background: the codebase, constraints, what exists already"),
         path: projectPath,
+        agent: z.string().max(40).optional().describe("The agent that asks and writes the plan (claude, grok): one that can read the project. Default: the one selected in Grillado"),
       },
     },
-    async ({ idea, context, path }) =>
+    async ({ idea, context, path, agent }) =>
       safely(async () => {
         const env = options.env ?? process.env;
-        const r = await startPlan(store, { idea, context, cwd: path ?? process.cwd(), from: clientName() ?? "", appLine, home: options.home, scanOff: options.scan === false || env.GRILLADO_NO_SCAN === "1" });
+        const r = await startPlan(store, { idea, context, cwd: path ?? process.cwd(), agent: agentFor(agent), from: clientName() ?? "", appLine, home: options.home, scanOff: options.scan === false || env.GRILLADO_NO_SCAN === "1" });
         return { content: [text(`Started plan ${r.id}. ${r.next}`)], structuredContent: r };
       }),
   );
@@ -148,6 +151,102 @@ export function createMcpServer(
         const r = commentOnPlan(store, { plan, quote, text: body, client: clientName() });
         return { content: [text(`Comment added to plan ${plan}. It's in Grillado's Comments rail.`)], structuredContent: r };
       }),
+  );
+
+  // The plan-to-build loop: the same six operations as `grillado build …`, with the same results.
+  const plan = planId.describe("The plan id from list_plans");
+  const stepRef = z.union([z.string().max(80), z.number().int().min(1)]).optional().describe("The step's number (1, 2, …) or key. Default: the step in progress, else the next one");
+  const built = (r: { next: string }) => ({ content: [text(r.next), json(r)], structuredContent: r as Record<string, unknown> });
+
+  mcp.registerTool(
+    "build_next",
+    {
+      title: "Next build step",
+      description:
+        "Get the build step to work on in a plan: one already in progress, else the first not done, in the user's order, with its done check. Every build_* reply gives the plan's revision and, when the plan changed since you last read it (get_plan), what changed: read the plan again before going on.",
+      inputSchema: { plan },
+    },
+    async ({ plan: id }) => safely(() => built(buildNext(store, id))),
+  );
+
+  mcp.registerTool(
+    "build_start",
+    {
+      title: "Start a build step",
+      description: "Report that you started a build step, so the user sees what you are working on.",
+      inputSchema: { plan, step: stepRef },
+    },
+    async ({ plan: id, step }) => safely(() => built(buildStart(store, id, step))),
+  );
+
+  mcp.registerTool(
+    "build_done",
+    {
+      title: "Finish a build step",
+      description:
+        "Report a build step done. `verified` is required: the checks you ran and what they showed. `deviation` says where you moved away from the plan, if you did. The user can reopen the step.",
+      inputSchema: {
+        plan,
+        step: stepRef,
+        verified: z.string().trim().min(1, "Say what you verified.").max(1000).describe("The checks you ran and what they showed"),
+        deviation: z.string().max(1000).optional().describe("Where you moved away from the plan, if you did"),
+      },
+    },
+    async ({ plan: id, step, verified, deviation }) => safely(() => built(buildDone(store, id, step, { verified, deviation }))),
+  );
+
+  mcp.registerTool(
+    "build_ask",
+    {
+      title: "Ask the user a decision",
+      description:
+        "Ask the user a decision the plan doesn't cover, with 2 to 6 options of yours. It shows in Grillado as a card; only the user answers it, and the answer becomes a cited decision in the plan. Then call build_wait. Never answer it yourself and never guess meanwhile.",
+      inputSchema: {
+        plan,
+        key: z.string().max(64).describe('A new lowercase-kebab-case key for this ask, like "ask-storage"'),
+        title: z.string().trim().min(1).max(200).describe("The question"),
+        body: z.string().max(1000).optional().describe("What the user needs to know to decide"),
+        options: z
+          .array(z.object({ id: z.string().max(64), label: z.string().max(200), description: z.string().max(400).optional() }))
+          .min(2)
+          .max(6)
+          .describe("The options, each with a short id and a label"),
+        suggest: z.string().max(64).optional().describe("The id of the option you would pick; shown as suggested, never applied for the user"),
+        step: stepRef,
+      },
+    },
+    async ({ plan: id, key, title, body, options: opts, suggest, step }) =>
+      safely(() => {
+        const r = buildAsk(store, id, { key, title, body, options: opts, recommended: suggest, step });
+        // Over MCP nothing starts the web app: say how, when it isn't running.
+        const next = r.url ? r.next : `${r.next} They start it with: ${appLine}`;
+        return built({ ...r, next });
+      }),
+  );
+
+  mcp.registerTool(
+    "build_wait",
+    {
+      title: "Wait for the user's answer",
+      description:
+        "Wait for the user to answer an ask. Returns the answer, or result \"waiting\" when `timeout` seconds pass first (call it again), or \"withdrawn\".",
+      inputSchema: {
+        plan,
+        ask: z.string().max(64).describe("The key you gave build_ask"),
+        timeout: z.number().int().min(0).max(540).optional().describe("Seconds to wait before returning \"waiting\" (default 50; keep it under your client's tool timeout)"),
+      },
+    },
+    async ({ plan: id, ask, timeout }) => safely(async () => built(await buildWait(store, id, ask, timeout ?? 50))),
+  );
+
+  mcp.registerTool(
+    "build_withdraw",
+    {
+      title: "Withdraw an ask",
+      description: "Take back an ask you no longer need. A withdrawn ask is shown as withdrawn and is never recorded as a decision.",
+      inputSchema: { plan, ask: z.string().max(64).describe("The key you gave build_ask"), reason: z.string().max(300).optional().describe("Why you no longer need it") },
+    },
+    async ({ plan: id, ask, reason }) => safely(() => built(buildWithdraw(store, id, ask, reason))),
   );
 
   // v1.3 item 1: what's in the agent's project that Grillado could import. Same scan as the web app.
