@@ -6,7 +6,7 @@ import { CopyButton } from "./CopyButton";
 import { COPY, fmt } from "./copy";
 import { confirmCounts, countText, stillOpen } from "./counts";
 import { IAlert, IClock, IKey, ITerm } from "./icons";
-import { PlanView } from "./Plan";
+import { type PlanSeed, PlanView } from "./Plan";
 import { capAction, capReached, owedKeys, roundStatus, settledLine } from "./rounds";
 import { FiringUp, RoundView, SessionBody, Strip, WaitingView } from "./Round";
 import { WaitStatus } from "./project/Reading";
@@ -15,7 +15,7 @@ import type { AppState, Decision, DecisionNode, SessionView, TreeState } from ".
 export type Act = (action: string, body?: unknown) => Promise<void>;
 const quiet = (p: Promise<void>) => void p.catch(() => {});
 
-export function SessionScreen({ session, app, act, onSwitch }: { session: SessionView; app: AppState; act: Act; onSwitch: () => void }) {
+export function SessionScreen({ session, app, act, onSwitch, onNewPlan }: { session: SessionView; app: AppState; act: Act; onSwitch: () => void; onNewPlan?: (seed: PlanSeed) => void }) {
   const banner = session.error && !session.busy ? <ProblemBanner session={session} app={app} act={act} onSwitch={onSwitch} /> : null;
   switch (session.status) {
     case "asking":
@@ -29,7 +29,7 @@ export function SessionScreen({ session, app, act, onSwitch }: { session: Sessio
     case "synthesizing":
       return <Plating session={session} act={act} banner={banner} />;
     case "plated":
-      return <PlanView session={session} act={act} agentName={agentName(app, session)} agentNameOf={(id) => app.providers.find((p) => p.id === id)?.displayName ?? id} mcp={app.mcp} />;
+      return <PlanView session={session} act={act} agentName={agentName(app, session)} agentNameOf={(id) => app.providers.find((p) => p.id === id)?.displayName ?? id} mcp={app.mcp} onNewPlan={onNewPlan} />;
     default:
       return null;
   }
@@ -429,7 +429,7 @@ function Plating({ session, act, banner }: { session: SessionView; act: Act; ban
                   </section>
                 ))}
                 {busy ? (
-                  <div className="sk" aria-hidden="true">
+                  <div className="skel" aria-hidden="true">
                     <i style={{ width: "62%" }} />
                     <i />
                     <i style={{ width: "90%" }} />

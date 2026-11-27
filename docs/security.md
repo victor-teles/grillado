@@ -20,7 +20,20 @@
   - Home shows what the agent may do before you start. Turn it off per project there, or for
     every project with `--no-code` or `GRILLADO_NO_CODE=1`. Outside a git repository, in your
     home folder or at a filesystem root, nothing is read.
-- Comment replies, edits, diagrams, imports and the issue split run in an empty temporary folder
+- **Option previews.** An option can carry a preview the agent wrote: a UI mock (HTML and CSS),
+  a code sketch or a diagram. That text is not trusted:
+  - A UI mock is only shown inside a frame with an empty `sandbox` attribute: it gets an origin of
+    its own (it can't read Grillado's page, cookie or storage), runs no scripts, sends no forms and
+    can't navigate the page. The frame's document carries its own content security policy that
+    loads nothing from the network (inline CSS and `data:` images only), and tags that would
+    redirect the frame are removed.
+  - A code sketch is shown as text. A diagram is drawn by the same renderer as the plan's (pele),
+    in the browser: it escapes the diagram's text, writes no scripts or HTML labels, and Grillado
+    turns its links and images off, so a diagram can't be clicked through or fetch anything.
+  - Previews are saved with the session, and the source of each preview you chose is written
+    into the plan file as a fenced code block. Nothing is written anywhere else in your project.
+  - "Show me another" is one more agent run with tools off, like a comment reply.
+- Comment replies, edits, diagrams, imports, "Show me another" and the issue split run in an empty temporary folder
   with tools off (Claude Code, Grok, pi) or in Codex's read-only sandbox. "Tools off" means the
   CLI's built-in tools: in these runs Codex and Grok may still offer MCP tools from your own
   configuration. Nothing from your project is in front of the agent in these runs, only your own

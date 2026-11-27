@@ -10,6 +10,10 @@
 // paths Grillado must drop (outside the project, sensitive, missing); FAKE_READ_FINDING overrides the good finding's fact.
 // FAKE_READ_TRAIL (plan 003): Claude's stream-json prints these tool calls first, comma-separated Tool:target (Read:package.json,
 // Grep:autosave, Glob:**/*), FAKE_READ_TRAIL_MS apart; Read targets are made absolute like Claude's.
+// Option previews: FAKE_PREVIEWS (ui | code | diagram: the "platform" question's options carry previews; big-once: the first reply's
+// are over the limit; partial: one option's never fits; evil: ui previews with a script and requests to FAKE_PREVIEW_EVIL_URL),
+// FAKE_ANOTHER (fail | dup: "Show me another" never works), FAKE_ANOTHER_DELAY_MS.
+// FAKE_PLAN_OPEN (open lines the plan writer lists by itself, "|"-separated), FAKE_PLAN_SCOPE (the plan's Out of scope lines, "|"-separated).
 // FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS, FAKE_SPLIT_LOG (a file that gets one line per split run), FAKE_GROUP (empty | missing | dup | invent).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -116,6 +120,48 @@ const isAddPlan = /"type":"addplan"/.test(system);
 const isImport = /"type":"decisions"/.test(system);
 const isGroup = /"type":"groups"/.test(system);
 const isSplit = /"type":"slices"/.test(system) || isGroup;
+const isAnother = /"type":"option"/.test(system);
+/** "Show me another" sends the question as a second <state> tag. */
+const asked = isAnother ? JSON.parse([...prompt.matchAll(/<state>([\s\S]*?)<\/state>/g)][1]?.[1] ?? "{}") : null;
+
+// ---- option previews
+const NONE = { kind: "none", lang: "", source: "" };
+const evilUrl = process.env.FAKE_PREVIEW_EVIL_URL ?? "http://127.0.0.1:9/";
+function uiPreview(label, evil) {
+  const bad = evil
+    ? `<script>fetch("${evilUrl}script");document.title="ran";try{parent.document.title="escaped"}catch{};new Image().src="${evilUrl}js-img"</script><img src="${evilUrl}img" alt=""><link rel="stylesheet" href="${evilUrl}css"><meta http-equiv="refresh" content="0;url=${evilUrl}refresh"><form action="${evilUrl}form"><input name="q" value="x"><button id="send">Send</button></form><p style="background:url(${evilUrl}bg)">bg</p>`
+    : "";
+  return {
+    kind: "ui",
+    lang: "",
+    source: `<style>body{margin:0;padding:16px;font:14px/1.4 system-ui,sans-serif;background:#fff;color:#111}h1{font-size:16px;margin:0 0 12px}li{padding:6px 0;border-bottom:1px solid #ddd}ul{list-style:none;margin:0;padding:0}button{margin-top:12px;padding:6px 12px}@media (prefers-color-scheme:dark){body{background:#161616;color:#eee}li{border-color:#333}}</style><h1 data-preview="${label}">${label}: shopping list</h1><ul><li>Milk</li><li>Bread</li><li>Coffee</li></ul><button type="button">Add item</button>${bad}`,
+  };
+}
+const codePreview = (label, id) => ({ kind: "code", lang: "ts", source: `// ${label}\nconst list = createList({ target: "${id}" });\nlist.add("Milk");\nawait list.save(); // returns once it is stored` });
+const diagramPreview = (label) => ({ kind: "diagram", lang: "", source: `flowchart LR\n  accTitle: ${label} flow\n  accDescr: How a new item is saved with ${label}.\n  A["New item"] --> B["${label}"]\n  B --> C["Saved"]` });
+function previewFor(kind, label, id) {
+  if (kind === "code") return codePreview(label, id);
+  if (kind === "diagram") return diagramPreview(label);
+  return uiPreview(label, kind === "evil");
+}
+/** FAKE_PREVIEWS: put previews on the options of the "platform" question. */
+function addPreviews(q) {
+  const want = process.env.FAKE_PREVIEWS;
+  for (const o of q.options) o.preview = NONE;
+  if (!want || q.key !== "platform") return q;
+  const kind = want === "big-once" || want === "partial" ? "ui" : want;
+  for (const o of q.options) o.preview = previewFor(kind, o.label, o.id);
+  if ((want === "big-once" && once("big-preview")) || want === "partial") q.options[1].preview = { kind: "ui", lang: "", source: `<p>${"x".repeat(40_000)}</p>` };
+  return q;
+}
+function anotherReply() {
+  const m = process.env.FAKE_ANOTHER;
+  if (m === "fail") return "No JSON this time.";
+  const n = (asked.options?.length ?? 0) + 1;
+  const label = m === "dup" ? asked.options[0].label : `Option ${n}`;
+  const kind = /<script/.test(asked.options?.[0]?.preview ?? "") ? "evil" : asked.previewKind;
+  return { type: "option", label, description: `A ${n}th way to do it.`, preview: previewFor(kind, label, `opt${n}`) };
+}
 /** The grounded prompts (plan 002) ask for findings in rounds and touches in the plan. */
 const grounded = /"findings":\[/.test(system) || /"touches":\[/.test(system);
 const GOOD_EVIDENCE = { path: "package.json", note: "Scripts and dependencies" };
@@ -167,14 +213,16 @@ function roundReply() {
     return { type: "plan", title: "Too early", markdown: "# nope", decisions: [], openDecisions: [] };
   }
   if (state.pendingQuestions?.length) {
+    // A topic made from a line of the plan (open-…, scope-…) carries the whole line: the question gets a short label of its own.
+    const short = (item) => (/^(open|scope)-/.test(item.key) ? (item.wasOutOfScope ? "Brought in" : "Open line") : item.label);
     const questions = state.pendingQuestions.slice(0, 6).map((item) => question(
-      TEMPLATES.find((template) => template.key === item.key) ?? { key: item.key, label: item.label, title: `Decide ${item.label}?`, deps: [], options: yn },
+      TEMPLATES.find((template) => template.key === item.key) ?? { key: item.key, label: short(item), title: `Decide ${item.label}`.slice(0, 150).replace(/[.;]$/, "") + "?", deps: [], options: yn },
     ));
     return { type: "ask_round", summary: "Finish the open decisions", questions, upcoming: [] };
   }
   const ready = TEMPLATES.filter((t) => !settled.has(t.key) && t.deps.every((d) => settled.has(d)));
   if (ready.length) {
-    const q = ready.map(question);
+    const q = ready.map(question).map(addPreviews);
     if (mode === "leak-once" && once("leak")) q[0].body = "This follows the grilling method.";
     const asked = new Set(ready.map((t) => t.key));
     const upcoming = TEMPLATES.filter((t) => !settled.has(t.key) && !asked.has(t.key) && t.hint !== false && t.deps.some((d) => asked.has(d))).map((t) => ({
@@ -231,12 +279,18 @@ function planReply() {
   // FAKE_PLAN_OMIT: the text leaves these decisions out, so they read "Not in the plan text yet" (#104).
   const omit = new Set((process.env.FAKE_PLAN_OMIT ?? "").split(",").filter(Boolean));
   const ds = (state.decisions ?? []).filter((d) => !omit.has(d.key));
+  // FAKE_PLAN_SCOPE: lines of an Out of scope section, "|"-separated; one the user brought in (nowInScope) moves out of it.
+  const inScope = new Set(state.nowInScope ?? []);
+  const outScope = (process.env.FAKE_PLAN_SCOPE ?? "").split("|").filter((line) => line && !inScope.has(line));
+  // FAKE_PLAN_OPEN: open lines the writer lists by itself, "|"-separated, until a question made from one is answered.
+  const ownOpen = ds.some((d) => /^open-/.test(d.key)) ? [] : (process.env.FAKE_PLAN_OPEN ?? "").split("|").filter(Boolean);
+  const extra = `${inScope.size ? `\n\n## Now in scope\n${[...inScope].map((line) => `- ${line}`).join("\n")}` : ""}${outScope.length ? `\n\n## Out of scope\n${outScope.map((line) => `- ${line}`).join("\n")}` : ""}`;
   return {
     type: "plan",
     title: `Plan: ${state.idea}`,
-    markdown: mode === "long" ? longMarkdown(ds) : `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`,
+    markdown: (mode === "long" ? longMarkdown(ds) : `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`) + extra,
     decisions: ds.map((d) => ({ round: d.round, questionId: d.key, statement: `Decided: ${d.answer}.` })),
-    openDecisions: state.openDecisions ?? [],
+    openDecisions: [...(state.openDecisions ?? []), ...ownOpen],
     ...(grounded ? { touches: [{ path: "package.json", why: "Add the new script" }, { path: "src/nope.ts", why: "Not there" }, { path: ".env", why: "A secret" }] } : {}),
   };
 }
@@ -366,8 +420,9 @@ if (isImport && process.env.FAKE_IMPORT_DELAY_MS) await new Promise((r) => setTi
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
 if (isDiagram && process.env.FAKE_DIAGRAM_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DIAGRAM_DELAY_MS)));
+if (isAnother && process.env.FAKE_ANOTHER_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ANOTHER_DELAY_MS)));
 if (isAddPlan && process.env.FAKE_ADDPLAN_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ADDPLAN_DELAY_MS)));
-const reply = isGroup ? groupReply() : isSplit ? splitReply() : isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
+const reply = isAnother ? anotherReply() : isGroup ? groupReply() : isSplit ? splitReply() : isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude" && flag("--output-format") === "stream-json") {

@@ -4,7 +4,8 @@ import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, stat
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import type { Preview } from "../core/previews.ts";
+import { anotherOption, decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
@@ -18,6 +19,8 @@ import {
   type Answer,
   UNKNOWN_OPTION,
   type Session,
+  addOption,
+  anotherQuestion,
   answerOpenDecision,
   changeDecision,
   correctFinding,
@@ -35,6 +38,7 @@ import {
   atCap,
   keepGoing,
   resumePlan,
+  scopeIn,
   askMore,
   stopAtCap,
   reopen,
@@ -140,6 +144,8 @@ export class GrilladoServer {
   private diagramRuns = new Map<string, AbortController>();
   /** "Add to plan" (#104), by session: one decision at a time. */
   private addPlanRuns = new Map<string, AbortController>();
+  /** "Show me another" (option previews): the one request in progress per session. */
+  private anotherRuns = new Map<string, AbortController>();
   private progress = new Map<string, string>();
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
@@ -298,7 +304,7 @@ export class GrilladoServer {
     if (!idle) return;
     this.lastActive = Date.now();
     this.idleTimer = setInterval(() => {
-      const inUse = this.clients.size > 0 || this.inflight.size > 0 || this.commentRuns.size > 0 || this.diagramRuns.size > 0 || this.addPlanRuns.size > 0;
+      const inUse = this.clients.size > 0 || this.inflight.size > 0 || this.commentRuns.size > 0 || this.diagramRuns.size > 0 || this.addPlanRuns.size > 0 || this.anotherRuns.size > 0;
       if (inUse) this.lastActive = Date.now();
       else if (Date.now() - this.lastActive >= idle) {
         clearInterval(this.idleTimer);
@@ -315,6 +321,7 @@ export class GrilladoServer {
     for (const c of this.commentRuns.values()) c.abort();
     for (const c of this.diagramRuns.values()) c.abort();
     for (const c of this.addPlanRuns.values()) c.abort();
+    for (const c of this.anotherRuns.values()) c.abort();
     killAllChildren();
     // A run ends after its abort (a Stopped one too, though Stop already answered) and saves its session
     // then. Wait for those, so nothing writes the store after close() resolves.
@@ -646,6 +653,7 @@ export class GrilladoServer {
       // A run cut short by a restart reads as stopped.
       diagramRun: s.diagramRun?.state === "running" && !this.diagramRuns.has(s.id) ? { ...s.diagramRun, state: "stopped", current: undefined } : s.diagramRun,
       adding: this.addPlanRuns.has(s.id),
+      anotherRun: s.anotherRun?.state === "running" && !this.anotherRuns.has(s.id) ? { ...s.anotherRun, state: "stopped" } : s.anotherRun,
       addPlanRun: s.addPlanRun?.state === "running" && !this.addPlanRuns.has(s.id) ? { ...s.addPlanRun, state: "stopped" } : s.addPlanRun,
       progress: this.progress.get(s.id),
       // Plan 003: what the reading run in progress has opened.
@@ -1373,6 +1381,49 @@ export class GrilladoServer {
     this.startAddPlan(s, d.key, op === "retry");
   }
 
+  /**
+   * "Show me another": one agent call, tools off, for one more option with a preview. A request that
+   * fails leaves the question's options as they were, with the reason on `anotherRun` for Try again.
+   */
+  private startAnother(s: Session, key: string) {
+    if (this.anotherRuns.has(s.id)) throw new Error("The agent is already finding another option.");
+    const q = anotherQuestion(s, key);
+    const rec = this.record(s, "option", { decision: q.title });
+    const controller = new AbortController();
+    this.anotherRuns.set(s.id, controller);
+    const run: NonNullable<Session["anotherRun"]> = { question: key, state: "running", startedAt: new Date().toISOString() };
+    s.anotherRun = run;
+    this.changed(s);
+    const doing = "{agent} is sketching another option";
+    rec.step("Read the question and its options", doing);
+    const work = async () => {
+      const r = await anotherOption(s, key, this.adapterFor(s), { ...this.runOptions(s, controller), onProgress: undefined, onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", doing) });
+      if (controller.signal.aborted) return;
+      if (!r.ok) {
+        run.state = "error";
+        run.code = r.code;
+        run.message = redact(r.message, userText(s));
+        return;
+      }
+      addOption(s, key, { label: r.value.label, description: r.value.description, preview: r.value.preview as Preview });
+      run.state = "done";
+    };
+    this.track(work()
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        run.state = "error";
+        run.message = redact(String(err?.message ?? err), userText(s));
+      })
+      .finally(() => {
+        if (controller.signal.aborted) run.state = "stopped";
+        if (run.state === "stopped") rec.end("stopped", { last: "Stopped while {agent} was sketching another option" });
+        else if (run.state === "error") rec.end("failed", { reason: run.code ?? "unknown", last: reasonText(run.code ?? "unknown", "{agent}") });
+        else rec.end("done", { read: [q.title], result: {} });
+        if (this.anotherRuns.get(s.id) === controller) this.anotherRuns.delete(s.id);
+        this.changed(s);
+      }));
+  }
+
   private startAddPlan(s: Session, key: string, retry = false) {
     const d = s.decisions[key];
     const rec = this.record(s, "addplan", { decision: d.title }, retry ? `addplan:${s.id}` : undefined);
@@ -1577,8 +1628,17 @@ export class GrilladoServer {
       return this.json(res, 200, this.view(s));
     }
     switch (action) {
+      case "another": {
+        // Option previews: one more option, with a preview, for a question of the open round.
+        if (busy) throw new Error("The agent is still working.");
+        if (body?.op === "stop") this.anotherRuns.get(s.id)?.abort();
+        else this.startAnother(s, String(body?.key ?? ""));
+        break;
+      }
       case "answers": {
         if (busy) throw new Error("The agent is still working.");
+        // An option still on its way is for a round that is now sent.
+        this.anotherRuns.get(s.id)?.abort();
         const answers = (body?.answers ?? []) as Answer[];
         submitAnswers(s, Number(body?.round), answers);
         this.log(s, { v: 1, type: "user", what: "answered", round: Number(body?.round), answers: answers.length, yourCall: answers.filter((a) => a.optionId === UNKNOWN_OPTION).length, at: new Date().toISOString() });
@@ -1651,6 +1711,14 @@ export class GrilladoServer {
         if (busy) throw new Error("The agent is still working.");
         if (!s.plan || body?.base !== textHash(s.plan.markdown)) throw new Error("Save the plan before continuing.");
         resumePlan(s);
+        this.startRound(s);
+        break;
+      }
+      case "scope-in": {
+        // An Out of scope line joins the plan: the agent asks about it, then the plan is written again.
+        if (busy) throw new Error("The agent is still working.");
+        if (!s.plan || body?.base !== textHash(s.plan.markdown)) throw new Error("Save the plan before continuing.");
+        scopeIn(s, String(body?.text ?? ""));
         this.startRound(s);
         break;
       }

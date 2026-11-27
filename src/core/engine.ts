@@ -5,14 +5,18 @@ import { openFloor } from "./floor.ts";
 import { userBlocks } from "./decision-block.ts";
 import { findBanned } from "./filter.ts";
 import { StreamGuard } from "./stream-guard.ts";
-import { addPlanSystemPrompt, importSystemPrompt, groupSystemPrompt, splitSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
+import { addPlanSystemPrompt, anotherSystemPrompt, importSystemPrompt, groupSystemPrompt, splitSystemPrompt, commentSystemPrompt, diagramSystemPrompt, editSystemPrompt, roundSystemPrompt, synthesisSystemPrompt } from "./prompts.ts";
 import { type CommentThread, checkEdits, plainQuote, threadSection } from "./comments.ts";
 import type { Activity, ProviderAdapter, RunRequest } from "./providers/types.ts";
 import { type DiagramKind, type PlanSection, checkMermaid } from "./diagrams.ts";
 import { checkAddPlan, citeId } from "./addplan.ts";
 import { type Slice, fallbackSlices, groupedSlices, planDecisions, todoIds } from "./issues.ts";
 import { type PathCheck, checkEvidence, checkTouches, mergeFindings } from "./project-read.ts";
+import { hasPreview, previewIssue, previewKindOf, previewProblem, uiAdvice } from "./previews.ts";
 import {
+  AnotherOptionReplySchema,
+  anotherOptionJsonSchema,
+  type Question,
   type AddPlanReply,
   AddPlanReplySchema,
   addPlanJsonSchema,
@@ -50,7 +54,9 @@ import {
   type Decision,
   type Session,
   DEFAULT_MAX_ROUNDS,
+  anotherQuestion,
   applyRound,
+  broughtIn,
   openQuestions,
   owedKeys,
   roundsSaved,
@@ -88,8 +94,26 @@ export interface RunOptions {
 export type Validated<T> = { ok: true; value: T } | { ok: false; code: FailureCode; message: string };
 
 /** Compact, stateless snapshot of the interview: each call resends it (spec §9.3). */
+/** What the user was shown for a settled decision: the question's context and the chosen option's description. */
+function asked(s: Session, d: { key: string; answer: string; kind: string }) {
+  for (let i = s.rounds.length - 1; i >= 0; i--) {
+    const q = s.rounds[i].questions.find((x) => x.key === d.key);
+    if (!q) continue;
+    const option = d.kind === "option" ? q.options.find((o) => o.label === d.answer) : undefined;
+    return { context: q.body?.trim() || undefined, answerDetail: option?.description?.trim() || undefined };
+  }
+  return {};
+}
+
 export function stateFor(s: Session) {
-  const pendingQuestions = openFloor(s).filter((item) => !item.asked && s.reopened.includes(item.key));
+  const floor = openFloor(s);
+  // Lines of the plan sent to be asked about (an open line, or one brought in from Out of scope): they have no queued item.
+  const topics = (s.topics ?? [])
+    .filter((topic) => s.reopened.includes(topic.key) && !s.decisions[topic.key])
+    .map((topic) => ({ key: topic.key, label: topic.label, ...(topic.kind === "scope" ? { wasOutOfScope: true } : {}) }));
+  const pendingQuestions = [...floor.filter((item) => !item.asked && s.reopened.includes(item.key)), ...topics];
+  // Decisions the agent named for later and no round asked: it needs their keys to ask them as the same decision.
+  const upcoming = floor.filter((item) => !item.asked).map((item) => ({ key: item.key, label: item.label }));
   return {
     idea: s.idea,
     context: s.context || undefined,
@@ -100,12 +124,16 @@ export function stateFor(s: Session) {
       key: d.key,
       question: d.title,
       answer: d.answer,
+      // The answer is an option's short label; what it stood for is in the option's description
+      // and the question's context (numbers, limits, the proposal being accepted).
+      ...asked(s, d),
       ...(d.kind === "unknown" ? { unknown: true } : {}),
       ...(d.accepted_recommendation ? { acceptedRecommendation: true } : {}),
       ...(d.dependsOn.length ? { dependsOn: d.dependsOn } : {}),
     })),
     reopened: s.reopened.length ? s.reopened : undefined,
     pendingQuestions: pendingQuestions.length ? pendingQuestions : undefined,
+    upcoming: upcoming.length ? upcoming : undefined,
     keepGoing: s.keepGoing || undefined,
     // What the agent already read in this project (plan 002): facts, not decisions.
     // Plan 003: a finding the user corrected carries what's true instead.
@@ -154,7 +182,14 @@ export function buildRoundPrompt(s: Session, max = DEFAULT_MAX_ROUNDS): string {
   else if (state.keepGoing)
     lines.push("The user wants to keep going: look for branches that were left shallow and ask the next frontier there.");
   else lines.push("Recompute the frontier from the settled decisions and ask the next round, or reply frontier_empty.");
+  if (state.upcoming?.length)
+    lines.push("The upcoming list holds decisions you named for later and have not asked yet. When you ask one of them, use its key exactly.");
   if (state.pendingQuestions?.length) lines.push("The pendingQuestions topics were left open in the saved plan and never asked. Turn them into questions using their keys and labels. Keep all settled answers.");
+  const topics = (s.topics ?? []).filter((topic) => state.pendingQuestions?.some((item) => item.key === topic.key));
+  if (topics.length)
+    lines.push("A pendingQuestions label can be a whole line of the plan: ask the one decision it calls for under its key, and give that question a short label of its own.");
+  if (topics.some((topic) => topic.kind === "scope"))
+    lines.push("A topic with wasOutOfScope was left out of the plan and the user now wants it in. Don't ask whether to include it: ask the decision that most shapes how it should work.");
   lines.push(...budgetLines(s, max));
   if (state.userQuestions)
     lines.push(
@@ -172,12 +207,17 @@ export function buildSynthesisPrompt(s: Session): string {
   const open = openQuestions(s).map((q) => q.title);
   // The floor (#40): queued items no round asked go to the writer too, not only the open round.
   const notAsked = openFloor(s).filter((f) => !f.asked).map((f) => ({ key: f.key, label: f.label }));
+  // Out of scope lines of the earlier plan the user brought in and answered a question about.
+  const nowInScope = broughtIn(s);
   return [
     "Confirmed interview state (JSON):",
-    `<state>${serializeStateForTag({ ...state, openDecisions: open.length ? open : undefined, notAsked: notAsked.length ? notAsked : undefined, wrappedUpEarly: s.wrappedUp || undefined })}</state>`,
+    `<state>${serializeStateForTag({ ...state, openDecisions: open.length ? open : undefined, notAsked: notAsked.length ? notAsked : undefined, nowInScope: nowInScope.length ? nowInScope : undefined, wrappedUpEarly: s.wrappedUp || undefined })}</state>`,
     "",
     ...(notAsked.length
       ? ["The items in notAsked were never asked before the interview stopped. Keep them open: list each one by its label in openDecisions and don't decide them.", ""]
+      : []),
+    ...(nowInScope.length
+      ? ["The items in nowInScope were out of scope in the earlier plan and the user has now brought them in. Treat them as part of the plan, built the way the decisions about them say, and don't list them under Out of scope.", ""]
       : []),
     "Write the plan now.",
   ].join("\n");
@@ -191,7 +231,8 @@ export async function runValidated<T>(
   adapter: ProviderAdapter,
   base: Omit<RunRequest, "cwd" | "timeoutMs" | "model">,
   schema: z.ZodType<T>,
-  check: (value: T) => string | null,
+  /** `attempt` is 1 or 2: a check may ask for the repair pass once and accept the second reply as it is. */
+  check: (value: T, attempt: number) => string | null,
   opts: RunOptions,
   exempt: string,
 ): Promise<Validated<T>> {
@@ -247,7 +288,7 @@ export async function runValidated<T>(
         .join("; ");
       continue;
     }
-    const issue = check(parsed.data);
+    const issue = check(parsed.data, attempt);
     if (issue) {
       problem = issue;
       continue;
@@ -271,8 +312,10 @@ export async function nextRound(s: Session, adapter: ProviderAdapter, opts: RunO
     { kind: "round", systemPrompt: roundSystemPrompt({ read }), userPrompt: buildRoundPrompt(s, max), jsonSchema: read ? groundedRoundJsonSchema() : roundJsonSchema() },
     // A plan during the interview is discarded (AC7): the round schema only admits ask_round | frontier_empty,
     // so an early plan fails validation and goes through the repair retry.
-    read ? GroundedRoundReplySchema : RoundReplySchema,
-    (reply) => validateRound(s, reply),
+    (read ? GroundedRoundReplySchema : RoundReplySchema) as z.ZodType<RoundReply>,
+    // A preview that can't be shown gets the one repair pass; if it still can't, the round goes
+    // ahead and that option stays a text option (applyRound settles them).
+    (reply, attempt) => validateRound(s, reply) ?? (attempt === 1 ? previewProblem(reply.questions) : null),
     opts,
     userText(s),
   );
@@ -415,6 +458,44 @@ export async function suggestDiagram(
     (reply) => (reply.skip ? null : checkMermaid(reply.mermaid, kinds)),
     opts,
     [userText(s), md, focus].join("\n"),
+  );
+}
+
+/** The prompt for "Show me another": the interview state, and the question with the options it has. */
+export function buildAnotherPrompt(s: Session, q: Question): string {
+  const kind = previewKindOf(q.options);
+  return [
+    "Interview state (JSON):",
+    `<state>${serializeStateForTag(stateFor(s))}</state>`,
+    "",
+    "The question the user is answering, with its options (JSON):",
+    `<state>${serializeStateForTag({ key: q.key, title: q.title, body: q.body || undefined, previewKind: kind, options: q.options.map((o) => ({ label: o.label, description: o.description, preview: o.preview?.source })) })}</state>`,
+    "",
+    `Reply with one more option, with a "${kind}" preview.`,
+  ].join("\n");
+}
+
+/**
+ * "Show me another": one agent call for one more option with a preview. Nothing is saved here; the
+ * caller appends the option. An option whose preview still can't be shown after the repair pass is
+ * a failed request: the question keeps the options it had.
+ */
+export async function anotherOption(s: Session, key: string, adapter: ProviderAdapter, opts: RunOptions) {
+  const q = anotherQuestion(s, key);
+  const kind = previewKindOf(q.options)!;
+  const taken = new Set(q.options.map((o) => o.label.trim().toLowerCase()));
+  return runValidated(
+    adapter,
+    { kind: "another", systemPrompt: anotherSystemPrompt(), userPrompt: buildAnotherPrompt(s, q), jsonSchema: anotherOptionJsonSchema() },
+    AnotherOptionReplySchema,
+    (reply, attempt) => {
+      if (taken.has(reply.label.trim().toLowerCase())) return `"${reply.label}" is already an option. Reply with a different one.`;
+      if (!hasPreview(reply.preview)) return `The option needs a "${kind}" preview.`;
+      const issue = previewIssue(reply.preview, kind) ?? (attempt === 1 && kind === "ui" ? uiAdvice(reply.preview.source) : null);
+      return issue ? `The preview is not usable: ${issue}.` : null;
+    },
+    opts,
+    userText(s),
   );
 }
 

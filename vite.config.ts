@@ -10,8 +10,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "web/src"),
-      // Keep EPL-2.0 elkjs out of the bundle (see web/src/vendor/elk-stub.js).
-      "elkjs/lib/elk.bundled.js": path.resolve(import.meta.dirname, "web/src/vendor/elk-stub.js"),
     },
   },
   build: { outDir: "../dist/web", emptyOutDir: true, sourcemap: false },

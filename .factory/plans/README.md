@@ -13,6 +13,8 @@ update your row when done.
 | 003  | The user sees what the agent reads, can skip it, and can correct a finding | P1 | M | 002 | DONE (trail on Claude Code only) |
 | 004  | Coding agents find Grillado and use it with no setup, and the README says how | P1 | M | — | DONE (`npx skills add` and npx resolution need a release) |
 | 005  | Home's project is a choice: switch projects, pick where plans are saved (built from a user report, no written plan) | P1 | S | 002 | DONE |
+| 006  | Slice B, "See before you choose": option previews, Compare, Show me another. Planned in Grillado itself: `docs/plans/grillado-plan-2026-11-26-b7e14b3d.md` | P1 | L | 002 | DONE (real-agent trial on Claude Code only) |
+| 007  | Diagrams are drawn by pele (https://pele.run) instead of Mermaid's own renderer; the diagram language is unchanged (built from a user request, no written plan) | P2 | S | — | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with
 one-line rationale). 001 is a direction plan: it stays ACTIVE while its slices are built.
@@ -25,12 +27,14 @@ one-line rationale). 001 is a direction plan: it stays ACTIVE while its slices a
 - 004 is independent and can be built before, after or alongside 002. Both touch the Security
   text: 002 rewrites it, 004 moves it from `README.md` to `docs/security.md`. Whichever lands
   second adapts to where the text then lives.
-- Slices B to F of 001 are not planned yet. Plan each with `/factory plan <slice>` when it is
-  next: B "See before you choose" (option previews), C "Easier to steer" (proposed, not
+- Slice B "See before you choose" is built (006). Slices C to F of 001 are not planned yet. Plan
+  each when it is next: C "Easier to steer" (proposed, not
   confirmed), D "Plan to build loop", E "Living docs", F "Real builds".
 
 ## Decisions behind these plans (2026-11-24)
 
+- 2026-11-26 (007): diagrams (plans and option previews) are drawn by pele, pinned to 1.13.0, with
+  links and images off and colors from the app's tokens. Mermaid is no longer bundled.
 - 2026-11-25 (005): Home was bound to the launch folder. The project is now picked on Home (known
   projects, or a typed folder); plans go to `docs/plans` unless the user sets another folder on
   Home or with `--plans-dir`.

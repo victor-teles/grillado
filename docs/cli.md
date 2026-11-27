@@ -8,6 +8,17 @@ A browser tab opens. Describe the idea, answer rounds of questions (number keys 
 sends, the recommendation is preselected), confirm the decisions, and get a `plan.md` that cites
 the answer behind every decision.
 
+## Seeing options before you choose
+
+When a question's options differ in how something looks, how a caller would use it, or how its
+parts connect, the agent can give every option a preview: a UI mock, a code sketch or a diagram.
+A small version of each shows under the question. **Compare** opens them side by side at full
+size (one at a time on a phone); press a number or **Choose** to pick one there, and Enter sends
+the round as usual. **Show me another** asks the agent for one more option with its preview, up
+to six per question. The source of each preview you chose is saved in the plan under
+"Chosen previews". Limits per preview: 32 KiB for a UI mock, 16 KiB and 200 lines for code,
+16 KiB and 150 lines for a diagram.
+
 ## Where plans are saved
 
 Run Grillado from your project folder. New plans are saved as

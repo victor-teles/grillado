@@ -4,7 +4,7 @@
 // copied log and the live-region messages from the same functions.
 import { reasonText } from "./reason.ts";
 
-export type RunKind = "round" | "plan" | "reply" | "apply" | "diagrams" | "addplan";
+export type RunKind = "round" | "plan" | "reply" | "apply" | "diagrams" | "addplan" | "option";
 export type RunStatus = "running" | "done" | "failed" | "stopped" | "interrupted";
 
 export interface RunTarget {
@@ -277,6 +277,8 @@ function runTitle(e: Entry): string {
       return { running: `Replying on ${sec}`, done: `Replied on ${sec}`, failed: `Couldn’t reply on ${sec}`, stopped: `Stopped replying on ${sec}`, interrupted: `Reply on ${sec} didn’t finish` }[s];
     case "apply":
       return { running: `Applying feedback on ${sec}`, done: `Applied feedback on ${sec}`, failed: `Couldn’t apply feedback on ${sec}`, stopped: `Stopped applying feedback on ${sec}`, interrupted: `Applying feedback on ${sec} didn’t finish` }[s];
+    case "option":
+      return { running: "Finding another option", done: "Added another option", failed: "Couldn’t add another option", stopped: "Stopped finding another option", interrupted: "Another option didn’t finish" }[s];
     case "addplan":
       return { running: "Adding a decision to the plan", done: "Added a decision to the plan", failed: "Couldn’t add a decision to the plan", stopped: "Stopped adding a decision to the plan", interrupted: "Adding a decision to the plan didn’t finish" }[s];
     default:
@@ -314,7 +316,7 @@ export function metaParts(e: Entry, o: { agent: string; agentId?: string; agentN
     else if (e.kind === "round") out.push(e.target?.reask ? "asked again after your edit" : (e.target?.round ?? 1) <= 1 ? "from your idea" : `after your round ${(e.target?.round ?? 1) - 1} answers`);
     else if (e.kind === "reply" || e.kind === "apply") out.push("from your comment");
     else if (e.kind === "plan") out.push("after you confirmed");
-    else if (e.kind === "addplan" && e.target?.decision) out.push(`for ${q(e.target.decision)}`);
+    else if ((e.kind === "addplan" || e.kind === "option") && e.target?.decision) out.push(`for ${q(e.target.decision)}`);
     if (s === "done") {
       if (e.kind === "plan") out.push([r.decisions !== undefined ? plural(r.decisions, "decision") : "", r.sections !== undefined ? plural(r.sections, "section") : ""].filter(Boolean).join(" · "));
       if (e.kind === "apply") out.push(plural(r.suggestions ?? 0, "suggestion"));
@@ -481,6 +483,8 @@ function doing(e: Entry): string {
       return `replying on ${sec}`;
     case "apply":
       return `applying feedback on ${sec}`;
+    case "option":
+      return "finding another option";
     case "addplan":
       return "adding a decision to the plan";
     default:

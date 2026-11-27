@@ -213,19 +213,22 @@ export function Landing({
   onSwitch,
   onStart,
   onOpen,
+  seed,
 }: {
   state: AppState;
   provider?: ProviderView;
   onSwitch?: () => void;
   onStart: (idea: string, context: string, read: boolean) => Promise<void>;
   onOpen: (id: string) => void;
+  /** The composer opens filled in (a line of a plan that starts a new one); nothing is sent until the user does. */
+  seed?: { idea: string; context: string };
 }) {
   const mobile = useMobile();
-  const [idea, setIdea] = useState("");
+  const [idea, setIdea] = useState(seed?.idea ?? "");
   const handoff = useFoundHandoff(state.sessions);
-  const [context, setContext] = useState("");
+  const [context, setContext] = useState(seed?.context ?? "");
   const [project, setProjectRead] = useProjectRead(state.project);
-  const [showContext, setShowContext] = useState(false);
+  const [showContext, setShowContext] = useState(!!seed?.context);
   const [sending, setSending] = useState(false);
   const [focused, setFocused] = useState(false);
   const placeholder = usePlaceholder(focused || idea.length > 0);
@@ -236,6 +239,13 @@ export function Landing({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [idea]);
+  // A seeded composer is ready to send: the caret sits after the idea.
+  useEffect(() => {
+    if (!seed) return;
+    const el = ta.current;
+    el?.focus();
+    el?.setSelectionRange(el.value.length, el.value.length);
+  }, []);
   const start = async () => {
     if (!idea.trim() || sending) return;
     setSending(true);

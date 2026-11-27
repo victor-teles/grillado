@@ -51,7 +51,7 @@ function icon(e: Entry): ReactNode {
   if (e.type === "user") return <IUser />;
   if (e.type === "file") return <IFileDiff />;
   if (e.type === "import") return <IDl />;
-  return { round: <IHelp />, plan: <IFile />, reply: <IMsg />, apply: <IEdit />, diagrams: <IFlow />, addplan: <IEdit /> }[e.kind ?? "diagrams"];
+  return { round: <IHelp />, plan: <IFile />, reply: <IMsg />, apply: <IEdit />, diagrams: <IFlow />, addplan: <IEdit />, option: <IHelp /> }[e.kind ?? "diagrams"];
 }
 
 export function ActivityPanel(p: ActivityProps) {

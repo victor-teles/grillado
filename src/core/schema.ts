@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NO_PREVIEW, type Preview, type RawPreview } from "./previews.ts";
 
 /** At most this many questions in one round, one decision each (#35, PO override). */
 export const MAX_QUESTIONS = 6;
@@ -16,13 +17,35 @@ export const OptionSchema = z.object({
   description: z.string().max(600),
 });
 
+/**
+ * An option's preview as the agent sends it (plan: option previews). Always present so every CLI's
+ * schema mode accepts it; kind "none" means no preview. A malformed one counts as none: limits and
+ * content are checked by Grillado afterwards (previews.ts), so a bad preview never fails a round.
+ */
+const RawPreviewSchema = z.object({
+  kind: z.enum(["none", "ui", "code", "diagram"]),
+  lang: z.string().max(40),
+  source: z.string().max(400_000),
+});
+export const PreviewSchema = z.preprocess((v) => (RawPreviewSchema.safeParse(v).success ? v : NO_PREVIEW), RawPreviewSchema);
+/** An option in a reply: the saved option plus its preview. */
+export const OptionReplySchema = OptionSchema.extend({ preview: PreviewSchema });
+
+/** "Show me another": one more option for a question that has previews. */
+export const AnotherOptionReplySchema = z.object({
+  type: z.literal("option"),
+  label: z.string().min(1).max(200),
+  description: z.string().max(600),
+  preview: PreviewSchema,
+});
+
 export const QuestionSchema = z.object({
   key: DecisionKey,
   /** Short noun phrase naming the decision in the tree, e.g. "Merge conflicts". */
   label: z.string().max(60).default(""),
   title: z.string().min(1).max(160),
   body: z.string().max(2000),
-  options: z.array(OptionSchema).min(2).max(6),
+  options: z.array(OptionReplySchema).min(2).max(6),
   recommendedOptionId: z.string().min(1),
   /** Keys of decisions settled in earlier rounds that this question builds on. */
   dependsOn: z.array(DecisionKey),
@@ -173,12 +196,19 @@ export const GroupReplySchema = z.object({
 });
 
 export type GroupReply = z.infer<typeof GroupReplySchema>;
-export type Option = z.infer<typeof OptionSchema>;
+/**
+ * An option as kept on the session. Its preview was checked (previews.ts): a usable one is kept,
+ * an unusable one leaves `previewFailed`. `added`: it came from "Show me another".
+ */
+export type Option = z.infer<typeof OptionSchema> & { preview?: Preview; previewFailed?: boolean; added?: boolean };
 /** A question as kept on the session: from a reading agent it may carry checked evidence. */
-export type Question = z.infer<typeof QuestionSchema> & { evidence?: z.infer<typeof EvidenceSchema>[] };
+export type Question = Omit<z.infer<typeof QuestionSchema>, "options"> & { options: Option[]; evidence?: z.infer<typeof EvidenceSchema>[] };
 export type Upcoming = z.infer<typeof UpcomingSchema>;
 /** Any round reply: grounded ones add evidence on questions and findings. */
-export type RoundReply = z.infer<typeof RoundReplySchema> & { questions: Question[]; findings?: z.infer<typeof FindingReplySchema>[] };
+/** A question in a reply, before applyRound settles its previews: an option's may still be raw ("none", or unusable). */
+export type ReplyQuestion = Omit<Question, "options"> & { options: (Omit<Option, "preview"> & { preview?: Preview | RawPreview })[] };
+export type RoundReply = Omit<z.infer<typeof RoundReplySchema>, "questions"> & { questions: ReplyQuestion[]; findings?: z.infer<typeof FindingReplySchema>[] };
+export type AnotherOptionReply = z.infer<typeof AnotherOptionReplySchema>;
 export type GroundedRoundReply = z.infer<typeof GroundedRoundReplySchema>;
 export type PlanReply = z.infer<typeof PlanReplySchema> & { touches?: z.infer<typeof TouchSchema>[] };
 export type CommentReply = z.infer<typeof CommentReplySchema>;
@@ -223,6 +253,7 @@ export const groundedRoundJsonSchema = () => toStrictJsonSchema(GroundedRoundRep
 export const groundedPlanJsonSchema = () => toStrictJsonSchema(GroundedPlanReplySchema);
 export const commentJsonSchema = () => toStrictJsonSchema(CommentReplySchema);
 export const editJsonSchema = () => toStrictJsonSchema(EditReplySchema);
+export const anotherOptionJsonSchema = () => toStrictJsonSchema(AnotherOptionReplySchema);
 export const diagramJsonSchema = () => toStrictJsonSchema(DiagramReplySchema);
 export const addPlanJsonSchema = () => toStrictJsonSchema(AddPlanReplySchema);
 export const importJsonSchema = () => toStrictJsonSchema(ImportReplySchema);

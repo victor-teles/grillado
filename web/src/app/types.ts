@@ -2,6 +2,9 @@ import type { CommentThread, Suggestion } from "../../../src/core/comments.ts";
 import type { Entry } from "../../../src/core/activity.ts";
 import type { DiagramRun } from "../../../src/core/diagrams.ts";
 import type { AddPlanRun } from "../../../src/core/addplan.ts";
+import type { AnotherRun, Preview } from "../../../src/core/previews.ts";
+
+export type { Preview, PreviewKind } from "../../../src/core/previews.ts";
 // Mirrors of what the local server sends. Kept separate from server code on purpose.
 export type ProviderId = "claude" | "codex" | "grok" | "pi";
 export type FailureCode = "auth" | "rate_limit" | "timeout" | "not_found" | "malformed" | "unknown";
@@ -155,6 +158,12 @@ export interface Option {
   id: string;
   label: string;
   description: string;
+  /** Option previews: a UI mock, a code sketch or a diagram to compare before choosing. */
+  preview?: Preview;
+  /** The agent's preview for this option couldn't be shown; the option is answered as text. */
+  previewFailed?: boolean;
+  /** Added with "Show me another". */
+  added?: boolean;
 }
 export interface Question {
   key: string;
@@ -262,6 +271,8 @@ export interface SessionView {
   rounds: Round[];
   decisions: Record<string, Decision>;
   reopened: string[];
+  /** Lines of the plan sent to be asked about: an open line the writer listed, or an Out of scope line brought in. */
+  topics?: { key: string; label: string; kind: "open" | "scope" }[];
   stale?: Record<string, StaleDecision>;
   wrappedUp: boolean;
   /** Why Confirm opened without a wrap (#33): the cap, or the agent had nothing left to ask. */
@@ -297,6 +308,8 @@ export interface SessionView {
   drawing?: boolean;
   /** "Add to plan" (#104): the last run, and whether one is going now. */
   addPlanRun?: AddPlanRun;
+  /** "Show me another": the request in progress, or how the last one ended. */
+  anotherRun?: AnotherRun;
   adding?: boolean;
   progress?: string;
   /** The activity log (item 6): the latest entries, newest first. */

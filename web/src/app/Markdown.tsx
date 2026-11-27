@@ -151,11 +151,14 @@ export function Markdown({
   decision,
   marks,
   link,
+  scope,
 }: {
   source: string;
   cite?: CiteRenderer;
   afterTitle?: ReactNode;
   openBadge?: ReactNode;
+  /** The "Out of scope" section: a line under its heading, and a control at the end of each list item (given the item as written). */
+  scope?: { hint?: ReactNode; item: (text: string) => ReactNode };
   onBlock?: (b: Block) => void;
   /** "+" in the left margin of a block: add a block below it (item 4). */
   onAdd?: (b: Block) => void;
@@ -213,6 +216,8 @@ export function Markdown({
     );
   };
   let titled = false;
+  // Inside the plan's "## Out of scope" section (up to the next heading of its level or above).
+  let inScope = false;
   let editShown = false;
   const showEdit = () => {
     if (!edit || editShown) return;
@@ -338,6 +343,7 @@ export function Markdown({
         continue;
       }
       if (b.level <= 2) closeOpen();
+      if (b.level <= 2) inScope = b.level === 2 && /^out of scope$/i.test(plain.kind === "heading" ? plain.text.trim() : "");
       if (b.level === 2 && /^open decisions$/i.test(b.text.trim())) {
         openSection = [];
         push(
@@ -353,10 +359,23 @@ export function Markdown({
       }
       const Tag = (["h1", "h2", "h3", "h4"] as const)[b.level - 1];
       push(wrap(b, <Tag>{inline(b.text, ctx)}</Tag>));
+      if (inScope && scope?.hint) push(<Fragment key={`scope-hint-${b.start}`}>{scope.hint}</Fragment>);
     } else if (b.kind === "list") {
       const check = !b.ordered && b.items.every((t) => CHECK.test(t));
+      // The item as the source has it (marks add sentinels to `b`): what the Out of scope control acts on.
+      const written = inScope && scope && plain.kind === "list" ? plain.items : null;
       const items = b.items.map((t, n) => {
-        if (!check) return <li key={n}>{passage(b, n, t)}</li>;
+        if (!check)
+          return (
+            <li key={n}>
+              {passage(b, n, t)}
+              {written?.[n]?.trim() ? (
+                <span className="osa" contentEditable={false}>
+                  {scope!.item(written[n].trim())}
+                </span>
+              ) : null}
+            </li>
+          );
         const on = /^\[[xX]\]/.test(t);
         return (
           <li key={n}>

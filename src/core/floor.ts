@@ -2,6 +2,8 @@
 // One set drives Confirm's title and Still open rows, the side count, the plan's open section,
 // plan.openDecisions and MCP get_plan, so they agree.
 
+import { textHash } from "./text-hash.ts";
+
 interface FloorRound {
   questions: { key: string; title: string; label?: string }[];
   upcoming?: { key: string; label: string }[];
@@ -14,6 +16,8 @@ export interface FloorItem {
   title: string;
   /** False for an upcoming item no round asked; true for a question left unanswered by a wrap. */
   asked: boolean;
+  /** A line of the plan's text with no queued decision behind it: asked by its own key, made from the text. */
+  topic?: true;
 }
 
 /**
@@ -26,15 +30,19 @@ export function openFloor(s: { rounds: FloorRound[]; decisions: Record<string, u
     .filter((q) => !s.decisions[q.key])
     .map((q) => ({ key: q.key, label: q.label || q.title, title: q.title, asked: true }));
   const asked = new Set(s.rounds.flatMap((r) => r.questions.map((q) => q.key)));
+  // An agent may ask a queued item under another key; the same short name is the same decision.
+  const askedLabels = new Set(s.rounds.flatMap((r) => r.questions.map((q) => norm(q.label))).filter(Boolean));
   const seen = new Set(out.map((x) => x.key));
   for (const r of s.rounds)
     for (const u of r.upcoming ?? []) {
-      if (asked.has(u.key) || s.decisions[u.key] || seen.has(u.key)) continue;
+      if (asked.has(u.key) || askedLabels.has(norm(u.label)) || s.decisions[u.key] || seen.has(u.key)) continue;
       seen.add(u.key);
       out.push({ key: u.key, label: u.label, title: u.label, asked: false });
     }
   return out;
 }
+
+const norm = (label: string | undefined) => (label ?? "").trim().toLowerCase();
 
 export type StopReason = "wrap" | "extra" | "cap" | "agent";
 
@@ -87,27 +95,66 @@ export function openSectionText(md: string): string {
  * plan.openDecisions is only its saved copy (older sessions without `listed` fall back to it).
  */
 export function planOpenNow(s: PlanOpenSession, md: string): string[] {
-  const out: string[] = [];
+  const { blocks, listed } = openParts(s, md);
+  return [...new Set([...blocks, ...listed])];
+}
+
+/** planOpenNow in its two kinds: open decision blocks (answered in place), and lines of the Open decisions section. */
+function openParts(s: PlanOpenSession, md: string): { blocks: string[]; listed: string[] } {
+  const blocks: string[] = [];
   const blockQuestions = new Set<string>();
   for (const m of md.matchAll(BLOCK)) {
     const q = field(m[1], "question");
     if (q) blockQuestions.add(q);
     const key = field(m[1], "key");
-    if (key && /^status:\s*open\s*$/m.test(m[1]) && !s.decisions[key]) out.push(q || key);
+    if (key && /^status:\s*open\s*$/m.test(m[1]) && !s.decisions[key]) blocks.push(q || key);
   }
   const asked = new Set(s.rounds.flatMap((r) => r.questions.map((q) => q.title)));
   const section = openSectionText(md).toLowerCase();
+  const listed: string[] = [];
   for (const o of s.plan?.listed ?? s.plan?.openDecisions ?? []) {
     if (asked.has(o) || blockQuestions.has(o)) continue;
-    if (section.includes(o.toLowerCase())) out.push(o);
+    if (section.includes(o.toLowerCase())) listed.push(o);
   }
-  return [...new Set(out)];
+  return { blocks, listed };
 }
 
-/** Topics still listed in the plan that the interview never turned into questions. */
+/** A key for a topic that has only its text: stable for that text, and never one already asked or decided. */
+export function topicKey(s: { rounds: FloorRound[]; decisions: Record<string, unknown> }, prefix: "open" | "scope", text: string): string {
+  const base = `${prefix}-${textHash(text.trim().toLowerCase())}`;
+  const taken = new Set([...Object.keys(s.decisions), ...s.rounds.flatMap((r) => r.questions.map((q) => q.key))]);
+  let key = base;
+  for (let n = 2; taken.has(key); n++) key = `${base}-${n}`;
+  return key;
+}
+
+/**
+ * Everything the plan lists as open that no question covers yet, so it can still be asked: queued topics
+ * the interview never reached, then the writer's own open lines (which have no key until they're asked).
+ * With the open decision blocks, this is the whole open count: nothing is counted that can't be answered.
+ */
 export function unaskedPlanItems(s: PlanOpenSession, md: string): FloorItem[] {
-  const listed = planOpenNow(s, md).map((label) => label.toLowerCase());
-  return openFloor(s).filter((item) => !item.asked && listed.some((label) => label.includes(item.label.toLowerCase())));
+  const { listed } = openParts(s, md);
+  const lower = listed.map((label) => label.toLowerCase());
+  const queued = openFloor(s).filter((item) => !item.asked && lower.some((label) => label.includes(item.label.toLowerCase())));
+  const own = [...new Set(listed)]
+    .filter((label) => !queued.some((item) => label.toLowerCase().includes(item.label.toLowerCase())))
+    .map((label): FloorItem => ({ key: topicKey(s, "open", label), label, title: label, asked: false, topic: true }));
+  return [...queued, ...own];
+}
+
+/** The list items under the plan's "## Out of scope" heading, as written (no list marker). */
+export function outOfScopeItems(md: string): string[] {
+  const m = /^##[ \t]+Out of scope[ \t]*$/im.exec(md);
+  if (!m) return [];
+  const rest = md.slice(m.index + m[0].length);
+  const end = rest.search(/^##\s/m);
+  const out: string[] = [];
+  for (const line of (end < 0 ? rest : rest.slice(0, end)).split("\n")) {
+    const item = /^\s*(?:[-*]|\d+\.)\s+(.*)$/.exec(line.replace(/\r$/, ""));
+    if (item?.[1].trim()) out.push(item[1].trim());
+  }
+  return out;
 }
 
 /**

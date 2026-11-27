@@ -6,6 +6,7 @@ import { setReplyText } from "./comments/stream";
 import { Landing, NoAgent, Picker } from "./Home";
 import { IPlug } from "./icons";
 import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
+import type { PlanSeed } from "./Plan";
 import { SessionScreen } from "./Session";
 import type { AppState, ProviderId, SessionView } from "./types";
 import { newer } from "./newer";
@@ -48,6 +49,8 @@ export function App() {
   const [locked, setLocked] = useState(false);
   const [notice, setNotice] = useState("");
   const [picking, setPicking] = useState(false);
+  // A line of a plan that starts a new one: Home's composer opens filled in, and the user sends it.
+  const [seed, setSeed] = useState<PlanSeed | null>(null);
   const [theme, toggleTheme] = useTheme();
   const mobile = useMobile();
   // v1.2 item 1: "Use in your editor" on Home (desktop header button; phones: More sheet row).
@@ -100,6 +103,8 @@ export function App() {
     history.pushState(null, "", id ? `/s/${id}` : "/");
     setSessionId(id);
     setPicking(false);
+    // The seed is for the next visit to Home only.
+    if (id) setSeed(null);
     if (!id) void refreshApp();
   };
 
@@ -176,13 +181,24 @@ export function App() {
   } else if (session)
     body = (
       <main className="smain">
-        <SessionScreen session={session} app={app} act={act} onSwitch={() => setPicking(true)} />
+        <SessionScreen
+          session={session}
+          app={app}
+          act={act}
+          onSwitch={() => setPicking(true)}
+          onNewPlan={(next) => {
+            go(null);
+            setSeed(next);
+          }}
+        />
       </main>
     );
   else {
     home = true;
     body = (
       <Landing
+        key={seed ? `seed-${seed.idea}` : "home"}
+        seed={seed ?? undefined}
         state={app}
         provider={provider}
         onSwitch={onSwitch}

@@ -93,6 +93,28 @@ describe("the open floor (#40)", () => {
     expect(openFloor(s).map((f) => f.label)).toEqual(["Sync", "Export"]);
   });
 
+  test("a queued item asked later under another key but the same short name is no longer open", () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    ask(s, ["platform"], [up("failure-handling", "Preview failures"), up("sync", "Sync")]);
+    answerAll(s);
+    applyRound(s, { type: "ask_round", summary: "s", questions: [q("failure-policy", "preview failures")], upcoming: [] } as any, 2);
+    answerAll(s);
+    stopAtCap(s);
+    expect(openFloor(s).map((f) => f.label)).toEqual(["Sync"]);
+  });
+
+  test("the agent is given its queued keys, and what each chosen option stood for", () => {
+    const s = createSession({ idea: "x", provider: "claude" });
+    const limits = { ...q("limits", "Limits"), body: "Proposed: 32 KiB per preview.", options: [{ id: "a", label: "Use proposed limits", description: "Substantial examples, still bounded." }, { id: "b", label: "Double them", description: "" }] };
+    applyRound(s, { type: "ask_round", summary: "s", questions: [limits], upcoming: [up("sync", "Sync")] } as any, 2);
+    answerAll(s);
+    const prompt = buildRoundPrompt(s);
+    const state = JSON.parse(/<state>(.*)<\/state>/s.exec(prompt)![1]);
+    expect(state.decisions[0]).toMatchObject({ answer: "Use proposed limits", context: "Proposed: 32 KiB per preview.", answerDetail: "Substantial examples, still bounded." });
+    expect(state.upcoming).toEqual([{ key: "sync", label: "Sync" }]);
+    expect(prompt).toContain("use its key exactly");
+  });
+
   test("the writer gets the queued keys, and Grillado appends any it left out, after one reason line", async () => {
     const s = twoRounds();
     answerAll(s);
