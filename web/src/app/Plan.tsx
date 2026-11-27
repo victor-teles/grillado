@@ -26,6 +26,7 @@ import { type DecisionFields, findDecisionBlocks, updateDecisionBlock } from "..
 import { Provenance } from "./found/Provenance";
 import { AddPlanButton, AddPlanLine, AddPlanLive, addPlanFor } from "./addplan/AddPlan";
 import { useIssues } from "./issues/Issues";
+import { AskCards, BuildTab } from "./build/Build";
 import { type FloorItem, unaskedPlanItems } from "../../../src/core/floor.ts";
 import { textHash } from "../../../src/core/text-hash.ts";
 
@@ -47,9 +48,15 @@ function questionRound(s: SessionView, key: string): number | undefined {
   return s.rounds.find((r) => r.questions.some((q) => q.key === key))?.n;
 }
 
-type Tab = "doc" | "decisions";
+type Tab = "doc" | "decisions" | "build";
 
-export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: { session: SessionView; act: Act; agentName: string; agentNameOf?: (id: string) => string; banner?: ReactNode; mcp: McpLaunch }) {
+/** What Home's composer is filled with when a line of this plan starts a new one. */
+export interface PlanSeed {
+  idea: string;
+  context: string;
+}
+
+export function PlanView({ session, act, agentName, agentNameOf, banner, mcp, onNewPlan }: { session: SessionView; act: Act; agentName: string; agentNameOf?: (id: string) => string; banner?: ReactNode; mcp: McpLaunch; onNewPlan?: (seed: PlanSeed) => void }) {
   const plan = session.plan!;
   const mobile = useMobile();
   const waiting = session.status !== "plated" ? (plan.waiting ?? []) : [];
@@ -192,6 +199,35 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
       setResuming(false);
     }
   };
+  // Out of scope lines can be picked up later: into this plan (the agent asks about it, then the plan is
+  // written again), or as the idea of a new plan (Home's composer, filled in, for the user to send).
+  const blocked = resuming || !!draft.conflict || !!draft.answerChange || draft.save.state === "error";
+  const bringIn = async (line: string) => {
+    setResuming(true);
+    try {
+      await draft.flush();
+      await act("scope-in", { text: line, base: textHash(draft.text) });
+    } catch {
+      // The action error is shown by App; a failed save keeps the editor's error state.
+    } finally {
+      setResuming(false);
+    }
+  };
+  const planNext = async (line: string) => {
+    await draft.flush();
+    onNewPlan?.({ idea: plainLine(line), context: fmt(COPY.scopeSeed, { title: plan.title || session.idea.split("\n")[0] }) });
+  };
+  const scope =
+    session.status === "plated"
+      ? {
+          hint: (
+            <p className="sub osh" contentEditable={false} data-testid="scope-hint">
+              {COPY.scopeHint}
+            </p>
+          ),
+          item: (line: string) => <ScopeMenu line={plainLine(line)} agentName={agentName} disabled={blocked} onIn={() => void bringIn(line)} onNew={onNewPlan ? () => void planNext(line) : undefined} />,
+        }
+      : undefined;
   // Answering a Question you added is a plain edit of its block (#34): no round, no re-ask.
   const saveOwn = async (key: string, pick: { optionId: string; text?: string }) => {
     const answer = pick.text?.trim();
@@ -282,6 +318,21 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
             {mobile && counts.open ? null : counts.total}
             {counts.open ? <span className="ptab-open">{mobile ? "· " : " · "}{counts.open} open</span> : null}
           </span>
+        </>
+      ),
+    },
+    {
+      // Plan-to-build loop: the steps and the coding agent's progress on them.
+      id: "build",
+      label: (
+        <>
+          {COPY.buildTab}
+          {session.build?.steps.length ? (
+            <span className="ptab-ct">
+              {" "}
+              {session.build.steps.filter((x) => x.status === "done").length}/{session.build.steps.length}
+            </span>
+          ) : null}
         </>
       ),
     },
@@ -448,6 +499,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
           </span>
         </div>
       ) : null}
+      <AskCards session={session} act={act} />
       <div className="pvrow">
         <div className="pvmain">
       <div className="docwrap" ref={docRef}>
@@ -465,6 +517,7 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
             marks={cm.marks}
             editRef={editRef}
             onAgentDiagram={dg.onAgentDiagram}
+            scope={scope}
             afterTitle={
               <>
                 {session.source ? (
@@ -487,6 +540,9 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
           {tab === "decisions" ? (
             <DecisionsTab session={session} openKeys={openKeys} unasked={unasked} agentName={agentName} mobile={mobile} psg={psg} label={label} own={ownDecisions} titleOf={(k) => ownBlocks.get(k)?.question ?? k} onShow={showInPlan} renderOpen={renderDecision} save={save} jump={rowJump} act={act} onReview={reviewSuggestion} />
           ) : null}
+        </div>
+        <div id="ppanel-build" role="tabpanel" aria-labelledby="ptab-build" hidden={tab !== "build"} className="dtab">
+          {tab === "build" ? <BuildTab session={session} act={act} /> : null}
         </div>
       </div>
           {cm.overlay}
@@ -511,6 +567,39 @@ export function PlanView({ session, act, agentName, agentNameOf, banner, mcp }: 
         {cm.rail}
       </div>
     </div>
+  );
+}
+
+/** An Out of scope line without its Markdown marks and citations, as a sentence a person would type. */
+const plainLine = (line: string) =>
+  line
+    .replace(/\s*\[(?:R\d+|B):[^\]]*\]/g, "")
+    .replace(/[*_`~]/g, "")
+    .trim();
+
+/** "Plan it" at the end of an Out of scope line: bring it into this plan, or start a new plan from it. */
+function ScopeMenu({ line, agentName, disabled, onIn, onNew }: { line: string; agentName: string; disabled: boolean; onIn: () => void; onNew?: () => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="osb" aria-label={fmt(COPY.scopeMenu, { line })} data-testid="scope-menu" disabled={disabled}>
+          {COPY.scopeButton}
+          <IDown s={12} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="pmenu omenu" aria-label={fmt(COPY.scopeMenu, { line })}>
+        <DropdownMenuItem className="mi2" data-testid="scope-in" onSelect={onIn}>
+          <span>{COPY.scopeIn}</span>
+          <span className="d">{fmt(COPY.scopeInSub, { agent: agentName })}</span>
+        </DropdownMenuItem>
+        {onNew ? (
+          <DropdownMenuItem className="mi2" data-testid="scope-new" onSelect={onNew}>
+            <span>{COPY.scopeNew}</span>
+            <span className="d">{COPY.scopeNewSub}</span>
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -786,7 +875,7 @@ function DecisionsTab({
           <h2 id="not-asked">Not asked yet<span className="ct"> {unasked.length}</span></h2>
           <p className="sub">{agentName} will turn these topics into questions when you continue.</p>
           <ul className="dlist">
-            {unasked.map((item) => <li key={item.key} className="drow"><span>{item.label}</span></li>)}
+            {unasked.map((item) => <li key={item.key} className="drow na"><span>{item.label}</span></li>)}
           </ul>
         </section>
       ) : null}

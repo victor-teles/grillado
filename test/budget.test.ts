@@ -165,7 +165,7 @@ describe("re-asks are rounds that ask what the user sent back (review of #42)", 
       round(q("storage", ["platform"])),
       round(q("sync", ["storage"])),
       empty,
-      { type: "plan", title: "Notes", markdown: "A notes app.", decisions: [], openDecisions: [] },
+      { type: "plan", title: "Notes", markdown: "A notes app.", decisions: [], openDecisions: [], steps: [{ title: "Build it", done: "It runs." }] },
       round(q("storage", ["platform"])), // the Re-ask on the stale storage
       round(q("billing")), // new: sync is still stale, but this round doesn't ask it
       round(q("themes")), // past the cap with only new questions

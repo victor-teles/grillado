@@ -4,10 +4,27 @@ import { type AdapterOptions, type AdapterSpec, createAdapter, failureFromProces
 import { runProcess } from "./process.ts";
 import { partialStringField } from "./partial-json.ts";
 import type { ProviderAdapter, ProviderEvent, ProviderId, RunFiles, RunRequest } from "./types.ts";
+import { claudeDenyRules, grokDenyRules } from "../project-read.ts";
 
 const modelArgs = (flag: string, model?: string) => (model ? [flag, model] : []);
 
-/** Claude Code (C1). Tools off with `--tools ""`; `dontAsk` as a backstop. Uses the user's own login (no --bare). */
+/** The read-only file tools each CLI gets for `access: "read"` (plan 002). */
+export const CLAUDE_READ_TOOLS = "Read,Grep,Glob";
+export const GROK_READ_TOOLS = ["read_file", "grep", "list_dir"];
+/**
+ * Grok 1.0.89 offers MCP tools (from the user's and a trusted project's config) even with an allowlist:
+ * through these two gateway tools, or directly once they're removed. Read runs remove both and deny
+ * every MCP call (`--deny MCPTool`).
+ */
+export const GROK_MCP_GATEWAY = ["search_tool", "use_tool"];
+/** Grok's turn cap when it reads the project: each file it opens takes a turn. */
+export const GROK_READ_TURNS = 24;
+
+/**
+ * Claude Code (C1). Tools off with `--tools ""`; `dontAsk` as a backstop. Uses the user's own login (no --bare).
+ * Read access (plan 002): only Read, Grep and Glob, the sensitive files denied, user settings only (a
+ * project's own settings and hooks are not loaded) and no MCP servers.
+ */
 const claudeArgs = (req: RunRequest, files: RunFiles, format: string[]) => ({
   args: [
     "-p",
@@ -15,7 +32,8 @@ const claudeArgs = (req: RunRequest, files: RunFiles, format: string[]) => ({
     "--json-schema",
     JSON.stringify(req.jsonSchema),
     "--tools",
-    "",
+    req.access === "read" ? CLAUDE_READ_TOOLS : "",
+    ...(req.access === "read" ? ["--setting-sources", "user", "--strict-mcp-config", "--disallowedTools", ...claudeDenyRules()] : []),
     "--permission-mode",
     "dontAsk",
     "--system-prompt-file",
@@ -75,16 +93,46 @@ export function claudeStreamReader(field: string): (line: string) => ProviderEve
   };
 }
 
+/**
+ * Claude Code's tool calls (plan 003): each finished assistant message in its stream-json output
+ * lists the tool calls it made. Read, Grep and Glob become `activity` events; the reply itself
+ * (StructuredOutput) and anything else are not reading.
+ */
+export function claudeActivityReader(): (line: string) => ProviderEvent[] {
+  const seen = new Set<string>();
+  return (line) => {
+    let msg: any;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return [];
+    }
+    if (msg?.type !== "assistant" || !Array.isArray(msg.message?.content)) return [];
+    const out: ProviderEvent[] = [];
+    for (const c of msg.message.content) {
+      if (c?.type !== "tool_use" || (c.id && seen.has(c.id))) continue;
+      if (c.id) seen.add(c.id);
+      const input = c.input ?? {};
+      if (c.name === "Read" && typeof input.file_path === "string") out.push({ type: "activity", action: "read", target: input.file_path });
+      else if (c.name === "Grep" && typeof input.pattern === "string") out.push({ type: "activity", action: "search", target: input.pattern });
+      else if (c.name === "Glob" && typeof input.pattern === "string") out.push({ type: "activity", action: "list", target: input.pattern });
+    }
+    return out;
+  };
+}
+
 export const claudeSpec: AdapterSpec = {
   id: "claude",
   displayName: "Claude Code",
   bin: "claude",
   installHint: "npm i -g @anthropic-ai/claude-code",
   loginHint: "Run `claude` in a terminal and use /login",
+  canRead: true,
   buildInvocation: (req, files) => claudeArgs(req, files, ["--output-format", "json"]),
   stream: {
     buildInvocation: (req, files) => claudeArgs(req, files, ["--output-format", "stream-json", "--verbose", "--include-partial-messages"]),
     reader: claudeStreamReader,
+    activity: claudeActivityReader,
   },
   parse: (res) => {
     let out: Record<string, unknown> | undefined;
@@ -103,7 +151,12 @@ export const claudeSpec: AdapterSpec = {
   },
 };
 
-/** Codex (C2). No "no tools" flag exists, so it runs in the read-only sandbox (Codex can read, not write). */
+/**
+ * Codex (C2). No "no tools" flag exists, so it runs in the read-only sandbox (Codex can read, not write).
+ * No read access (plan 002): Codex 0.170 offers its plugin and connected-app tools (some write to online
+ * services) even with --ignore-user-config, and has no flag to remove them, so untrusted file contents
+ * could steer a tool that goes online. It keeps the empty temp folder until it can be limited.
+ */
 export const codexSpec: AdapterSpec = {
   id: "codex",
   displayName: "Codex",
@@ -170,6 +223,9 @@ export const grokSpec: AdapterSpec = {
   loginHint: "Run `grok login` in a terminal",
   // Real 1.0.70 rounds took 115–220 s on a plain idea, past the 180 s default (PR #26 verification).
   defaultTimeoutMs: 600_000,
+  // Read access (plan 002): only read_file, grep and list_dir, every other built-in and the MCP gateway
+  // removed, every MCP tool call and the sensitive files denied, more turns.
+  canRead: true,
   buildInvocation: (req, files) => ({
     args: [
       "--prompt-file",
@@ -181,14 +237,15 @@ export const grokSpec: AdapterSpec = {
       "--system-prompt-override",
       req.systemPrompt,
       "--tools",
-      "",
+      req.access === "read" ? GROK_READ_TOOLS.join(",") : "",
       "--disallowed-tools",
-      GROK_DISALLOWED_TOOLS.join(","),
+      (req.access === "read" ? [...GROK_DISALLOWED_TOOLS.filter((t) => !GROK_READ_TOOLS.includes(t)), ...GROK_MCP_GATEWAY] : GROK_DISALLOWED_TOOLS).join(","),
+      ...(req.access === "read" ? grokDenyRules().flatMap((r) => ["--deny", r]) : []),
       "--disable-web-search",
       "--no-subagents",
       "--no-plan",
       "--max-turns",
-      "3",
+      req.access === "read" ? String(GROK_READ_TURNS) : "3",
       "--sandbox",
       "read-only",
       "--no-auto-update",
@@ -215,7 +272,7 @@ export const grokSpec: AdapterSpec = {
   },
 };
 
-/** pi (C4). `--no-tools`; prompt on stdin (pi reads stdin when it isn't a TTY, so it must always be closed). */
+/** pi (C4). No read access yet (plan 002: not verified against a real pi). `--no-tools`; prompt on stdin (pi reads stdin when it isn't a TTY, so it must always be closed). */
 export const piSpec: AdapterSpec = {
   id: "pi",
   displayName: "pi",

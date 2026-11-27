@@ -1,73 +1,43 @@
-export interface MermaidLike {
-  initialize(config: Record<string, unknown>): void;
-  parse(text: string): Promise<unknown>;
-  render(id: string, text: string): Promise<{ svg: string }>;
+/**
+ * The renderer: pele (https://pele.run, MIT, by Obsidian) turns Mermaid text into SVG. It is
+ * synchronous, runs here in the browser and loads nothing. Only the part Grillado uses is typed.
+ */
+export interface Renderer {
+  render(source: string, options?: Record<string, unknown>): { svg: string };
 }
 
 export type DiagramResult = { ok: true; svg: string } | { ok: false; error: string };
-export type ThemeVars = Record<string, string | boolean>;
 
-export function mermaidConfig(theme?: ThemeVars, dark = true): Record<string, unknown> {
-  return {
-    startOnLoad: false,
-    securityLevel: "strict",
-    theme: theme ? "base" : dark ? "dark" : "default",
-    look: "classic",
-    themeVariables: theme ? { ...theme, dropShadow: "none", nodeShadow: false } : theme,
-    fontFamily: '"Inter Variable", Inter, sans-serif',
-    htmlLabels: false,
-    flowchart: { htmlLabels: false, curve: "basis", padding: 8, nodeSpacing: 22, rankSpacing: 28, useMaxWidth: false, diagramPadding: 4 },
-    layout: "dagre",
-    state: { layout: "dagre", useMaxWidth: false, padding: 6 },
-    secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "maxEdges", "layout", "look", "theme", "themeVariables", "htmlLabels"],
-  };
-}
-
-export const THEME_TOKENS: Record<string, string> = {
-  primaryColor: "--background",
-  mainBkg: "--background",
-  secondaryColor: "--background",
-  tertiaryColor: "--background",
-  stateBkg: "--background",
-  primaryBorderColor: "--border-strong",
-  nodeBorder: "--border-strong",
-  primaryTextColor: "--foreground",
-  labelTextColor: "--foreground",
-  stateLabelColor: "--foreground",
-  lineColor: "--muted-foreground",
-  transitionColor: "--muted-foreground",
-  textColor: "--muted-foreground",
-  transitionLabelColor: "--muted-foreground",
-  edgeLabelBackground: "--sel",
-  background: "--sel",
-  compositeBackground: "--sel",
-  specialStateColor: "--foreground",
-  innerEndBackground: "--foreground",
-};
+/**
+ * How every diagram is drawn. Colors and fonts are not here: the SVG reads them from the --pele-*
+ * CSS variables (grillado.css), so a theme switch needs no redraw. Diagram text is often written
+ * by the agent, so links and images are off: nothing in a diagram can be clicked through or fetched.
+ */
+export const RENDER_OPTIONS = {
+  fontFamily: '"Inter Variable", Inter, sans-serif',
+  fontSize: 13,
+  // Sized by Grillado (fit to the column, zoom in full screen), in the direction it was written.
+  responsive: false,
+  autoDirection: false,
+  links: false,
+  images: false,
+} as const;
 
 let seq = 0;
-// Mermaid keeps one global config, so renders go one at a time.
-let queue: Promise<unknown> = Promise.resolve();
 
 /** Render one diagram. Never throws: an invalid diagram comes back as `{ ok: false, error }`. */
-export function renderDiagram(code: string, opts: { dark: boolean; theme?: ThemeVars; load: () => Promise<MermaidLike> }): Promise<DiagramResult & { id: string }> {
+export async function renderDiagram(code: string, opts: { load: () => Promise<Renderer> }): Promise<DiagramResult & { id: string }> {
   const id = `gr-mmd-${++seq}`;
-  const run = async (): Promise<DiagramResult & { id: string }> => {
-    if (!code.trim()) return { ok: false, error: "Empty diagram.", id };
-    try {
-      const m = await opts.load();
-      m.initialize(mermaidConfig(opts.theme, opts.dark));
-      await m.parse(code);
-      const { svg } = await m.render(id, code);
-      return { ok: true, svg, id };
-    } catch (err: any) {
-      const msg = String(err?.message ?? err ?? "Invalid diagram");
-      return { ok: false, error: msg.split("\n").slice(0, 4).join("\n"), id };
-    }
-  };
-  const p = queue.then(run, run);
-  queue = p.catch(() => {});
-  return p;
+  if (!code.trim()) return { ok: false, error: "Empty diagram.", id };
+  try {
+    const r = await opts.load();
+    // The prefix keeps the ids inside one diagram's SVG apart from the next one's.
+    const { svg } = r.render(code, { ...RENDER_OPTIONS, idPrefix: id });
+    return { ok: true, svg, id };
+  } catch (err: any) {
+    const msg = String(err?.message ?? err ?? "Invalid diagram");
+    return { ok: false, error: msg.split("\n").slice(0, 4).join("\n"), id };
+  }
 }
 
 const CLOSE: Record<string, string> = { "[": "]", "(": ")", "{": "}" };

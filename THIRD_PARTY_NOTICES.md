@@ -165,23 +165,16 @@ bundled into `dist/web/assets/` with its dependencies, all MIT: @codemirror/view
 it pulls in), @lezer/common, @lezer/lr, @lezer/highlight, @lezer/markdown, crelt, style-mod,
 w3c-keyname, @marijn/find-cluster-break.
 
-## Diagrams (Mermaid)
+## Diagrams (pele)
 
-The plan editor renders ```` ```mermaid ```` blocks with Mermaid (https://github.com/mermaid-js/mermaid,
-MIT, Copyright (c) 2014 - 2022 Knut Sveidqvist). It is loaded only when a plan has a diagram and
-is bundled into `dist/web/assets/` with its dependencies, under these licenses:
+The plan editor and option previews draw ```` ```mermaid ```` blocks with pele
+(https://github.com/obsidianmd/pele, https://pele.run, MIT, Copyright (c) Obsidian). It is loaded
+only when a diagram is shown, is bundled into `dist/web/assets/`, and has no dependencies of its
+own. It draws in the browser and loads nothing from the network.
 
-- MIT: @braintree/sanitize-url, @iconify/utils, @mermaid-js/parser, @upsetjs/venn.js, cytoscape,
-  cytoscape-cose-bilkent, cytoscape-fcose, cose-base, layout-base, dagre-d3-es, dayjs, es-toolkit,
-  katex, khroma, lodash-es, marked, roughjs (and hachure-fill, path-data-parser, points-on-curve,
-  points-on-path), stylis, ts-dedent, uuid.
-- ISC: d3 and its d3-* modules, d3-sankey, internmap, delaunator.
-- Apache-2.0: chevrotain and its @chevrotain/* packages.
-- MPL-2.0 OR Apache-2.0: DOMPurify (used here under Apache-2.0).
-- BSD-3-Clause: rw.
-- Unlicense: robust-predicates.
+The diagram language is Mermaid's (https://github.com/mermaid-js/mermaid, MIT); Mermaid itself is
+no longer bundled.
 
-The build writes the full license text of every npm package in the web bundle (Mermaid's
-dependencies included) to `dist/web/third-party-licenses.txt` (`scripts/licenses-plugin.ts`). Grillado does **not** ship elkjs (EPL-2.0):
-the import is replaced by a stub (`web/src/vendor/elk-stub.js`) and Mermaid is configured to
-use its dagre layout for every diagram.
+The build writes the full license text of every npm package in the web bundle to
+`dist/web/third-party-licenses.txt` (`scripts/licenses-plugin.ts`).
+

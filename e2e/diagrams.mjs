@@ -42,7 +42,7 @@ process.on("exit", () => {
 async function server(extra = {}, bin = fakeBins(["claude", "codex"])) {
   const home = mkdtempSync(path.join(WORK, "home-"));
   const e = { PATH: `${bin}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, ".grillado"), FAKE_STATE_DIR: home, ...extra };
-  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { env: e, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [path.join(ROOT, "dist/cli.js"), "--no-open"], { cwd: home, env: e, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {
@@ -181,7 +181,7 @@ const flatNodes = (pg) =>
   pg.evaluate(() => {
     const svgs = [...document.querySelectorAll(".doc .mmw svg")];
     const filtered = svgs.flatMap((s) => [s, ...s.querySelectorAll("*")]).filter((e) => getComputedStyle(e).filter !== "none").length;
-    const shapes = svgs.flatMap((s) => [...s.querySelectorAll(".node rect, .node polygon, .node path.basic, .node .label-container")]).filter((e) => !e.classList.contains("background"));
+    const shapes = svgs.flatMap((s) => [...s.querySelectorAll(".pele-node rect, .pele-node polygon, .pele-node path")]);
     const edged = shapes.filter((e) => parseFloat(getComputedStyle(e).strokeWidth) >= 1 && getComputedStyle(e).stroke !== "none").length;
     return { svgs: svgs.length, filtered, shapes: shapes.length, edged };
   });
@@ -491,7 +491,7 @@ try {
       const md = await planMd(pg);
       const chain = (n, long) => Array.from({ length: n }, (_, i) => `  S${i}["${long ? `Step ${i + 1} of the flow` : `Step ${i + 1}`}"]${i < n - 1 ? ` -->|then| S${i + 1}` : ""}`).join("\n");
       const extra = [
-        "\n## Wide flow\nA longer flow.\n\n```mermaid\nflowchart LR\n  accTitle: Checkout flow\n  accDescr: Four steps from the list to the receipt.\n" + chain(4) + "\n```\n",
+        "\n## Wide flow\nA longer flow.\n\n```mermaid\nflowchart LR\n  accTitle: Checkout flow\n  accDescr: Five steps from the list to the receipt.\n" + chain(5) + "\n```\n",
         "\n## Long flow\nAn even longer one.\n\n```mermaid\nflowchart LR\n  accTitle: Every step of a sync\n  accDescr: Fourteen steps in a row.\n" + chain(14, true) + "\n```\n",
         "\n## List states\nHow a list changes.\n\n```mermaid\nstateDiagram-v2\n  direction LR\n  accTitle: List states\n  accDescr: A list goes from draft to shared to archived, and back.\n  [*] --> Draft\n  Draft --> Shared: share\n  Shared --> Draft: unshare\n  Shared --> Archived: archive\n  Archived --> Shared: restore\n  Archived --> [*]\n```\n",
       ].join("");

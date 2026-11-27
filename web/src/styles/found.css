@@ -48,7 +48,7 @@ a.frow:focus-visible,.frow .nm a:focus-visible,.slot button:focus-visible,.fempt
 .imp[data-l=c]{background:transparent;color:var(--success-ink);cursor:default}
 .imp svg{width:14px;height:14px}
 html[data-kbd] .imp>span{transition:none}
-.sk{display:block;height:12px;border-radius:6px;background:var(--muted)}
+.skt .sk{display:block;height:12px;border-radius:6px;background:var(--muted)}
 .slot{height:32px;display:flex;align-items:center;gap:6px;font-size:var(--t-meta);color:var(--muted-foreground)}
 .slot .lnk,.fempty .lnk{border:0;background:none;padding:0;font:inherit;color:var(--muted-foreground);text-decoration:underline;text-decoration-color:var(--subtle-foreground);text-underline-offset:3px;cursor:pointer;border-radius:4px}
 .slot .more{border:0;background:none;padding:0;font:inherit;color:var(--muted-foreground);cursor:pointer;border-radius:4px}

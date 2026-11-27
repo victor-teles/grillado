@@ -74,7 +74,7 @@ interface Opts {
   session: SessionView;
   draft: PlanDraft;
   mode: EditorMode;
-  tab: "doc" | "decisions";
+  tab: "doc" | "decisions" | "build";
   mobile: boolean;
   agentName: string;
   readOnly: boolean;

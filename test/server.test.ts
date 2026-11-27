@@ -206,7 +206,9 @@ describe("session API with a fake CLI", () => {
     const md = await request(server.port, { path: `/api/sessions/${id}/plan.md`, headers: h });
     expect(md.headers["content-disposition"]).toContain("attachment");
     expect(md.body).toContain("[R2:storage]");
-    expect(readFileSync(s.plan.path, "utf8")).toBe(md.body);
+    // The file is the plan text, then the build steps Grillado keeps at its end (plan-to-build loop).
+    const onDisk = readFileSync(s.plan.path, "utf8");
+    expect(onDisk.startsWith(`${md.body}\n<!-- grillado:build -->\n\n## Build steps\n\n- [ ] 1. Build scope: Yes, one core flow\n  Done when: `)).toBe(true);
 
     // A new server process over the same data dir restores the session.
     const again = new GrilladoServer({ adapters: createAdapters({ env }), store: new Store(store.dir), launchDir: os.tmpdir(), webDir: webDir(), port: 0, strictPort: true });

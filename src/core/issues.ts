@@ -10,7 +10,7 @@ import type { Session } from "./session.ts";
 export type Tracker = "github" | "linear";
 
 /** Where the item list came from (the preview's one-line note). */
-export type SplitSource = "agent" | "todos" | "stories" | "none";
+export type SplitSource = "agent" | "steps" | "todos" | "stories" | "none";
 
 /** One issue to send. The parent's key is always PARENT_KEY. */
 export interface IssueItem {
@@ -105,7 +105,7 @@ export const slugKey = (text: string) =>
     .join("-")
     .slice(0, 48) || "item";
 
-const CITE = /\s?\[R\d+:[^\]\s,]+(?:\s*,\s*R\d+:[^\]\s,]+)*\]/g;
+const CITE = /\s?\[(?:R\d+|B):[^\]\s,]+(?:\s*,\s*(?:R\d+|B):[^\]\s,]+)*\]/g;
 
 /** Plan text for a tracker: citations and ```decision blocks are Grillado's own; the decisions get their own list. */
 export function cleanText(md: string): string {
@@ -280,6 +280,13 @@ function uniqueKeys<T extends { key: string }>(xs: T[]): T[] {
  * user story, else none (the parent alone).
  */
 export function fallbackSlices(s: Session, md: string): { source: SplitSource; slices: Slice[] } {
+  // Plan-to-build loop: a plan with build steps is already sliced; the issues are its steps, never a second split.
+  const steps = s.build?.steps ?? [];
+  if (steps.length)
+    return {
+      source: "steps",
+      slices: steps.map((x) => ({ key: x.key, title: x.title, body: x.done ? `${x.title}\n\nDone when: ${x.done}` : x.title, covers: coversIn(s, md, `${x.title} ${x.done}`), sections: ["Build steps"] })),
+    };
   const tasks = s.source ? bullets(sectionText(md, "Tasks", "To-dos", "Todos")) : [];
   if (tasks.length) return { source: "todos", slices: uniqueKeys(tasks.map((t) => ({ key: t, title: firstSentence(t), body: t, covers: [], sections: ["Tasks"] }))) };
   const stories = bullets(sectionText(md, "User stories"));

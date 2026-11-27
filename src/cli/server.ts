@@ -4,7 +4,9 @@ import { type FSWatcher, createReadStream, existsSync, mkdtempSync, rmSync, stat
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
+import type { Preview } from "../core/previews.ts";
+import { type BuildState, BuildError, addDecisionLine, addStep, answerAsk, decisionBullet, editStep, emptyBuild, moveStep, openAsks, removeStep, reopenStep, setSteps } from "../core/build.ts";
+import { anotherOption, decisionsFromAnswers, groupTodos, splitPlan, nextRound, replyToComment, suggestAddPlan, suggestDiagram, suggestEdits, synthesize } from "../core/engine.ts";
 import { addPlanSuggestion, inPlan } from "../core/addplan.ts";
 import { DIAGRAM_KINDS, type DiagramKind, addDiagramSuggestion, withCode, planSections } from "../core/diagrams.ts";
 import { type ActivityLine, RunRecorder, type RunKind, type RunTarget, fold, interrupted, parseLines, reasonText } from "../core/activity.ts";
@@ -12,14 +14,18 @@ import { dropReasonLine, planOpenNow, putReasonLine, reasonLineIn, syncPlanOpen 
 import { addComment, addMessage, adoptThreads, addSuggestions, decisionAt, deleteThread, finishRun, pending, pruneSuggestions, refind, resolveThread, restoreThread, review, sectionAt, settleThreads, startRun, threadSection, undoReview } from "../core/comments.ts";
 import { redact } from "../core/filter.ts";
 import { killAllChildren } from "../core/providers/process.ts";
-import { DEFAULT_TIMEOUT_MS } from "../core/providers/base.ts";
+import { DEFAULT_TIMEOUT_MS, READ_TIMEOUT_MS } from "../core/providers/base.ts";
 import { type Detection, PROVIDER_IDS, type ProviderAdapter, type ProviderId } from "../core/providers/types.ts";
 import {
   type Answer,
   UNKNOWN_OPTION,
   type Session,
+  addOption,
+  anotherQuestion,
   answerOpenDecision,
   changeDecision,
+  correctFinding,
+  uncorrectFinding,
   createSession,
   editPlan,
   adoptExternalPlan,
@@ -33,6 +39,7 @@ import {
   atCap,
   keepGoing,
   resumePlan,
+  scopeIn,
   askMore,
   stopAtCap,
   reopen,
@@ -52,10 +59,12 @@ import { type AgentRun, type FoundService, type ImportResult, type Writer, store
 import { stripInvocation } from "../core/found/extract.ts";
 import { STOPPED } from "../core/reason.ts";
 import { ImportError } from "../core/found/import.ts";
-import type { Store } from "./store.ts";
+import { DEFAULT_PLANS_DIR, type Store, expandHome, resolvePlansDir } from "./store.ts";
 import { IssuesRoutes, type IssuesOptions } from "./issues/routes.ts";
 import { captureProjectContext } from "./project-context.ts";
 import { projectContextView } from "../core/project-context.ts";
+import { type ReadPlace, pathCheck, readPlace } from "./project-read.ts";
+import { ReadingTrail } from "./reading.ts";
 
 export const LOOPBACK = "127.0.0.1";
 
@@ -74,14 +83,24 @@ export interface ServerOptions {
   mcpLaunch?: McpLaunch;
   /** "Found in this project" (v1.3 item 1): the launch folder's scan. None: the feature is off. */
   found?: FoundService;
+  /** Plan 005: the scan for another project folder, when the user picks one on Home. */
+  foundFor?: (cwd: string) => FoundService;
   /** The folder `npx grillado` ran in: the default repository for "Send to issues" (v1.3 item 2). */
   launchDir?: string;
+  /** `--plans-dir` (plan 005): where the launch folder's plans go this run, over its saved setting. */
+  plansDir?: string;
   /** "Send to issues": gh and Linear settings (tests point them at fakes). */
   issues?: IssuesOptions;
   /** `--max-rounds` (#32): this process's cap for every session and agent. Absent: DEFAULT_MAX_ROUNDS. */
   maxRounds?: number;
   /** A line for the terminal running Grillado (main.ts prints it to stdout), e.g. the plan's timing (#41). */
   log?: (line: string) => void;
+  /** `--no-code` / GRILLADO_NO_CODE=1 (plan 002): no session's agent reads the project. */
+  noCode?: boolean;
+  /** The home folder, for what counts as too wide to read (tests point it at a temp folder). */
+  home?: string;
+  /** `--exit-when-idle` (plan 004): quit after this long with no browser connected and nothing running. */
+  idleExitMs?: number;
 }
 
 export interface ProviderInfo {
@@ -126,6 +145,10 @@ export class GrilladoServer {
   private diagramRuns = new Map<string, AbortController>();
   /** "Add to plan" (#104), by session: one decision at a time. */
   private addPlanRuns = new Map<string, AbortController>();
+  /** Plan-to-build loop: the plan text and answers as last seen per session, to move the revision when they change. */
+  private planSeen = new Map<string, string>();
+  /** "Show me another" (option previews): the one request in progress per session. */
+  private anotherRuns = new Map<string, AbortController>();
   private progress = new Map<string, string>();
   private clients = new Set<http.ServerResponse>();
   private agentDirs = new Map<string, string>();
@@ -138,10 +161,32 @@ export class GrilladoServer {
   /** The last run per thread, per "Add diagrams" and per interview, so Try again can say what it retries. */
   private lastRun = new Map<string, string>();
   private issues: IssuesRoutes;
+  /** Home's project's read access, for its "Reads {project}" chip (plan 002); set by detect(). */
+  private place: ReadPlace | null = null;
+  /** Plan 005: the project folder Home works in, the launch folder until the user picks another. */
+  private folder?: string;
+  /** "Found in this project" for that folder; one scan per folder visited, kept for switching back. */
+  private found?: FoundService;
+  private foundBy = new Map<string, FoundService>();
+  /** `--plans-dir`, until the user sets the launch folder's plans folder on Home. */
+  private cliPlansDir?: string;
+  /** Plan 003: what each running reading run has opened, for the wait screens. */
+  private reading = new Map<string, ReadingTrail>();
+  /** Plan 003: sessions whose next round or plan run skips reading, once (Skip reading, Ask without reading). */
+  private noReadOnce = new Set<string>();
+  /** Plan 004: when the app was last in use (a request, a connected browser, an agent run). */
+  private lastActive = Date.now();
+  private idleTimer?: ReturnType<typeof setInterval>;
   port = 0;
 
   constructor(private opts: ServerOptions) {
-    if (opts.found) opts.found.onChange = () => this.broadcast({ type: "found" });
+    this.folder = opts.launchDir ? path.resolve(opts.launchDir) : undefined;
+    this.cliPlansDir = opts.plansDir;
+    this.found = opts.found;
+    if (opts.found) {
+      opts.found.onChange = () => this.broadcast({ type: "found" });
+      if (this.folder) this.foundBy.set(this.folder, opts.found);
+    }
     this.issues = new IssuesRoutes(
       {
         store: opts.store,
@@ -202,6 +247,7 @@ export class GrilladoServer {
     } else if (remembered && ready.includes(remembered)) this.selected = remembered;
     else if (ready.length === 1) this.selected = ready[0];
     else this.selected = null;
+    this.place = await readPlace(this.folder, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
     return this.providers;
   }
 
@@ -238,6 +284,7 @@ export class GrilladoServer {
         // For `grillado mcp`: start_plan links straight to the new session (v1.2 item 1).
         this.opts.store.writeServerInfo({ pid: process.pid, port: this.port, token: this.token });
         this.watchSessions();
+        this.watchIdle();
         return this.port;
       } catch (err: any) {
         if (err?.code === "EADDRINUSE" && port < last) {
@@ -254,12 +301,30 @@ export class GrilladoServer {
     return this.server.address();
   }
 
+  /** `--exit-when-idle`: no browser connected and no agent run for `idleExitMs`, then quit as Ctrl+C would. */
+  private watchIdle() {
+    const idle = this.opts.idleExitMs;
+    if (!idle) return;
+    this.lastActive = Date.now();
+    this.idleTimer = setInterval(() => {
+      const inUse = this.clients.size > 0 || this.inflight.size > 0 || this.commentRuns.size > 0 || this.diagramRuns.size > 0 || this.addPlanRuns.size > 0 || this.anotherRuns.size > 0 || [...this.sessions.values()].some((x) => openAsks(x.build).length > 0); // a coding agent is waiting on an answer
+      if (inUse) this.lastActive = Date.now();
+      else if (Date.now() - this.lastActive >= idle) {
+        clearInterval(this.idleTimer);
+        this.opts.onQuit?.();
+      }
+    }, Math.min(60_000, Math.max(50, Math.floor(idle / 4))));
+    this.idleTimer.unref?.();
+  }
+
   /** Graceful stop (AC13): kill agent runs, flush sessions, close sockets. */
   async close() {
+    if (this.idleTimer) clearInterval(this.idleTimer);
     for (const c of this.inflight.values()) c.abort();
     for (const c of this.commentRuns.values()) c.abort();
     for (const c of this.diagramRuns.values()) c.abort();
     for (const c of this.addPlanRuns.values()) c.abort();
+    for (const c of this.anotherRuns.values()) c.abort();
     killAllChildren();
     // A run ends after its abort (a Stopped one too, though Stop already answered) and saves its session
     // then. Wait for those, so nothing writes the store after close() resolves.
@@ -308,6 +373,7 @@ export class GrilladoServer {
   // ---------------------------------------------------------------- http
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse) {
+    this.lastActive = Date.now();
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
     if (!this.hostAllowed(req)) return this.json(res, 403, { error: "Host not allowed" });
@@ -336,6 +402,8 @@ export class GrilladoServer {
         setTimeout(() => this.opts.onQuit?.(), 50);
         return;
       }
+      if (req.method === "POST" && parts[0] === "project-read") return this.setProjectRead(res, body);
+      if (req.method === "POST" && parts[0] === "project") return await this.setProject(res, body);
       if (parts[0] === "sessions") return await this.sessionRoutes(req, res, parts.slice(1), body);
       if (parts[0] === "found") return await this.foundRoutes(req, res, parts.slice(1), body);
       if (parts[0] === "github" || parts[0] === "linear") return await this.issues.appRoutes(req, res, parts, body, url.searchParams, (r, st, d) => this.json(r, st, d));
@@ -455,8 +523,16 @@ export class GrilladoServer {
   private adoptExternal(id: string, push: boolean) {
     const live = this.sessions.get(id);
     const disk = live && this.opts.store.load(id);
-    if (!live || !disk || !adoptThreads(live, disk)) return;
-    if (push) this.broadcast({ type: "session", session: this.view(live) });
+    if (!live || !disk) return;
+    // The build state too (a step started or done, an ask made or withdrawn, from a shell or `grillado mcp`).
+    const built = JSON.stringify(live.build ?? null) !== JSON.stringify(disk.build ?? null);
+    if (built) live.build = disk.build;
+    if (!adoptThreads(live, disk) && !built) return;
+    if (push) {
+      this.broadcast({ type: "session", session: this.view(live) });
+      // An ask made or settled changes Home's badge and the tab title everywhere.
+      if (built) this.broadcast({ type: "app" });
+    }
   }
 
   // ---------------------------------------------------------------- activity log (item 6)
@@ -519,9 +595,34 @@ export class GrilladoServer {
       this.log(s, { v: 1, type: "review", run, accepted: field === "accepted" ? list : [], rejected: field === "rejected" ? list : [], ...(field === "undone" ? { undone: list } : {}), at });
   }
 
+  /**
+   * Change the build state (steps, asks, revision) under the session's lock: a shell command or
+   * `grillado mcp` may be changing it too. The plan file then shows it.
+   */
+  private buildUpdate<T>(s: Session, fn: (b: BuildState, disk: Session) => T): T {
+    let out!: T;
+    const disk = this.opts.store.update(s.id, (x) => {
+      x.build ??= emptyBuild();
+      out = fn(x.build, x);
+      return x;
+    });
+    if (disk) s.build = disk.build;
+    return out;
+  }
+
+  /** The revision moves when the plan's text or a decision's answer changes, whatever changed it. */
+  private trackRevision(s: Session) {
+    if (s.status !== "plated" || !s.plan) return;
+    const now = `${textHash(s.plan.markdown)}|${Object.values(s.decisions).map((d) => `${d.key}=${d.answer}`).join("|")}`;
+    const was = this.planSeen.get(s.id);
+    this.planSeen.set(s.id, now);
+    if (was !== undefined && was !== now) this.buildUpdate(s, (b) => void b.rev++);
+  }
+
   private changed(s: Session) {
     // Whatever changed the plan, each comment's position follows its quote inside its section (#114).
     settleThreads(s);
+    this.trackRevision(s);
     this.opts.store.save(s);
     this.broadcast({ type: "session", session: this.view(s) });
   }
@@ -540,8 +641,10 @@ export class GrilladoServer {
         status: p.detection.status,
         version: "version" in p.detection ? p.detection.version : undefined,
         reason: "reason" in p.detection ? p.detection.reason : undefined,
+        canRead: !!this.opts.adapters.find((a) => a.id === p.id)?.canRead,
       })),
       selected: this.selected,
+      project: this.projectView(),
       needsPicker: !this.selected && ready.length > 1,
       remembered: this.opts.store.readConfig().defaultProvider ?? null,
       sessions: this.opts.store.list().slice(0, 20).map((s) => ({
@@ -559,6 +662,10 @@ export class GrilladoServer {
         ...(s.source ? { source: { app: s.source.app, kind: s.source.kind }, ...(s.source.title ? { title: s.source.title } : {}) } : {}),
         from: s.from,
         queued: !!s.queued,
+        // Plan-to-build loop: a coding agent is waiting on this many answers.
+        ...(openAsks(s.build).length ? { asks: openAsks(s.build).length } : {}),
+        // Plan 005: the project it was planned in, so Recent can say when it isn't Home's.
+        ...(s.project ? { project: { name: path.basename(s.project), folder: tildify(s.project) } } : {}),
       })),
       dataDir: tildify(this.opts.store.dir),
       // Always present (review N4): without one passed in, the build next to the web dir.
@@ -584,8 +691,13 @@ export class GrilladoServer {
       // A run cut short by a restart reads as stopped.
       diagramRun: s.diagramRun?.state === "running" && !this.diagramRuns.has(s.id) ? { ...s.diagramRun, state: "stopped", current: undefined } : s.diagramRun,
       adding: this.addPlanRuns.has(s.id),
+      anotherRun: s.anotherRun?.state === "running" && !this.anotherRuns.has(s.id) ? { ...s.anotherRun, state: "stopped" } : s.anotherRun,
+      // What the coding agent last read is Grillado's own bookkeeping.
+      build: s.build ? { ...s.build, seen: undefined } : undefined,
       addPlanRun: s.addPlanRun?.state === "running" && !this.addPlanRuns.has(s.id) ? { ...s.addPlanRun, state: "stopped" } : s.addPlanRun,
       progress: this.progress.get(s.id),
+      // Plan 003: what the reading run in progress has opened.
+      reading: this.inflight.has(s.id) ? this.reading.get(s.id)?.view() : undefined,
       planPath: s.plan?.path,
       tree: buildTree(s),
       activity: this.activityView(s),
@@ -616,29 +728,29 @@ export class GrilladoServer {
   /** §5: the source's state for the plan's meta line, dated like its Activity entry (the source's date). */
   private sourceInfo(s: Session) {
     const at = (this.lines(s).find((l) => l.type === "import") as { at: string } | undefined)?.at ?? s.source!.importedAt;
-    const i = this.opts.found && !this.opts.found.skip ? this.opts.found.sourceInfo(s) : null;
+    const i = this.found && !this.found.skip ? this.found.sourceInfo(s) : null;
     return { ...(i ?? { state: existsSync(s.source!.path) ? ("current" as const) : ("gone" as const), row: "" }), date: at };
   }
 
   /** The launch scan. Errors stay local: a scan that fails shows nothing, it never stops the app. */
   async scanProject() {
-    if (!this.opts.found || this.opts.found.skip) return;
+    if (!this.found || this.found.skip) return;
     try {
-      await this.opts.found.scan();
+      await this.found.scan();
     } catch (err) {
       console.error(`grillado: project scan failed: ${(err as Error)?.message ?? err}`);
     }
   }
 
   private foundView() {
-    const f = this.opts.found;
+    const f = this.found;
     return f ? f.view() : { enabled: false as const, reason: "off" as const };
   }
 
   private static FOUND_STATUS: Record<ImportError["code"], number> = { unknown: 404, in_progress: 409, needs_agent: 409, busy: 409, not_qualified: 422, unreadable: 422, filtered: 422, stopped: 409, agent: 502 };
 
   private async foundRoutes(req: http.IncomingMessage, res: http.ServerResponse, parts: string[], body: any) {
-    const f = this.opts.found;
+    const f = this.found;
     const view = () => this.foundView();
     if (req.method === "GET" && parts.length === 0) return this.json(res, 200, view());
     if (req.method !== "POST" || parts.length !== 1) return this.json(res, 404, { error: "Not found" });
@@ -756,6 +868,8 @@ export class GrilladoServer {
       }
       for (const t of s.comments ?? []) if (t.run?.state === "running") finishRun(t, { ok: false, message: "Interrupted. Retry to continue." });
       this.sessions.set(id, s);
+      // The plan as it is now is what later changes are measured against (plan-to-build loop).
+      this.trackRevision(s);
       // Runs with no end were cut off when Grillado closed: written as interrupted now (#57).
       const lines = this.lines(s);
       const ended = interrupted(lines).map((run): ActivityLine => {
@@ -769,7 +883,8 @@ export class GrilladoServer {
       if (queued) {
         // Started from a coding agent (`grillado mcp` start_plan): the first round runs when it's
         // opened here, on the agent picked here.
-        if (this.selected) s.provider = this.selected;
+        // Unless the coding agent named one (`plan start --agent`).
+        if (this.selected && !s.agentPinned) s.provider = this.selected;
         this.startRound(s);
       }
     }
@@ -794,6 +909,169 @@ export class GrilladoServer {
   /** GRILLADO_TIMEOUT_MS wins; otherwise the provider's own default (Grok is slower than the rest). */
   private timeoutFor(adapter: ProviderAdapter | undefined) {
     return this.opts.timeoutMs ?? adapter?.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  // ---------------------------------------------------------------- read access (plan 002)
+
+  /**
+   * Home's project chip: the folder new plans start in, where their plans are saved, the other
+   * projects to switch to, and whether the agent may read it (plan 002) and the user turned that off.
+   */
+  private projectView() {
+    const folder = this.folder;
+    if (!folder) return null;
+    const p = this.place;
+    const base = {
+      name: p?.name ?? (path.basename(folder) || folder),
+      folder: tildify(folder),
+      plansDir: this.plansSetting(folder) ?? "",
+      plansAt: tildify(this.plansDirFor(folder)),
+      known: this.knownProjects(),
+    };
+    if (!p?.ok) return { ...base, readable: false as const, reason: p?.reason ?? ("no-project" as const) };
+    return { ...base, root: tildify(p.root), readable: true as const, on: !this.readOff(p.root) };
+  }
+
+  /** The saved plans folder setting for a project, `--plans-dir` first for the launch folder. */
+  private plansSetting(folder: string): string | undefined {
+    if (this.cliPlansDir !== undefined && this.opts.launchDir && folder === path.resolve(this.opts.launchDir)) return this.cliPlansDir;
+    return this.opts.store.plansSetting(folder);
+  }
+
+  private plansDirFor(folder: string) {
+    return resolvePlansDir(folder, this.plansSetting(folder), this.homeDir());
+  }
+
+  private homeDir() {
+    return this.opts.home ?? os.homedir();
+  }
+
+  /** Projects to switch to: picked on Home, then the ones sessions were planned in, newest first. */
+  private knownProjects() {
+    const seen = new Set<string>();
+    const out: { folder: string; name: string }[] = [];
+    const add = (dir: string | undefined) => {
+      if (!dir || out.length >= 8) return;
+      const abs = path.resolve(dir);
+      if (seen.has(abs) || !existsSync(abs)) return;
+      seen.add(abs);
+      out.push({ folder: tildify(abs), name: path.basename(abs) || abs });
+    };
+    add(this.folder);
+    for (const d of this.opts.store.readConfig().projects ?? []) add(d);
+    add(this.opts.launchDir);
+    for (const x of this.opts.store.list()) add(x.project);
+    return out;
+  }
+
+  /** Plan 005: pick the project Home works in, or where its plans are saved. */
+  private async setProject(res: http.ServerResponse, body: any) {
+    if (typeof body?.folder === "string") {
+      const typed = body.folder.trim();
+      if (!typed) throw new Error("Type the project’s folder.");
+      const dir = path.resolve(expandHome(typed, this.homeDir()));
+      if (!path.isAbsolute(expandHome(typed, this.homeDir()))) throw new Error("Type the full path, like ~/code/app.");
+      let isDir = false;
+      try {
+        isDir = statSync(dir).isDirectory();
+      } catch {
+        throw new Error("That folder doesn’t exist.");
+      }
+      if (!isDir) throw new Error("That’s a file. Pick its folder.");
+      if (path.dirname(dir) === dir) throw new Error("Pick a project folder, not the whole disk.");
+      await this.useFolder(dir);
+    }
+    if (typeof body?.plansDir === "string") {
+      const folder = this.folder;
+      if (!folder) throw new Error("Pick a project first.");
+      const v = body.plansDir.trim();
+      if (v.length > 500 || v.includes("\0")) throw new Error("That folder name can’t be used.");
+      const c = this.opts.store.readConfig();
+      const dirs = { ...(c.plansDirs ?? {}) };
+      if (!v || v === DEFAULT_PLANS_DIR) delete dirs[folder];
+      else dirs[folder] = v;
+      this.opts.store.writeConfig({ ...c, plansDirs: dirs });
+      if (this.opts.launchDir && folder === path.resolve(this.opts.launchDir)) this.cliPlansDir = undefined;
+    }
+    this.broadcast({ type: "app" });
+    return this.json(res, 200, this.appState());
+  }
+
+  private async useFolder(dir: string) {
+    if (dir === this.folder) return;
+    this.folder = dir;
+    const c = this.opts.store.readConfig();
+    this.opts.store.writeConfig({ ...c, projects: [dir, ...(c.projects ?? []).filter((d) => d !== dir)].slice(0, 12) });
+    this.place = await readPlace(dir, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
+    let f = this.foundBy.get(dir);
+    if (!f && this.opts.foundFor) {
+      f = this.opts.foundFor(dir);
+      this.foundBy.set(dir, f);
+    }
+    for (const x of this.foundBy.values()) x.onChange = undefined;
+    if (f) f.onChange = () => this.broadcast({ type: "found" });
+    this.found = f;
+    this.broadcast({ type: "found" });
+    if (f && f.state === "idle") void this.scanProject();
+  }
+
+  private readOff(root: string) {
+    return (this.opts.store.readConfig().codeReadOff ?? []).includes(root);
+  }
+
+  /** The composer's checkbox: reading this project on or off, kept per project in config.json. */
+  private setProjectRead(res: http.ServerResponse, body: any) {
+    if (typeof body?.on !== "boolean") throw new Error("Say whether to read this project.");
+    const p = this.place;
+    if (!p?.ok) throw new Error("This folder can’t be read.");
+    const c = this.opts.store.readConfig();
+    const off = new Set(c.codeReadOff ?? []);
+    if (body.on) off.delete(p.root);
+    else off.add(p.root);
+    this.opts.store.writeConfig({ ...c, codeReadOff: [...off] });
+    this.broadcast({ type: "app" });
+    return this.json(res, 200, this.appState());
+  }
+
+  /**
+   * Decided once, when the first round starts (sessions from `grillado mcp` are created elsewhere
+   * and open later): the agent reads its project when the project can be read, the user didn't turn
+   * it off for the project or this session, and the session's agent can be limited to reading.
+   */
+  private async decideRead(s: Session, o: { chosen?: boolean } = {}) {
+    if (s.codeRead !== undefined || s.rounds.length) return;
+    const place = await readPlace(s.project, { dataDir: this.opts.store.dir, home: this.opts.home, noCode: this.opts.noCode });
+    const adapter = this.opts.adapters.find((a) => a.id === s.provider);
+    s.codeRead = place.ok && (o.chosen || !this.readOff(place.root)) && !!adapter?.canRead;
+    if (s.codeRead && place.ok) s.readRoot = place.root;
+  }
+
+  /** Round and plan runs of a reading session: the read root as cwd, the path check, a longer timeout. */
+  private readOptions(s: Session, adapter: ProviderAdapter) {
+    if (this.noReadOnce.delete(s.id)) return {};
+    if (!s.codeRead || !s.readRoot || !adapter.canRead || !existsSync(s.readRoot)) return {};
+    const check = pathCheck(s.readRoot);
+    // Plan 003: the trail of what it opens, shown while the run goes and logged when it ends.
+    const trail = new ReadingTrail(check, () => this.broadcast({ type: "reading", sessionId: s.id, reading: trail.view() }));
+    this.dropTrail(s);
+    this.reading.set(s.id, trail);
+    return {
+      cwd: s.readRoot,
+      read: { check },
+      timeoutMs: this.opts.timeoutMs ?? Math.max(adapter.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS, READ_TIMEOUT_MS),
+      onActivity: (a: Parameters<ReadingTrail["push"]>[0]) => trail.push(a),
+    };
+  }
+
+  private dropTrail(s: Session) {
+    this.reading.get(s.id)?.stop();
+    this.reading.delete(s.id);
+  }
+
+  /** The files a reading run opened, for its line in the activity log (plan 003). */
+  private readLog(s: Session) {
+    const l = this.reading.get(s.id)?.logged();
+    return l?.count ? { files: l.files, count: l.count } : null;
   }
 
   /** `adapter` is the one that will run: the session's own, or the one picked for a split. */
@@ -823,6 +1101,7 @@ export class GrilladoServer {
         if (this.inflight.get(s.id) === controller) {
           this.inflight.delete(s.id);
           this.runAt.delete(s.id);
+          this.dropTrail(s);
         }
         this.progress.delete(s.id);
         this.changed(s);
@@ -846,7 +1125,8 @@ export class GrilladoServer {
     this.lastRun.set(`session:${s.id}`, rec.id);
     this.run(s, async (c) => {
       rec.step("Read the session", "{agent} is picking questions");
-      const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is picking questions") };
+      await this.decideRead(s);
+      const opts = { ...this.runOptions(s, c), ...this.readOptions(s, this.adapterFor(s)), onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", "{agent} is picking questions") };
       try {
         const ok = await nextRound(s, this.adapterFor(s), opts, this.maxRounds);
         if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was picking questions" });
@@ -855,12 +1135,14 @@ export class GrilladoServer {
         if (!r) {
           // Past the cap a reply with nothing owed in it is dropped (stop "cap"); otherwise the frontier is empty.
           rec.step(s.stop === "cap" ? "{agent} asked only new questions, so the rounds are done" : "{agent} found nothing left to ask");
-          return rec.end("done", { result: { questions: 0 } });
+          const log = this.readLog(s);
+          return rec.end("done", { result: { questions: 0, ...(log ? { files: log.count } : {}) }, ...(log ? { files: log.files } : {}) });
         }
         rec.step(`{agent} picked ${r.questions.length} ${r.questions.length === 1 ? "question" : "questions"}`);
         rec.step(`Round ${n} ready`);
         // The saved round decides whether it was a re-ask (it asked an owed decision), not the start guess.
-        rec.end("done", { result: { questions: r.questions.length, reask: !!r.reask }, asked: r.questions.map((q) => q.key) });
+        const log = this.readLog(s);
+        rec.end("done", { result: { questions: r.questions.length, reask: !!r.reask, ...(log ? { files: log.count } : {}) }, asked: r.questions.map((q) => q.key), ...(log ? { files: log.files } : {}) });
       } finally {
         rec.end("failed", { reason: "unknown", last: reasonText("unknown", "{agent}") });
       }
@@ -884,21 +1166,29 @@ export class GrilladoServer {
     {
       const n = Object.keys(s.decisions).length;
       rec.step(`Read ${n} ${n === 1 ? "decision" : "decisions"}`, "{agent} is writing the plan");
-      const opts = { ...this.runOptions(s, c), onRepair: () => rec.step("{agent}’s plan didn’t fit the format; asked again", "{agent} is writing the plan") };
+      const opts = { ...this.runOptions(s, c), ...this.readOptions(s, this.adapterFor(s)), onRepair: () => rec.step("{agent}’s plan didn’t fit the format; asked again", "{agent} is writing the plan") };
       const out = await synthesize(s, this.adapterFor(s), opts, this.maxRounds);
       if (c.signal.aborted) return rec.end("stopped", { last: "Stopped while {agent} was writing the plan" });
       if (!out.ok) return rec.end("failed", { reason: s.error?.code ?? null, last: reasonText(s.error?.code, "{agent}") });
       rec.step("{agent} wrote the plan", "Saving plan.md");
       // The new plan overwrites plan.md; keep the user's edited version next to it.
       if (s.plan?.editedAt) this.opts.store.keepEditedPlan(s.id);
+      // The plan's build steps. A plan written again keeps the progress of steps whose title didn't change, and is a new revision.
+      const again = !!s.plan;
+      this.buildUpdate(s, (b) => {
+        setSteps(b, out.plan.steps ?? []);
+        if (again) b.rev++;
+      });
       const file = this.opts.store.writePlan(s.id, out.markdown);
       setPlan(s, { title: out.plan.title, markdown: out.markdown, path: file, openDecisions: out.open });
+      this.planSeen.delete(s.id);
       const timing = planTiming(s);
       if (timing) this.opts.log?.(timing);
       this.watchPlan(s);
       const sections = planSections(out.markdown).map((x) => x.title);
       rec.step("Saved plan.md");
-      rec.end("done", { result: { decisions: n, sections: sections.length }, wrote: sections });
+      const log = this.readLog(s);
+      rec.end("done", { result: { decisions: n, sections: sections.length, ...(log ? { files: log.count } : {}) }, wrote: sections, ...(log ? { files: log.files } : {}) });
     }
   }
 
@@ -1141,6 +1431,84 @@ export class GrilladoServer {
     this.startAddPlan(s, d.key, op === "retry");
   }
 
+  /** The user's side of the plan-to-build loop. Every one of these moves the plan's revision. */
+  private buildRoute(s: Session, body: any) {
+    const op = String(body?.op ?? "");
+    const step = body?.step as string | undefined;
+    try {
+      if (op === "answer") {
+        const key = String(body?.key ?? "");
+        const { ask, bullet } = this.buildUpdate(s, (b) => {
+          const ask = answerAsk(b, key, { optionId: typeof body?.optionId === "string" ? body.optionId : undefined, text: typeof body?.text === "string" ? body.text : undefined });
+          return { ask, bullet: decisionBullet(b, ask) };
+        });
+        // The answer is a decision of the plan from now on: one cited line under Implementation decisions.
+        editPlan(s, addDecisionLine(s.plan!.markdown, bullet));
+        // The revision already moved with the answer; the new line is the same change.
+        this.planSeen.delete(s.id);
+        this.opts.store.writePlan(s.id, s.plan!.markdown);
+        void ask;
+      } else {
+        this.buildUpdate(s, (b) => {
+          if (op === "edit") editStep(b, step ?? "", { title: typeof body?.title === "string" ? body.title : undefined, done: typeof body?.done === "string" ? body.done : undefined });
+          else if (op === "move") moveStep(b, step ?? "", body?.by === -1 ? -1 : 1);
+          else if (op === "add") addStep(b, { title: String(body?.title ?? ""), done: typeof body?.done === "string" ? body.done : "" }, typeof body?.after === "string" ? body.after : undefined);
+          else if (op === "remove") removeStep(b, step ?? "");
+          else if (op === "reopen") reopenStep(b, step ?? "");
+          else throw new BuildError("Unknown build action.");
+        });
+        this.opts.store.refreshPlan(s.id);
+      }
+    } catch (err) {
+      // BuildError messages are written for whoever acted; here that is the user.
+      throw err instanceof BuildError ? new Error(err.message) : err;
+    }
+    this.broadcast({ type: "app" });
+  }
+
+  /**
+   * "Show me another": one agent call, tools off, for one more option with a preview. A request that
+   * fails leaves the question's options as they were, with the reason on `anotherRun` for Try again.
+   */
+  private startAnother(s: Session, key: string) {
+    if (this.anotherRuns.has(s.id)) throw new Error("The agent is already finding another option.");
+    const q = anotherQuestion(s, key);
+    const rec = this.record(s, "option", { decision: q.title });
+    const controller = new AbortController();
+    this.anotherRuns.set(s.id, controller);
+    const run: NonNullable<Session["anotherRun"]> = { question: key, state: "running", startedAt: new Date().toISOString() };
+    s.anotherRun = run;
+    this.changed(s);
+    const doing = "{agent} is sketching another option";
+    rec.step("Read the question and its options", doing);
+    const work = async () => {
+      const r = await anotherOption(s, key, this.adapterFor(s), { ...this.runOptions(s, controller), onProgress: undefined, onRepair: () => rec.step("{agent}’s answer didn’t fit the format; asked again", doing) });
+      if (controller.signal.aborted) return;
+      if (!r.ok) {
+        run.state = "error";
+        run.code = r.code;
+        run.message = redact(r.message, userText(s));
+        return;
+      }
+      addOption(s, key, { label: r.value.label, description: r.value.description, preview: r.value.preview as Preview });
+      run.state = "done";
+    };
+    this.track(work()
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        run.state = "error";
+        run.message = redact(String(err?.message ?? err), userText(s));
+      })
+      .finally(() => {
+        if (controller.signal.aborted) run.state = "stopped";
+        if (run.state === "stopped") rec.end("stopped", { last: "Stopped while {agent} was sketching another option" });
+        else if (run.state === "error") rec.end("failed", { reason: run.code ?? "unknown", last: reasonText(run.code ?? "unknown", "{agent}") });
+        else rec.end("done", { read: [q.title], result: {} });
+        if (this.anotherRuns.get(s.id) === controller) this.anotherRuns.delete(s.id);
+        this.changed(s);
+      }));
+  }
+
   private startAddPlan(s: Session, key: string, retry = false) {
     const d = s.decisions[key];
     const rec = this.record(s, "addplan", { decision: d.title }, retry ? `addplan:${s.id}` : undefined);
@@ -1284,6 +1652,7 @@ export class GrilladoServer {
   private abort(s: Session) {
     this.inflight.get(s.id)?.abort();
     this.inflight.delete(s.id);
+    this.dropTrail(s);
   }
 
   private selectProvider(res: http.ServerResponse, body: any) {
@@ -1302,13 +1671,18 @@ export class GrilladoServer {
       if (!idea) throw new Error("Tell me the idea first.");
       if (!this.selected) throw new Error("Pick an agent first.");
       const projectContext = await captureProjectContext({
-        cwd: this.opts.launchDir ?? process.cwd(),
+        cwd: this.folder ?? process.cwd(),
         dataDir: this.opts.store.dir,
-        home: this.opts.found?.home,
-        off: !!this.opts.found?.skip,
+        home: this.found?.home,
+        off: !!this.found?.skip,
       });
       const s = createSession({ idea: idea.slice(0, 8000), context: String(body?.context ?? "").slice(0, 20_000), projectContext, provider: this.selected });
-      this.opts.store.create(s, this.opts.launchDir);
+      if (this.folder) this.opts.store.create(s, this.folder, this.plansDirFor(this.folder));
+      else this.opts.store.create(s);
+      // The composer's chip (plan 002): what it showed at Start applies, over the saved project preference
+      // (a click just before Start may not be saved yet). On still needs the project and the agent to allow it.
+      if (body?.read === false) s.codeRead = false;
+      else if (body?.read === true) await this.decideRead(s, { chosen: true });
       this.sessions.set(s.id, s);
       this.watchSession(s);
       this.startRound(s);
@@ -1339,8 +1713,24 @@ export class GrilladoServer {
       return this.json(res, 200, this.view(s));
     }
     switch (action) {
+      case "build": {
+        // Plan-to-build loop: the user edits the steps, reopens one, or answers the coding agent's ask.
+        if (s.status !== "plated" || !s.plan) throw new Error("Build steps come with the written plan.");
+        this.buildRoute(s, body);
+        this.changed(s);
+        break;
+      }
+      case "another": {
+        // Option previews: one more option, with a preview, for a question of the open round.
+        if (busy) throw new Error("The agent is still working.");
+        if (body?.op === "stop") this.anotherRuns.get(s.id)?.abort();
+        else this.startAnother(s, String(body?.key ?? ""));
+        break;
+      }
       case "answers": {
         if (busy) throw new Error("The agent is still working.");
+        // An option still on its way is for a round that is now sent.
+        this.anotherRuns.get(s.id)?.abort();
         const answers = (body?.answers ?? []) as Answer[];
         submitAnswers(s, Number(body?.round), answers);
         this.log(s, { v: 1, type: "user", what: "answered", round: Number(body?.round), answers: answers.length, yourCall: answers.filter((a) => a.optionId === UNKNOWN_OPTION).length, at: new Date().toISOString() });
@@ -1354,6 +1744,8 @@ export class GrilladoServer {
       }
       case "retry": {
         if (busy) break;
+        // "Ask without reading" (plan 003): this one run reads nothing; later ones read again.
+        if (body?.read === false && (s.status === "asking" || s.status === "synthesizing")) this.noReadOnce.add(s.id);
         if (s.status === "asking") this.startRound(s, true);
         else if (s.status === "synthesizing") this.startPlan(s, true);
         break;
@@ -1375,6 +1767,27 @@ export class GrilladoServer {
         this.changed(s);
         break;
       }
+      case "skip-read": {
+        // Plan 003: stop the reading run and ask the same thing again without reading, this once.
+        if (!busy || !s.codeRead || (s.status !== "asking" && s.status !== "synthesizing")) break;
+        this.abort(s);
+        this.noReadOnce.add(s.id);
+        s.error = undefined;
+        if (s.status === "asking") this.startRound(s, true);
+        else this.startPlan(s, true);
+        break;
+      }
+      case "correct": {
+        // Plan 003: "Not right" on a finding. The user's words win over what was read.
+        correctFinding(s, String(body?.finding ?? ""), String(body?.text ?? ""));
+        this.changed(s);
+        break;
+      }
+      case "uncorrect": {
+        uncorrectFinding(s, String(body?.finding ?? ""));
+        this.changed(s);
+        break;
+      }
       case "wrap": {
         this.abort(s);
         wrapUp(s, this.maxRounds);
@@ -1390,6 +1803,14 @@ export class GrilladoServer {
         if (busy) throw new Error("The agent is still working.");
         if (!s.plan || body?.base !== textHash(s.plan.markdown)) throw new Error("Save the plan before continuing.");
         resumePlan(s);
+        this.startRound(s);
+        break;
+      }
+      case "scope-in": {
+        // An Out of scope line joins the plan: the agent asks about it, then the plan is written again.
+        if (busy) throw new Error("The agent is still working.");
+        if (!s.plan || body?.base !== textHash(s.plan.markdown)) throw new Error("Save the plan before continuing.");
+        scopeIn(s, String(body?.text ?? ""));
         this.startRound(s);
         break;
       }

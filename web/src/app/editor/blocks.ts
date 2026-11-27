@@ -46,13 +46,17 @@ export function parseBlocks(source: string): Block[] {
     }
     if (line.startsWith("```")) {
       const a = i++;
-      while (i < ls.length && !ls[i].text.startsWith("```")) i++;
+      // A fence of four or more backticks (around a source that has ``` lines of its own, like a
+      // chosen preview) ends at a line of as many; a plain ``` fence ends at the next ``` line.
+      const ticks = /^`+/.exec(line)![0];
+      const closes = (t: string) => (ticks.length > 3 ? t.startsWith(ticks) && !t.slice(ticks.length).trim() : t.startsWith("```"));
+      while (i < ls.length && !closes(ls[i].text)) i++;
       const b = Math.min(i, ls.length - 1); // unclosed fence runs to the end
       const closed = i < ls.length;
       blocks.push({
         kind: "fence",
         ...span(a, b),
-        lang: line.slice(3).trim().split(/\s+/)[0] ?? "",
+        lang: line.slice(ticks.length).trim().split(/\s+/)[0] ?? "",
         body: ls
           .slice(a + 1, closed ? b : b + 1)
           .map((l) => l.text)

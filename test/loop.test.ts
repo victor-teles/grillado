@@ -127,7 +127,7 @@ describe("validation and repair (AC5–AC7)", () => {
 
   test("AC7: a plan during the interview is discarded", async () => {
     const s = createSession({ idea: "an app", provider: "claude" });
-    const plan = { type: "plan", title: "t", markdown: "m", decisions: [], openDecisions: [] };
+    const plan = { type: "plan", title: "t", markdown: "m", decisions: [], openDecisions: [], steps: [{ title: "Build it", done: "It runs." }] };
     const a = scripted([plan, round(q("one"))]);
     expect(await nextRound(s, a, opts())).toBe(true);
     expect(s.plan).toBeUndefined();
@@ -201,7 +201,7 @@ describe("interview loop", () => {
 
     startSynthesis(s);
     const planner = scripted([
-      { type: "plan", title: "Habit tracker", markdown: "## Problem\nHabits.", decisions: [{ round: 1, questionId: "scope", statement: "Narrow." }], openDecisions: [] },
+      { type: "plan", title: "Habit tracker", markdown: "## Problem\nHabits.", decisions: [{ round: 1, questionId: "scope", statement: "Narrow." }], openDecisions: [], steps: [{ title: "Build it", done: "It runs." }] },
     ]);
     const res = await synthesize(s, planner, opts());
     expect(res.ok).toBe(true);
@@ -226,7 +226,7 @@ describe("interview loop", () => {
     submitAnswers(s, 1, acceptAll(s));
     s.status = "confirm";
     startSynthesis(s);
-    const bad = { type: "plan", title: "t", markdown: "m", decisions: [{ round: 4, questionId: "ghost", statement: "x" }], openDecisions: [] };
+    const bad = { type: "plan", title: "t", markdown: "m", decisions: [{ round: 4, questionId: "ghost", statement: "x" }], openDecisions: [], steps: [{ title: "Build it", done: "It runs." }] };
     const good = { ...bad, decisions: [{ round: 1, questionId: "one", statement: "x" }] };
     const p = scripted([bad, good]);
     expect((await synthesize(s, p, opts())).ok).toBe(true);
@@ -258,7 +258,7 @@ describe("interview loop", () => {
     wrapUp(s);
     expect(s.status).toBe("confirm");
     startSynthesis(s);
-    const plan = { type: "plan", title: "t", markdown: "body", decisions: [], openDecisions: [] };
+    const plan = { type: "plan", title: "t", markdown: "body", decisions: [], openDecisions: [], steps: [{ title: "Build it", done: "It runs." }] };
     const res = await synthesize(s, scripted([plan]), opts());
     const md = (res as any).markdown as string;
     expect(md).toContain("## Open decisions\n\nThe interview stopped early because you chose to wrap up.\n\n```decision\nid: R2·1\nkey: two\nquestion: Question two?\nstatus: open\n```");
@@ -278,7 +278,7 @@ describe("interview loop", () => {
     await nextRound(s, a, opts());
     wrapUp(s);
     startSynthesis(s);
-    const plan = { type: "plan", title: "t", markdown: "Intro line.\n\n## Scope\n\nCites [R1:one].\n\n## Later\n\nMore.", decisions: [], openDecisions: [] };
+    const plan = { type: "plan", title: "t", markdown: "Intro line.\n\n## Scope\n\nCites [R1:one].\n\n## Later\n\nMore.", decisions: [], openDecisions: [], steps: [{ title: "Build it", done: "It runs." }] };
     const md = ((await synthesize(s, scripted([plan]), opts())) as any).markdown as string;
     const heads = md.split("\n").filter((l) => /^#{1,2} /.test(l));
     expect(heads).toEqual(["# t", "## Open decisions", "## Scope", "## Later"]);

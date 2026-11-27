@@ -10,7 +10,7 @@ import { Store } from "../src/cli/store.ts";
 import { createSession, editPlan } from "../src/core/session.ts";
 import { Autosaver, type SaveState } from "../web/src/app/editor/autosave.ts";
 import { citations, parseBlocks, splice } from "../web/src/app/editor/blocks.ts";
-import { type MermaidLike, renderDiagram } from "../web/src/app/editor/diagram.ts";
+import { RENDER_OPTIONS, type Renderer, renderDiagram } from "../web/src/app/editor/diagram.ts";
 
 // A plan shaped like renderPlanMarkdown's output, plus the things an editor tends to lose.
 const PLAN = `# Recipe app
@@ -190,50 +190,75 @@ describe("autosave", () => {
   });
 });
 
-describe("Mermaid", () => {
-  // Real Mermaid rejects bad syntax here without a DOM; drawing needs a browser, so success is
-  // covered with a stub here and with real Mermaid in the e2e run.
-  const real = async () => (await import("mermaid")).default as unknown as MermaidLike;
-  const withRender = async (): Promise<MermaidLike> => {
-    const m = await real();
-    return { initialize: (c) => m.initialize(c), parse: (t) => m.parse(t), render: async (id) => ({ svg: `<svg id="${id}"></svg>` }) };
-  };
+describe("diagrams are drawn by pele", () => {
+  // pele draws without a DOM (it measures text from a table), so the real renderer runs here;
+  // the browser run covers sizing, theming and the canvas measurer.
+  const load = async (): Promise<Renderer> => ({ render: (await import("pele")).render as Renderer["render"] });
+  const draw = (code: string) => renderDiagram(code, { load });
 
-  test("a valid diagram renders to SVG", async () => {
-    const fake: MermaidLike = { initialize: () => {}, parse: async () => true, render: async (id) => ({ svg: `<svg id="${id}"></svg>` }) };
-    const r = await renderDiagram("flowchart TD\n  A[Idea] --> B[Plan]", { dark: true, load: async () => fake });
-    expect(r).toMatchObject({ ok: true });
-    if (r.ok) expect(r.svg).toContain("<svg");
+  test("a valid diagram renders to SVG, themed by CSS variables, with ids of its own", async () => {
+    const a = await draw('flowchart TD\n  accTitle: Idea to plan\n  accDescr: How an idea becomes a plan.\n  A[Idea] --> B{"Ready?"}\n  B -->|yes| C[Plan]');
+    const b = await draw("stateDiagram-v2\n  direction LR\n  [*] --> Draft\n  Draft --> Saved: save");
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.svg).toContain('class="pele pele-flowchart"');
+    expect(b.svg).toContain('class="pele pele-state"');
+    for (const label of ["Idea", "Ready?", "Plan", "yes"]) expect(a.svg).toContain(`>${label}</text>`);
+    // Colors and fonts come from the app's tokens (grillado.css sets --pele-*), not from the drawing.
+    expect(a.svg).toContain("var(--pele-surface,");
+    expect(a.svg).toContain("var(--pele-font,");
+    // The accessible title and description are in the drawing, under ids no other diagram has.
+    expect(a.svg).toContain(`<title id="${a.id}-title">Idea to plan</title>`);
+    expect(a.svg).toContain(`<desc id="${a.id}-desc">How an idea becomes a plan.</desc>`);
+    expect(a.id).not.toBe(b.id);
+    // Sized by Grillado, not by the drawing.
+    expect(a.svg).not.toContain("max-width");
   });
 
-  test("an invalid diagram falls back with Mermaid's error instead of throwing", async () => {
-    const r = await renderDiagram("flowchart TD\n  A -->", { dark: false, load: withRender });
+  test("an invalid diagram falls back with the parse error instead of throwing", async () => {
+    const r = await draw("flowchart TD\n  A -->");
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/parse error/i);
+    if (!r.ok) expect(r.error).toMatch(/parse error on line 2/i);
+    const none = await draw("not a diagram\n  A --> B");
+    expect(none.ok === false && none.error).toContain("No diagram type");
   });
 
-  test("empty diagrams and a failed Mermaid load also fall back", async () => {
-    expect((await renderDiagram("  ", { dark: false, load: withRender })).ok).toBe(false);
-    const r = await renderDiagram("flowchart TD\n A-->B", { dark: false, load: () => Promise.reject(new Error("chunk failed")) });
+  test("empty diagrams and a renderer that didn't load also fall back", async () => {
+    expect((await draw("  ")).ok).toBe(false);
+    const r = await renderDiagram("flowchart TD\n A-->B", { load: () => Promise.reject(new Error("chunk failed")) });
     expect(r.ok === false && r.error).toBe("chunk failed");
   });
 
-  test("Mermaid is initialized strict, with the current theme", async () => {
-    const seen: Record<string, unknown>[] = [];
-    const fake: MermaidLike = { initialize: (c) => seen.push(c), parse: async () => true, render: async () => ({ svg: "<svg/>" }) };
-    await renderDiagram("graph TD; A-->B", { dark: true, load: async () => fake });
-    expect(seen[0]).toMatchObject({ securityLevel: "strict", theme: "dark", startOnLoad: false });
-    await renderDiagram("graph TD; A-->B", { dark: true, theme: { primaryColor: "#111111" }, load: async () => fake });
-    expect(seen[1]).toMatchObject({ theme: "base", themeVariables: { primaryColor: "#111111" }, htmlLabels: false, flowchart: { useMaxWidth: false, curve: "basis" } });
+  test("a diagram's text is never markup: no script, handler, link or image comes out", async () => {
+    expect(RENDER_OPTIONS).toMatchObject({ links: false, images: false, responsive: false });
+    const r = await draw(
+      [
+        "flowchart LR",
+        '  A["<img src=x onerror=alert(1)><script>alert(2)</script>"] --> B["<b>bold</b>"]',
+        '  B --> C@{ img: "https://evil.test/pixel.png", label: "Pic" }',
+        '  click A "https://evil.test/a"',
+        '  click B "javascript:alert(3)"',
+        "  click C call alert(4)",
+      ].join("\n"),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.svg).not.toMatch(/<(script|img|image|a|foreignObject|iframe)\b/i);
+    expect(r.svg).not.toMatch(/\son\w+\s*=/i);
+    expect(r.svg).not.toMatch(/href\s*=/i);
+    expect(r.svg).not.toContain("evil.test");
+    expect(r.svg).not.toContain("javascript:");
+    // Tags in a label are dropped; what is left of it is plain text.
+    expect(r.svg).toContain(">alert(2)</text>");
+    expect(r.svg).toContain(">Pic</text>");
   });
 
-  test("Mermaid uses dagre and diagrams can't switch to the unshipped ELK layout", async () => {
-    const seen: Record<string, any>[] = [];
-    const fake: MermaidLike = { initialize: (c) => seen.push(c), parse: async () => true, render: async () => ({ svg: "<svg/>" }) };
-    await renderDiagram("graph TD; A-->B", { dark: false, load: async () => fake });
-    expect(seen[0].layout).toBe("dagre");
-    expect(seen[0].state.layout).toBe("dagre");
-    expect(seen[0].secure).toEqual(expect.arrayContaining(["layout", "securityLevel"]));
+  test("a diagram's own directives and style lines add no shadow or filter", async () => {
+    const r = await draw('%%{init: {"look": "handDrawn", "theme": "dark", "themeVariables": {"dropShadow": "drop-shadow(0 0 9px red)"}}}%%\nflowchart TD\n  A[Idea] --> B[Plan]\n  style A fill:#f00,stroke-width:4px');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.svg).not.toMatch(/filter|drop-shadow/i);
+    // A filter can't even be written in a style line: its parentheses don't parse.
+    expect((await draw("flowchart TD\n  A[Idea] --> B[Plan]\n  style A filter:drop-shadow(0 0 9px red)")).ok).toBe(false);
   });
 });
 

@@ -601,6 +601,7 @@ export function PlanEditor({
   editRef,
   agentName,
   onAgentDiagram,
+  scope,
 }: {
   draft: PlanDraft;
   mode: EditorMode;
@@ -626,6 +627,8 @@ export function PlanEditor({
   agentName: string;
   /** Item 5's hook: "Diagram by {agent}" shows in the slash menu only when this is set. */
   onAgentDiagram?: (at: number) => void;
+  /** The Out of scope section's hint and per-line control (Rich view only; never while the plan is read-only). */
+  scope?: { hint?: ReactNode; item: (text: string) => ReactNode };
 }) {
   const mobile = useMobile();
   // The block being edited, as a range of the draft. `len` follows the edited text's length.
@@ -810,6 +813,7 @@ export function PlanEditor({
             onAdd={readOnly || mobile ? undefined : (b) => addBelow(b, true)}
             decision={renderDecision}
             link={link}
+            scope={readOnly ? undefined : scope}
             marks={editing && marks ? outside(marks, editing.start, editing.start + editing.len) : marks}
             edit={
               editing

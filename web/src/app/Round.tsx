@@ -15,11 +15,14 @@ import {
   agentQuestionOtherKey,
 } from "@/components/ui/uai/agent-question";
 import { COPY } from "./copy";
-import { finishingPlanRound, preparing, roundCounter, sendAndWrap } from "./rounds";
+import { finishingPlanRound, preparing, roundCounter, scopeRound, sendAndWrap } from "./rounds";
 import { waitLabel } from "./wait";
 import { useMobile, useSince } from "./chrome";
 import { ISq } from "./icons";
 import { MobileStrip, SidePanel } from "./Tree";
+import { FoundInCode, FromYourCode } from "./project/Findings";
+import { WaitStatus } from "./project/Reading";
+import { Compare, PreviewStrip, hasPreviews } from "./preview/Preview";
 import { type Answer, type DecisionNode, OTHER_OPTION, type Question, type Round, type SessionView, UNKNOWN_OPTION } from "./types";
 
 type Act = (action: string, body?: unknown) => Promise<void>;
@@ -96,17 +99,54 @@ export function RoundView({ session, act, banner }: { session: SessionView; act:
   const round = session.rounds.at(-1)!;
   // The question being answered is marked in the tree (v1.2: one --sel row, no glow).
   const [active, setActive] = useState<string | undefined>(round.questions[0]?.key);
+  // Compare (option previews) sits outside the question form, so the form's keys (arrows, J/K) don't act under it.
+  const mobile = useMobile();
+  const [compare, setCompare] = useState<{ round: number; key: string }>();
+  const [picked, setPicked] = useState<AgentQuestionAnswers>({});
+  const comparing = compare?.round === round.n ? round.questions.find((q) => q.key === compare.key) : undefined;
+  const pickedOf = (q: Question) => (typeof picked[q.key] === "string" ? (picked[q.key] as string) : q.recommendedOptionId);
   return (
-    <SessionBody
-      session={session}
-      highlight={active}
-      onNode={(n) => n.status === "frontier" && focusCard(n.questionIndex)}
-      main={<RoundForm key={`${session.id}-${round.n}`} session={session} round={round} act={act} banner={banner} onActive={setActive} />}
-    />
+    <>
+      <SessionBody
+        session={session}
+        highlight={active}
+        onNode={(n) => n.status === "frontier" && focusCard(n.questionIndex)}
+        main={
+          <RoundForm
+            key={`${session.id}-${round.n}`}
+            session={session}
+            round={round}
+            act={act}
+            banner={banner}
+            onActive={setActive}
+            onPicked={setPicked}
+            onCompare={(key) => setCompare({ round: round.n, key })}
+          />
+        }
+      />
+      {comparing ? <Compare q={comparing} selected={pickedOf(comparing)} mobile={mobile} onClose={() => setCompare(undefined)} /> : null}
+    </>
   );
 }
 
-function RoundForm({ session, round, act, banner, onActive }: { session: SessionView; round: Round; act: Act; banner?: React.ReactNode; onActive: (key: string) => void }) {
+function RoundForm({
+  session,
+  round,
+  act,
+  banner,
+  onActive,
+  onPicked,
+  onCompare,
+}: {
+  session: SessionView;
+  round: Round;
+  act: Act;
+  banner?: React.ReactNode;
+  onActive: (key: string) => void;
+  /** Option previews: what is chosen so far, for Compare. */
+  onPicked: (values: AgentQuestionAnswers) => void;
+  onCompare: (key: string) => void;
+}) {
   const [status, setStatus] = useState<"asking" | "submitting">("asking");
   // Number-key hints stay hidden until the first number press (v1.2).
   const [keys, setKeys] = useState(false);
@@ -153,6 +193,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
   }, []);
 
   const [values, setValues] = useState<AgentQuestionAnswers>({});
+  useEffect(() => onPicked(values), [values, onPicked]);
   // Send and wrap up (#39) goes through the same submit as Send round, flagged for this one click.
   const wrapNext = useRef(false);
   const submit = async (v: AgentQuestionAnswers, untouched: string[]) => {
@@ -200,8 +241,9 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
             <h1>{n === 1 ? "1 decision is ready" : `${n} decisions are ready`}</h1>
             <RoundCounter session={session} round={round} />
             <p>
-              {finishing ? "These decisions were left open in your plan." : first ? "The first calls on your idea." : round.reask ? COPY.reaskSub : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
+              {scopeRound(session, round.n) ? COPY.scopeRound : finishing ? "These decisions were left open in your plan." : first ? "The first calls on your idea." : round.reask ? COPY.reaskSub : "Each one opened up from something you settled."} Suggested picks are preselected. Change anything you disagree with.
             </p>
+            <FoundInCode findings={session.findings} round={round.n} corrections={session.corrections} act={act} />
           </div>
           <AgentQuestionStack className="cards">
             {round.questions.map((q, i) => {
@@ -209,7 +251,8 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
               const openedBy = parent && parent !== session.tree.rootId ? labelOf.get(parent) : q.dependsOn[0] ? labelOf.get(q.dependsOn[0]) : undefined;
               const v = values[q.key];
               const yours = typeof v === "string" && v !== q.recommendedOptionId;
-              return <QuestionCard key={q.key} q={q} index={i} openedBy={openedBy} yours={yours} />;
+              const selected = typeof v === "string" ? v : q.recommendedOptionId;
+              return <QuestionCard key={q.key} q={q} index={i} openedBy={openedBy} yours={yours} selected={selected} session={session} act={act} onCompare={() => onCompare(q.key)} />;
             })}
           </AgentQuestionStack>
         </div>
@@ -239,7 +282,7 @@ function RoundForm({ session, round, act, banner, onActive }: { session: Session
 
 /** "Round {k} of {N}" under the title, in the slot the waiting status line uses (#36). */
 function RoundCounter({ session, round }: { session: SessionView; round: Round }) {
-  const c: ReturnType<typeof roundCounter> = finishingPlanRound(session, round.n) ? { lead: "Finishing your plan" } : roundCounter(session, round.n);
+  const c: ReturnType<typeof roundCounter> = scopeRound(session, round.n) ? { lead: COPY.scopeLead } : finishingPlanRound(session, round.n) ? { lead: "Finishing your plan" } : roundCounter(session, round.n);
   return (
     <p className="rmeta" data-testid="round-counter">
       {c.lead}
@@ -257,12 +300,31 @@ function CardHead({ openedBy, yours }: { openedBy?: string; yours: boolean }) {
   );
 }
 
-function QuestionCard({ q, openedBy, yours }: { q: Question; index: number; openedBy?: string; yours: boolean }) {
+function QuestionCard({
+  q,
+  openedBy,
+  yours,
+  selected,
+  session,
+  act,
+  onCompare,
+}: {
+  q: Question;
+  index: number;
+  openedBy?: string;
+  yours: boolean;
+  selected: string;
+  session: SessionView;
+  act: Act;
+  onCompare: () => void;
+}) {
   return (
     <AgentQuestionItem id={q.key} label={q.label || undefined} required className="q" data-testid="question" data-key={q.key} data-yours={yours || undefined}>
       <AgentQuestionTitle className="q-t">{q.title}</AgentQuestionTitle>
       <CardHead openedBy={openedBy} yours={yours} />
       {q.body ? <AgentQuestionDescription className="q-d">{q.body}</AgentQuestionDescription> : null}
+      <FromYourCode evidence={q.evidence} />
+      {hasPreviews(q) ? <PreviewStrip q={q} selected={selected} session={session} act={act} onCompare={onCompare} /> : null}
       <AgentQuestionOptions>
         {q.options.map((o) => (
           <AgentQuestionOption key={o.id} value={o.id} label={o.label} description={o.description || undefined} recommended={o.id === q.recommendedOptionId} />
@@ -281,7 +343,7 @@ export { waitLabel } from "./wait";
 /** Static skeleton lines (v1.2: no shimmer): a heading, a line and three option rows. */
 export function SkeletonCard({ wide }: { wide?: boolean }) {
   return (
-    <div className="sk" aria-hidden="true">
+    <div className="skel" aria-hidden="true">
       <i className="h" style={wide ? { width: "62%" } : { width: "48%" }} />
       <i style={{ width: "80%" }} />
       <i className="r" />
@@ -292,12 +354,13 @@ export function SkeletonCard({ wide }: { wide?: boolean }) {
 }
 
 /** One status line under the title. The ember dot is static; no elapsed timer (DECISIONS #21). */
-export function StatusLine({ label, dot, onStop, note }: { label: string; dot?: boolean; onStop?: () => void; note?: string }) {
+export function StatusLine({ label, dot, onStop, note, actions }: { label: string; dot?: boolean; onStop?: () => void; note?: string; actions?: React.ReactNode }) {
   return (
     <>
     <div className="status" role="status" aria-live="polite" data-has-note={note ? true : undefined}>
       {dot ? <span className="ember" aria-hidden="true" /> : null}
       <span>{label}</span>
+      {actions}
       {onStop ? (
         <button type="button" className="btn quiet sm" onClick={onStop}>
           <ISq s={12} />
@@ -331,7 +394,7 @@ export function WaitingView({ session, act, banner }: { session: SessionView; ac
               {banner}
               <div className="intro">
                 <h1>{session.idea.split("\n")[0]}</h1>
-                {busy ? <StatusLine label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <WaitStatus session={session} label={label} note={COPY.roundWaitNote} elapsed={elapsed} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} onSkip={() => void act("skip-read").catch(() => {})} /> : null}
               </div>
               {busy ? <SkeletonCard wide /> : null}
             </div>
@@ -375,7 +438,7 @@ export function FiringUp({ session, act, banner }: { session: SessionView; act: 
               {banner}
               <div className="intro">
                 <h1>{idea}</h1>
-                {busy ? <StatusLine dot label={label} note={COPY.roundWaitNote} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} /> : null}
+                {busy ? <WaitStatus session={session} dot label={label} note={COPY.roundWaitNote} elapsed={elapsed} onStop={elapsed >= 60 ? () => void act("stop").catch(() => {}) : undefined} onSkip={() => void act("skip-read").catch(() => {})} /> : null}
               </div>
               {busy ? (
                 <>

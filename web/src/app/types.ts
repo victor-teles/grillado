@@ -2,6 +2,12 @@ import type { CommentThread, Suggestion } from "../../../src/core/comments.ts";
 import type { Entry } from "../../../src/core/activity.ts";
 import type { DiagramRun } from "../../../src/core/diagrams.ts";
 import type { AddPlanRun } from "../../../src/core/addplan.ts";
+import type { AnotherRun, Preview } from "../../../src/core/previews.ts";
+import type { BuildState } from "../../../src/core/build.ts";
+
+export type { AskOption, BuildAsk, BuildLogEntry, BuildState, BuildStep, StepStatus } from "../../../src/core/build.ts";
+
+export type { Preview, PreviewKind } from "../../../src/core/previews.ts";
 // Mirrors of what the local server sends. Kept separate from server code on purpose.
 export type ProviderId = "claude" | "codex" | "grok" | "pi";
 export type FailureCode = "auth" | "rate_limit" | "timeout" | "not_found" | "malformed" | "unknown";
@@ -14,6 +20,40 @@ export interface ProviderView {
   status: "ready" | "missing" | "broken" | "outdated";
   version?: string;
   reason?: string;
+  /** Its CLI can be limited to read-only file tools (plan 002). */
+  canRead?: boolean;
+}
+
+/** The launch folder's project, for Home's read chip (plan 002). */
+/** Plan 005: where new plans start and are saved, and the projects Home can switch to. */
+export interface ProjectPlace {
+  name: string;
+  /** The project folder, `~` for home. */
+  folder: string;
+  /** The plans folder setting as typed; "" is the default, docs/plans. */
+  plansDir: string;
+  /** Where new plans are saved, in full. */
+  plansAt: string;
+  known: { folder: string; name: string }[];
+}
+
+export type ProjectView = ProjectPlace &
+  (
+    | { readable: false; reason: "no-project" | "not-git" | "home" | "root" | "data-dir" | "off" }
+    | { readable: true; root: string; on: boolean }
+  );
+
+/** Plan 002: a fact the agent read from the project, so didn't ask; its paths were checked. */
+export interface Finding {
+  id: string;
+  round: number;
+  label: string;
+  fact: string;
+  paths: string[];
+}
+export interface Evidence {
+  path: string;
+  note: string;
 }
 
 export interface SessionSummary {
@@ -35,6 +75,10 @@ export interface SessionSummary {
   source?: { app: SourceApp; kind: SourceKind };
   /** The plan's export (friction 26): its parent issue, else how many issues it sent. */
   issues?: { parent: { number?: number; identifier?: string } | null; items: Record<string, unknown> } | null;
+  /** Plan 005: the project it was planned in. */
+  project?: { name: string; folder: string };
+  /** Plan-to-build loop: a coding agent is waiting on this many answers. */
+  asks?: number;
 }
 
 // ---------------------------------------------------------------- found in this project (v1.3 item 1)
@@ -109,6 +153,8 @@ export interface AppState {
   found?: FoundView;
   /** How an editor starts `grillado mcp`; always sent. */
   mcp: McpLaunch;
+  /** The launch folder's project and whether its code can be read (plan 002); null outside a project. */
+  project?: ProjectView | null;
 }
 
 export type SessionStatus = "asking" | "answering" | "confirm" | "synthesizing" | "plated";
@@ -117,6 +163,12 @@ export interface Option {
   id: string;
   label: string;
   description: string;
+  /** Option previews: a UI mock, a code sketch or a diagram to compare before choosing. */
+  preview?: Preview;
+  /** The agent's preview for this option couldn't be shown; the option is answered as text. */
+  previewFailed?: boolean;
+  /** Added with "Show me another". */
+  added?: boolean;
 }
 export interface Question {
   key: string;
@@ -127,6 +179,8 @@ export interface Question {
   options: Option[];
   recommendedOptionId: string;
   dependsOn: string[];
+  /** Plan 002: project files the question rests on (checked paths). */
+  evidence?: Evidence[];
 }
 export interface Answer {
   questionId: string;
@@ -204,6 +258,14 @@ export interface SessionView {
   provider: ProviderId;
   idea: string;
   context: string;
+  /** Plan 002: the agent reads the project for rounds and the plan; `readRoot` is where. */
+  codeRead?: boolean;
+  readRoot?: string;
+  findings?: Finding[];
+  /** Plan 003: findings the user said were wrong; `round` is where it was made (undo until it's sent). */
+  corrections?: { finding: string; text: string; round: number; at: string }[];
+  /** Plan 003: what the reading run in progress has opened. */
+  reading?: { files: number; recent: string[]; at: string };
   /** Source-only view of the immutable project-plan snapshot. */
   projectContext?: {
     capturedAt: string;
@@ -214,6 +276,8 @@ export interface SessionView {
   rounds: Round[];
   decisions: Record<string, Decision>;
   reopened: string[];
+  /** Lines of the plan sent to be asked about: an open line the writer listed, or an Out of scope line brought in. */
+  topics?: { key: string; label: string; kind: "open" | "scope" }[];
   stale?: Record<string, StaleDecision>;
   wrappedUp: boolean;
   /** Why Confirm opened without a wrap (#33): the cap, or the agent had nothing left to ask. */
@@ -249,6 +313,10 @@ export interface SessionView {
   drawing?: boolean;
   /** "Add to plan" (#104): the last run, and whether one is going now. */
   addPlanRun?: AddPlanRun;
+  /** "Show me another": the request in progress, or how the last one ended. */
+  anotherRun?: AnotherRun;
+  /** Plan-to-build loop: the build steps, the coding agent's progress on them, and its asks. */
+  build?: BuildState;
   adding?: boolean;
   progress?: string;
   /** The activity log (item 6): the latest entries, newest first. */
@@ -269,7 +337,7 @@ export interface SessionView {
 
 // Mirrors src/core/issues.ts (importing it would pull session.ts and node types into the web build).
 export type Tracker = "github" | "linear";
-export type SplitSource = "agent" | "todos" | "stories" | "none";
+export type SplitSource = "agent" | "steps" | "todos" | "stories" | "none";
 export interface IssueItem {
   key: string;
   title: string;

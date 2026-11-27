@@ -4,6 +4,9 @@ import { createAdapters } from "../core/providers/adapters.ts";
 import { HELP, UsageError, parseArgs } from "./args.ts";
 import { appLine, mcpLaunch } from "./launch.ts";
 import { runMcp } from "./mcp.ts";
+import { runPlan } from "./plan-command.ts";
+import { runBuild } from "./build-command.ts";
+import { runSkills } from "./skills-command.ts";
 import { canOpenBrowser, openBrowser } from "./open.ts";
 import { FoundService } from "./found.ts";
 import { GrilladoServer } from "./server.ts";
@@ -24,6 +27,31 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (major < 22) {
     console.error(`grillado: needs Node.js 22 or newer (you have ${process.versions.node}).`);
     process.exit(1);
+  }
+  // Plan 004: the commands coding agents run from a shell.
+  if (argv[0] === "skills" || argv[0] === "plan" || argv[0] === "build") {
+    const cliFile = fileURLToPath(import.meta.url);
+    const io = {
+      version: VERSION,
+      out: (s: string) => void process.stdout.write(s),
+      err: (s: string) => void process.stderr.write(s),
+      cliFile,
+      appLine: (dataDir: string) => appLine(cliFile, dataDir),
+    };
+    try {
+      const code =
+        argv[0] === "skills"
+          ? runSkills(argv.slice(1), VERSION, (s) => process.stdout.write(s))
+          : argv[0] === "build"
+            ? await runBuild(argv.slice(1), io)
+            : await runPlan(argv.slice(1), io);
+      process.exitCode = code;
+    } catch (err) {
+      if (!(err instanceof UsageError)) throw err;
+      console.error(`grillado: ${err.message}`);
+      process.exitCode = 2;
+    }
+    return;
   }
   let args: ReturnType<typeof parseArgs>;
   try {
@@ -63,6 +91,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     // Tests point Linear at a local fake; only a loopback URL is taken, so the key can't be sent anywhere else.
     issues: /^http:\/\/127\.0\.0\.1:\d+\/[\w/-]*$/.test(process.env.GRILLADO_LINEAR_URL ?? "") ? { linear: { url: process.env.GRILLADO_LINEAR_URL } } : undefined,
     found: new FoundService({ store, cwd: process.cwd(), off: !args.scan || process.env.GRILLADO_NO_SCAN === "1" }),
+    foundFor: (cwd) => new FoundService({ store, cwd, off: !args.scan || process.env.GRILLADO_NO_SCAN === "1" }),
+    plansDir: args.plansDir,
+    noCode: !args.code || process.env.GRILLADO_NO_CODE === "1",
+    // Plan 004: an app `plan start` opened in the background goes away on its own. GRILLADO_IDLE_MS is for tests.
+    idleExitMs: args.exitWhenIdle ? Number(process.env.GRILLADO_IDLE_MS) || 30 * 60_000 : undefined,
   });
 
   process.stdout.write(`${orange("●")} ${bold("Grillado")} ${dim(VERSION)}  ${dim("warming up…")}\n`);

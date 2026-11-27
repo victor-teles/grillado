@@ -4,55 +4,11 @@ import { ActionSheet } from "../ActionSheet";
 import { useMobile } from "../chrome";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { describeDiagram } from "../../../../src/core/diagrams.ts";
-import { type DiagramResult, type MermaidLike, type ThemeVars, THEME_TOKENS, ZOOMS, accOf, diagramLabel, explainDiagramError, fitDiagram, fitPercent, kindName, renderDiagram, zoomStep } from "./diagram";
+import { type DiagramResult, type Renderer, ZOOMS, accOf, diagramLabel, explainDiagramError, fitDiagram, fitPercent, kindName, renderDiagram, zoomStep } from "./diagram";
 
-// Mermaid is ~1 MB of JS, so it's only fetched when a diagram is near the viewport (§6.4).
-let mermaid: Promise<MermaidLike> | null = null;
-const loadMermaid = () => (mermaid ??= import("mermaid").then((m) => m.default as unknown as MermaidLike));
-
-/** A token as hex, through a canvas pixel: Mermaid can't read var() or oklch (§6.2). */
-function hexOf(token: string): string {
-  const el = document.createElement("i");
-  el.style.color = `var(${token})`;
-  document.body.appendChild(el);
-  const col = getComputedStyle(el).color;
-  el.remove();
-  const c = document.createElement("canvas");
-  c.width = c.height = 1;
-  const x = c.getContext("2d");
-  if (!x) return "#888888";
-  x.fillStyle = col;
-  x.fillRect(0, 0, 1, 1);
-  const d = x.getImageData(0, 0, 1, 1).data;
-  return "#" + [d[0], d[1], d[2]].map((n) => n.toString(16).padStart(2, "0")).join("");
-}
-
-function readTheme(): { dark: boolean; vars: ThemeVars } {
-  const dark = !document.documentElement.classList.contains("light");
-  const vars: ThemeVars = { darkMode: dark, fontFamily: '"Inter Variable", Inter, sans-serif', fontSize: "13px" };
-  const seen = new Map<string, string>();
-  for (const [k, t] of Object.entries(THEME_TOKENS)) {
-    if (!seen.has(t)) seen.set(t, hexOf(t));
-    vars[k] = seen.get(t)!;
-  }
-  return { dark, vars };
-}
-
-/** The theme, re-read when light/dark flips: every diagram re-renders with new variables (no transition). */
-function useTheme() {
-  const [t, setT] = useState(readTheme);
-  useEffect(() => {
-    const obs = new MutationObserver(() =>
-      setT((prev) => {
-        const next = readTheme();
-        return next.dark === prev.dark && JSON.stringify(next.vars) === JSON.stringify(prev.vars) ? prev : next;
-      }),
-    );
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    return () => obs.disconnect();
-  }, []);
-  return t;
-}
+// The renderer is fetched when a diagram is near the viewport (§6.4), not with the app.
+let renderer: Promise<Renderer> | null = null;
+export const loadRenderer = () => (renderer ??= import("pele").then((m) => ({ render: m.render }) as Renderer));
 
 /** True once the element is within 600px of the viewport. */
 function useNear(ref: React.RefObject<HTMLElement | null>) {
@@ -69,11 +25,10 @@ function useNear(ref: React.RefObject<HTMLElement | null>) {
 }
 
 /**
- * Drawn diagrams by theme + source. A block that becomes a figure (Accept, the end of an edit)
+ * Drawn diagrams by source (the theme is CSS variables, so one drawing serves both). A block that becomes a figure (Accept, the end of an edit)
  * mounts with the SVG it already had: the placeholder only shows on a first lazy draw (§5.2).
  */
 const drawn = new Map<string, DiagramResult>();
-const drawnKey = (code: string, theme: { dark: boolean; vars: ThemeVars }) => `${theme.dark ? "d" : "l"}${JSON.stringify(theme.vars)}\n${code}`;
 function remember(key: string, r: DiagramResult) {
   drawn.delete(key);
   drawn.set(key, r);
@@ -82,8 +37,7 @@ function remember(key: string, r: DiagramResult) {
 
 /** Renders `code` (debounced by `delay`), keeping the last version that worked. `now` bumps force a draw. */
 function useRender(code: string, o: { active: boolean; delay: number; now?: number }) {
-  const theme = useTheme();
-  const key = drawnKey(code, theme);
+  const key = code;
   const [res, setRes] = useState<DiagramResult | null>(() => drawn.get(key) ?? null);
   const last = useRef<{ svg: string; code: string } | null>(null);
   const nowSeen = useRef(o.now);
@@ -101,9 +55,7 @@ function useRender(code: string, o: { active: boolean; delay: number; now?: numb
     nowSeen.current = o.now;
     const t = setTimeout(
       () => {
-        renderDiagram(code, { dark: theme.dark, theme: theme.vars, load: loadMermaid }).then((r) => {
-          // Mermaid leaves a scratch node behind when a render fails.
-          document.getElementById(`d${r.id}`)?.remove();
+        renderDiagram(code, { load: loadRenderer }).then((r) => {
           remember(key, r.ok ? { ok: true, svg: r.svg } : { ok: false, error: r.error });
           if (!live) return;
           if (r.ok) last.current = { svg: r.svg, code };
@@ -120,9 +72,10 @@ function useRender(code: string, o: { active: boolean; delay: number; now?: numb
   return { res, last: res?.ok ? { svg: res.svg, code } : last.current };
 }
 
-/** Puts Mermaid's SVG in `host`, labels it (§8) and sizes it (§6.3). Returns the natural size. */
+/** Puts the drawn SVG in `host`, labels it (§8) and sizes it (§6.3). Returns the natural size. */
 function mountSvg(host: HTMLElement, svg: string, code: string) {
-  host.innerHTML = svg; // Mermaid output is sanitized (securityLevel: "strict").
+  // pele escapes the diagram's text and writes no scripts, handlers or HTML labels; links and images are off (RENDER_OPTIONS).
+  host.innerHTML = svg;
   const s = host.querySelector("svg");
   if (!s) return { w: 0, h: 0, s: null };
   // The figure (or the suggestion group) carries the name: the SVG inside isn't read twice.
@@ -131,8 +84,9 @@ function mountSvg(host: HTMLElement, svg: string, code: string) {
   s.removeAttribute("aria-roledescription");
   s.removeAttribute("aria-labelledby");
   s.removeAttribute("aria-describedby");
+  // Its own title would show as a hover tooltip over the whole drawing; the caption already says it.
+  for (const el of s.querySelectorAll(":scope > title, :scope > desc")) el.remove();
   s.dataset.label = diagramLabel(code, svg);
-  s.removeAttribute("style");
   const vb = s.viewBox?.baseVal;
   return { w: vb?.width || s.getBoundingClientRect().width, h: vb?.height || s.getBoundingClientRect().height, s };
 }
@@ -604,6 +558,15 @@ function Zoom({ zoom, step, fit }: { zoom: number; step: (d: 1 | -1) => void; fi
  * with `now`), swaps in one frame, waits 1s before showing an error, then dims the last good
  * version to 38% with "Last version that worked".
  */
+/** Option previews: the diagram drawn to the width it is given, and nothing else. */
+export function DiagramSketch({ code }: { code: string }) {
+  const { res } = useRender(code, { active: true, delay: 0 });
+  if (res === null) return <Placeholder text="Drawing…" />;
+  if (!res.ok) return <p className="pv-bad">{PREVIEW_BAD}</p>;
+  return <Svg svg={res.svg} code={code} fit="width" />;
+}
+const PREVIEW_BAD = "This diagram can’t be drawn.";
+
 export function LivePreview({ code, now, onError }: { code: string; now: number; onError?: (e: { line?: number; message: string; raw: string } | null) => void }) {
   const { res, last } = useRender(code, { active: true, delay: 300, now });
   const [late, setLate] = useState<DiagramResult | null>(null);

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { type FloorItem, dropReasonLine, notAskedLine, openFloor, reasonLine, stopReason, syncPlanOpen, unaskedPlanItems } from "./floor.ts";
-import type { PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
+import { type FloorItem, dropReasonLine, notAskedLine, openFloor, outOfScopeItems, reasonLine, stopReason, syncPlanOpen, topicKey, unaskedPlanItems } from "./floor.ts";
+import type { Option, PlanReply, Question, RoundReply, Upcoming } from "./schema.ts";
+import type { BuildState } from "./build.ts";
+import { type AnotherRun, MAX_OPTIONS, type Preview, chosenPreviews, previewKindOf, settlePreviews } from "./previews.ts";
+import type { Finding, Touch } from "./project-read.ts";
 import type { FailureCode } from "./classify.ts";
 import type { ProviderId } from "./providers/types.ts";
 import type { CommentState } from "./comments.ts";
@@ -76,6 +79,12 @@ export interface SessionError {
 }
 
 export interface Session extends CommentState {
+  /** The plan-to-build loop: build steps, the agent's progress on them, its asks and the log (core/build.ts). */
+  build?: BuildState;
+  /** The agent was chosen when the plan was started from a shell (`plan start --agent`): opening it doesn't switch to the app's. */
+  agentPinned?: boolean;
+  /** "Show me another" (option previews): its request in progress, or how the last one ended. */
+  anotherRun?: AnotherRun;
   id: string;
   createdAt: string;
   updatedAt: string;
@@ -86,11 +95,27 @@ export interface Session extends CommentState {
   context: string;
   /** Immutable project-plan references captured when this session was created. */
   projectContext?: ProjectContext;
+  /**
+   * Plan 002: whether the agent reads the project for rounds and the plan. Decided once, when the
+   * first round starts; absent before then (and on sessions from before 002, which never read).
+   */
+  codeRead?: boolean;
+  /** The folder the agent may read (the project's git top level), when `codeRead`. */
+  readRoot?: string;
+  /** Facts the agent read from the project and so did not ask, each with its checked sources. */
+  findings?: Finding[];
+  /** Plan 003: findings the user said were wrong, with what's true instead. Their words win. */
+  corrections?: Correction[];
   status: SessionStatus;
   rounds: Round[];
   decisions: Record<string, Decision>;
   /** Decisions the user explicitly asked to revisit or finish in the next round. */
   reopened: string[];
+  /**
+   * Lines of the plan the user sent to be asked about, which had no decision key of their own: an open
+   * line the writer listed ("open"), or an Out of scope line brought into the plan ("scope").
+   */
+  topics?: PlanTopic[];
   /** Reopened decisions not yet settled again, for the tree (kept across rounds). */
   stale?: Record<string, StaleDecision>;
   wrappedUp: boolean;
@@ -177,6 +202,41 @@ export interface ImportedSource {
   agentFrom?: ProviderId;
 }
 
+/** Plan 003: "Not right" on a finding. `round` is the round it was made in: it can be undone until that round is sent. */
+export interface Correction {
+  finding: string;
+  text: string;
+  round: number;
+  at: string;
+}
+
+export const MAX_CORRECTION = 500;
+
+/** Save what's true instead of a finding (replacing an earlier correction of it). */
+export function correctFinding(s: Session, finding: string, text: string): Correction {
+  const f = s.findings?.find((x) => x.id === finding);
+  if (!f) throw new Error("That finding isn’t in this session.");
+  const t = text.trim();
+  if (!t) throw new Error("Say what’s true instead.");
+  if (t.length > MAX_CORRECTION) throw new Error(`Keep it under ${MAX_CORRECTION} characters.`);
+  const round = s.rounds.at(-1)?.n ?? 0;
+  const c = { finding, text: t, round, at: new Date().toISOString() };
+  s.corrections = [...(s.corrections ?? []).filter((x) => x.finding !== finding), c];
+  touch(s);
+  return c;
+}
+
+/** Undo a correction while the round it was made in is still being answered. */
+export function uncorrectFinding(s: Session, finding: string): void {
+  const c = s.corrections?.find((x) => x.finding === finding);
+  if (!c) return;
+  const open = currentRound(s);
+  if (!open || open.n !== c.round) throw new Error("That correction was already sent with your answers.");
+  s.corrections = s.corrections!.filter((x) => x !== c);
+  if (!s.corrections.length) delete s.corrections;
+  touch(s);
+}
+
 export function createSession(input: { idea: string; context?: string; projectContext?: ProjectContext; provider: ProviderId }): Session {
   const now = new Date().toISOString();
   return {
@@ -260,6 +320,28 @@ export function validateRound(s: Session, reply: RoundReply): string | null {
   return null;
 }
 
+/** The question "Show me another" may add an option to: in the round being answered, with previews, under the cap. */
+export function anotherQuestion(s: Session, key: string): Question {
+  const round = currentRound(s);
+  const q = s.status === "answering" && round && !round.answers ? round.questions.find((x) => x.key === key) : undefined;
+  if (!q) throw new Error("That question isn’t open.");
+  if (!previewKindOf(q.options)) throw new Error("That question has no previews.");
+  if (q.options.length >= MAX_OPTIONS) throw new Error(`A question holds at most ${MAX_OPTIONS} options.`);
+  return q;
+}
+
+/** "Show me another": append one option with its preview to an open question. Its id is new to the question. */
+export function addOption(s: Session, key: string, option: { label: string; description: string; preview: Preview }): Option {
+  const q = anotherQuestion(s, key);
+  const ids = new Set(q.options.map((o) => o.id));
+  let n = q.options.length + 1;
+  while (ids.has(`more-${n}`)) n++;
+  const added: Option = { id: `more-${n}`, label: option.label.trim(), description: option.description.trim(), preview: option.preview, added: true };
+  q.options.push(added);
+  touch(s);
+  return added;
+}
+
 /**
  * Save the agent's round. Past the cap (`max` counted rounds) only what the user sent back may be
  * asked: other questions are dropped, and with nothing left Confirm opens (#33, review of #42).
@@ -270,7 +352,10 @@ export function applyRound(s: Session, reply: RoundReply, max = DEFAULT_MAX_ROUN
   s.summary = reply.summary;
   s.keepGoing = false;
   const owe = new Set(owedKeys(s));
-  const questions = roundsSaved(s) >= roundLimit(s, max) ? reply.questions.filter((q) => owe.has(q.key)) : reply.questions;
+  // Option previews: keep the usable ones; an option whose preview isn't stays a text option.
+  settlePreviews(reply.questions);
+  const settled = reply.questions as Question[];
+  const questions = roundsSaved(s) >= roundLimit(s, max) ? settled.filter((q) => owe.has(q.key)) : settled;
   if (reply.type === "frontier_empty") {
     s.status = "confirm";
     s.stop = "empty";
@@ -490,13 +575,49 @@ export function resumePlan(s: Session): void {
   if (currentRound(s)?.questions.some((question) => !s.decisions[question.key])) throw new Error("Answer the open questions first.");
   const pending = unaskedPlanItems(s, s.plan.markdown);
   if (!pending.length) throw new Error("There are no remaining topics to ask about.");
-  s.reopened = [...new Set([...s.reopened, ...pending.map((item) => item.key)])];
+  askTopics(s, pending.filter((item) => item.topic).map((item) => ({ key: item.key, label: item.label, kind: "open" })));
+  backToAsking(s, pending.map((item) => item.key));
+}
+
+export interface PlanTopic {
+  key: string;
+  /** The line as the plan has it. */
+  label: string;
+  kind: "open" | "scope";
+}
+
+/** Bring a line of the plan's Out of scope section into the plan: the agent asks what it needs, then the plan is written again. */
+export function scopeIn(s: Session, text: string): PlanTopic {
+  if (s.status !== "plated" || !s.plan) throw new Error("Finish writing the plan first.");
+  if (currentRound(s)?.questions.some((question) => !s.decisions[question.key])) throw new Error("Answer the open questions first.");
+  const label = text.trim();
+  if (!label || !outOfScopeItems(s.plan.markdown).includes(label)) throw new Error("That line isn’t in the plan’s Out of scope section any more.");
+  const topic: PlanTopic = { key: topicKey(s, "scope", label), label, kind: "scope" };
+  askTopics(s, [topic]);
+  backToAsking(s, [topic.key]);
+  return topic;
+}
+
+function askTopics(s: Session, topics: PlanTopic[]): void {
+  if (!topics.length) return;
+  const keys = new Set(topics.map((topic) => topic.key));
+  s.topics = [...(s.topics ?? []).filter((topic) => !keys.has(topic.key)), ...topics];
+}
+
+/** From a written plan back to the interview, owing these keys. The plan and every answer stay as they are. */
+function backToAsking(s: Session, keys: string[]): void {
+  s.reopened = [...new Set([...s.reopened, ...keys])];
   s.status = "asking";
   s.keepGoing = false;
   s.wrappedUp = false;
   s.stop = undefined;
   s.error = undefined;
   touch(s);
+}
+
+/** The Out of scope lines the user brought into the plan and answered a question about: the writer treats them as in scope. */
+export function broughtIn(s: Session): string[] {
+  return (s.topics ?? []).filter((topic) => topic.kind === "scope" && s.decisions[topic.key]).map((topic) => topic.label);
 }
 
 export function startSynthesis(s: Session): void {
@@ -521,7 +642,8 @@ export function userText(s: Session): string {
   const answers = Object.values(s.decisions)
     .filter((d) => d.kind === "other")
     .map((d) => d.answer);
-  return [s.idea, s.context, ...answers].join("\n");
+  // Plan 003: corrections are the user's own words too.
+  return [s.idea, s.context, ...answers, ...(s.corrections ?? []).map((c) => c.text)].join("\n");
 }
 
 /** Validate a plan's citations (AC16). Returns an error for the repair retry, or null. */
@@ -635,6 +757,14 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply, stop?: PlanStop)
     for (const b of sec.blocks) lines.push(b, "");
   }
   if (!opened) pushOpen();
+  // Plan 002: the files the work touches, as the agent read them and Grillado checked them.
+  if (plan.touches?.length) lines.push(...inYourCode(plan.touches), "");
+  // Option previews: the source of the preview on each option the user chose.
+  const picked = chosenPreviews(decisions.flatMap((d) => {
+    const preview = d.kind === "option" ? chosenOption(s, d)?.preview : undefined;
+    return preview ? [{ label: d.label || d.title, answer: d.answer, preview }] : [];
+  }));
+  if (picked.length) lines.push(...picked, "");
   if (rest.length) {
     lines.push("## More decisions", "");
     for (const b of rest) lines.push(b, "");
@@ -642,6 +772,20 @@ export function renderPlanMarkdown(s: Session, plan: PlanReply, stop?: PlanStop)
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
   lines.push("");
   return lines.join("\n");
+}
+
+/** The option a decision settled on, from the round that asked it last. */
+function chosenOption(s: Session, d: Decision): Option | undefined {
+  for (let i = s.rounds.length - 1; i >= 0; i--) {
+    const q = s.rounds[i].questions.find((x) => x.key === d.key);
+    if (q) return q.options.find((o) => o.label === d.answer);
+  }
+  return undefined;
+}
+
+/** "## In your code": one line per touched file (plan 002). Backticks in a path end its code span early, so they're dropped. */
+export function inYourCode(touches: Touch[]): string[] {
+  return ["## In your code", "", ...touches.map((t) => `- \`${t.path.replace(/`/g, "")}\`${t.why ? `: ${t.why.replace(/\s+/g, " ")}` : ""}`)];
 }
 
 /** Everything a pick in an inline decision block can be. */

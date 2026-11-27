@@ -6,27 +6,38 @@ import { setReplyText } from "./comments/stream";
 import { Landing, NoAgent, Picker } from "./Home";
 import { IPlug } from "./icons";
 import { UCOPY, UseInEditor } from "./mcp/UseInEditor";
+import type { PlanSeed } from "./Plan";
 import { SessionScreen } from "./Session";
 import type { AppState, ProviderId, SessionView } from "./types";
 import { newer } from "./newer";
+import { COPY, fmt } from "./copy";
+import { openAsks } from "./build/Build";
 
 const sessionIdFromPath = () => /^\/s\/([\w-]+)$/.exec(location.pathname)?.[1] ?? null;
 const stepOf = (s: SessionView) => (s.status === "confirm" ? 2 : s.status === "synthesizing" || s.status === "plated" ? 3 : 1);
 
-function ProjectSources({ context }: { context: SessionView["projectContext"] }) {
-  if (!context) return null;
-  const count = context.sources.length;
+function ProjectSources({ context, reads }: { context: SessionView["projectContext"]; reads?: { name: string; root: string } }) {
+  if (!context && !reads) return null;
+  const count = context?.sources.length ?? 0;
+  const plans = `${count} project ${count === 1 ? "plan" : "plans"}`;
+  // Plan 002: one disclosure for both kinds of project context, "Reads grillado · 3 plans".
+  const summary = reads ? `Reads ${reads.name}${count ? ` · ${count} ${count === 1 ? "plan" : "plans"}` : ""}` : `Using ${plans}`;
   return (
     <details className="project-sources" data-testid="project-context">
-      <summary>Using {count} project {count === 1 ? "plan" : "plans"}</summary>
+      <summary>{summary}</summary>
       <ul>
-        {context.sources.map((source) => (
+        {reads ? (
+          <li>
+            Reads files in <code title={reads.root}>{reads.root}</code> to ask and write the plan. It can’t change them.
+          </li>
+        ) : null}
+        {(context?.sources ?? []).map((source) => (
           <li key={source.path}>
             <code>{source.path}</code>
             {source.truncated ? " (excerpt)" : null}
           </li>
         ))}
-        {context.truncated ? <li>More project context was omitted by the snapshot limits.</li> : null}
+        {context?.truncated ? <li>More project context was omitted by the snapshot limits.</li> : null}
       </ul>
     </details>
   );
@@ -40,8 +51,15 @@ export function App() {
   const [locked, setLocked] = useState(false);
   const [notice, setNotice] = useState("");
   const [picking, setPicking] = useState(false);
+  // A line of a plan that starts a new one: Home's composer opens filled in, and the user sends it.
+  const [seed, setSeed] = useState<PlanSeed | null>(null);
   const [theme, toggleTheme] = useTheme();
   const mobile = useMobile();
+  // Plan-to-build loop: a coding agent waiting on an answer shows in the tab's title, whatever plan it is in.
+  const waiting = (app?.sessions ?? []).reduce((n, x) => n + (x.id === session?.id ? 0 : (x.asks ?? 0)), 0) + openAsks(session?.build).length;
+  useEffect(() => {
+    document.title = waiting ? `${fmt(COPY.titleWaiting, { n: String(waiting) })} · Grillado` : "Grillado";
+  }, [waiting]);
   // v1.2 item 1: "Use in your editor" on Home (desktop header button; phones: More sheet row).
   const [ue, setUe] = useState(false);
   const ueBtn = useRef<HTMLButtonElement>(null);
@@ -70,6 +88,7 @@ export function App() {
         if (e.type === "app") void refreshApp();
         else if (e.type === "session") setSession((cur) => (cur && cur.id === e.session.id ? newer(cur, e.session) : cur));
         else if (e.type === "progress") setSession((cur) => (cur && cur.id === e.sessionId ? { ...cur, progress: e.label } : cur));
+        else if (e.type === "reading") setSession((cur) => (cur && cur.id === e.sessionId && cur.busy ? { ...cur, reading: e.reading } : cur));
         // Not React state: the streaming message appends it itself (#97).
         else if (e.type === "reply-text") setReplyText(e.threadId, e.text);
       },
@@ -91,6 +110,8 @@ export function App() {
     history.pushState(null, "", id ? `/s/${id}` : "/");
     setSessionId(id);
     setPicking(false);
+    // The seed is for the next visit to Home only.
+    if (id) setSeed(null);
     if (!id) void refreshApp();
   };
 
@@ -167,18 +188,29 @@ export function App() {
   } else if (session)
     body = (
       <main className="smain">
-        <SessionScreen session={session} app={app} act={act} onSwitch={() => setPicking(true)} />
+        <SessionScreen
+          session={session}
+          app={app}
+          act={act}
+          onSwitch={() => setPicking(true)}
+          onNewPlan={(next) => {
+            go(null);
+            setSeed(next);
+          }}
+        />
       </main>
     );
   else {
     home = true;
     body = (
       <Landing
+        key={seed ? `seed-${seed.idea}` : "home"}
+        seed={seed ?? undefined}
         state={app}
         provider={provider}
         onSwitch={onSwitch}
-        onStart={async (idea, context) => {
-          const s = await api.createSession(idea, context);
+        onStart={async (idea, context, read) => {
+          const s = await api.createSession(idea, context, read);
           setSession((cur) => (cur && cur.id === s.id ? newer(cur, s) : s));
           go(s.id);
         }}
@@ -199,7 +231,7 @@ export function App() {
       <Header
         step={session && !picking ? stepOf(session) : undefined}
         title={session ? session.idea.split("\n")[0] : undefined}
-        afterTitle={session && !picking ? <ProjectSources context={session.projectContext} /> : undefined}
+        afterTitle={session && !picking ? <ProjectSources context={session.projectContext} reads={session.codeRead && session.readRoot ? { name: session.readRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? session.readRoot, root: session.readRoot } : undefined} /> : undefined}
         // v1.2: no agent in the header before a session; the composer shows it.
         provider={showAgent && session && ready.length ? provider : undefined}
         onSwitch={onSwitch}

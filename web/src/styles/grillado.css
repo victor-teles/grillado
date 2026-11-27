@@ -194,10 +194,10 @@ button:disabled{cursor:default}
 .wait-note{margin:0 0 24px}
 .status:has(.ember)+.wait-note{padding-left:16px}
 .status .ember{width:6px;height:6px;border-radius:50%;background:var(--gr-ember);flex:none}
-.sk{display:grid;gap:10px;margin-top:8px}
-.sk i{display:block;height:12px;border-radius:6px;background:var(--sel)}
-.sk i.h{height:16px;margin-bottom:6px;background:var(--muted)}
-.sk i.r{height:36px;border-radius:9px}
+.skel{display:grid;gap:10px;margin-top:8px}
+.skel i{display:block;height:12px;border-radius:6px;background:var(--sel)}
+.skel i.h{height:16px;margin-bottom:6px;background:var(--muted)}
+.skel i.r{height:36px;border-radius:9px}
 .banner{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:12px;align-items:start;padding:14px 16px;border-radius:14px;background:var(--sel);margin-bottom:28px}
 .banner .ic{color:var(--muted-foreground);display:grid;place-items:center;height:20px}
 .banner[data-tone=warn] .ic{color:var(--warning-ink)}
@@ -257,7 +257,9 @@ button:disabled{cursor:default}
 .main:not([data-keys]) .q [data-slot=agent-question-option] kbd{visibility:hidden}
 .q [data-slot=agent-question-option].mini>label>.grid>span:first-child{font-weight:400;color:var(--muted-foreground)}
 .q [data-slot=agent-question-option].mini[data-selected]>label>.grid>span:first-child{color:var(--foreground)}
-.q:not([data-active]) [data-slot=agent-question-option].mini>label>.grid>span+span{display:none}
+/* Hidden, not removed: on a phone this line wraps, and removing it moved every card below by a line
+   just as a tap on one of them landed. */
+.q:not([data-active]) [data-slot=agent-question-option].mini>label>.grid>span+span{visibility:hidden}
 .q input[data-slot=input]{height:32px!important;border-radius:9px!important;background:var(--background)!important;border:0!important;box-shadow:inset 0 0 0 1px var(--hair)!important;font-size:var(--t-body)!important}
 /* Uai's "Sending…" shimmer loops and uses a gradient; v1.2 keeps it as plain muted text (#21). */
 .shimmer-text{background:none;color:var(--muted-foreground);animation:none}
@@ -450,6 +452,26 @@ button:disabled{cursor:default}
 .doc .ps{border-radius:4px;box-decoration-break:clone;-webkit-box-decoration-break:clone;transition:background-color var(--d-base) var(--ease-out),color var(--d-quick) var(--ease-out)}
 .doc .ps.lk,.doc .ps[data-fl]{background:color-mix(in oklab,var(--primary) var(--link-a),transparent);transition-duration:var(--d-link-in)}
 .doc .ps.stale{color:var(--muted-foreground)}
+/* Out of scope: one line under the heading, and "Plan it" at the end of each line. In the layout at opacity 0 on hover
+   devices (showing it never reflows); always shown on touch. */
+.doc .osh{margin:-2px 0 6px;font-size:var(--t-body);line-height:20px;cursor:default;user-select:none}
+/* A topic not asked yet is one line of the plan, often a whole sentence: it takes the row. */
+.drow.na{grid-template-columns:minmax(0,1fr)}
+.osa{display:inline-block;margin-left:8px;white-space:nowrap;vertical-align:1px;user-select:none}
+.osb{display:inline-flex;align-items:center;gap:3px;height:22px;padding:0 5px 0 8px;border:0;border-radius:7px;background:var(--sel);color:var(--muted-foreground);font:500 var(--t-meta)/1 var(--sans);transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-quick) var(--ease-out),color var(--d-quick) var(--ease-out)}
+.osb svg{width:12px;height:12px}
+.osb:disabled{opacity:.5}
+.osb:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+@media (hover:hover){
+  .osb{opacity:0}
+  .doc li:hover .osb,.osb:focus-visible,.osb[aria-expanded=true]{opacity:1}
+  .osb:not(:disabled):hover,.osb[aria-expanded=true]{background:var(--muted);color:var(--foreground)}
+  .doc li:hover .osb:disabled{opacity:.5}
+}
+.pmenu.omenu{width:288px;min-width:0;padding:4px;border-radius:12px;border:0;background:var(--popover);box-shadow:0 0 0 1px var(--hair),0 12px 32px -12px rgb(0 0 0/.5);animation:none!important}
+.omenu .mi2{display:grid;justify-items:start;gap:1px;padding:8px 10px;border-radius:8px;font-size:var(--t-body);line-height:20px;color:var(--foreground)}
+.omenu .mi2 .d{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.omenu .mi2[data-highlighted]{background:var(--accent);color:var(--foreground)}
 /* Right-margin cites: absolutely placed at the passage's first line (static top), stacked when they collide. */
 .gut{position:absolute;left:100%;margin-left:12px;display:inline-flex;flex-direction:column;gap:2px;z-index:2;line-height:16px;margin-top:2px}
 .gut-i{position:relative;display:block}
@@ -542,12 +564,6 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
 /* diagrams */
 .doc .mmd{position:relative;margin:14px 0 4px;padding:18px;border-radius:12px;background:var(--sel)}
 .doc .mmd-wrap{position:relative}
-.doc .mmd-svg{display:flex;justify-content:center;overflow-x:auto}
-.doc .mmd-svg svg{max-width:100%;height:auto}
-.doc .mmd-svg .node rect,.doc .mmd-svg .node polygon,.doc .mmd-svg .node circle,.doc .mmd-svg .node path{fill:var(--background)!important;stroke:var(--hair)!important}
-.doc .mmd-svg .edgePath path,.doc .mmd-svg .flowchart-link{stroke:var(--subtle-foreground)!important}
-.doc .mmd-svg .nodeLabel,.doc .mmd-svg .edgeLabel,.doc .mmd-svg text{color:var(--foreground)!important;fill:var(--foreground)!important;font-family:var(--sans)!important}
-.doc .mmd-svg .edgeLabel,.doc .mmd-svg .edgeLabel rect,.doc .mmd-svg .labelBkg{background:transparent!important;fill:transparent!important;color:var(--muted-foreground)!important}
 .doc .mmd-last .mmd-svg{opacity:.38}
 .doc .mmd-tag{position:absolute;top:0;left:0;font-size:var(--t-meta);color:var(--muted-foreground)}
 .doc .mmd-ph{min-height:120px;display:grid;place-items:center;color:var(--muted-foreground);font-size:var(--t-meta)}
@@ -647,6 +663,8 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .q [data-slot=agent-question-option].unk>label>.grid>span+span{display:block}
   .bar{padding:10px 16px 16px}
   .bar .spacer{display:none}
+  /* The waiting bar has no primary to stretch: Wrap it up keeps the right edge, as on desktop. */
+  .bar .wrap-btn{margin-left:auto}
   .bar .btn.primary,.bar [data-slot=agent-question-continue]{flex:1;height:44px;border-radius:12px}
   .bar .btn.quiet{height:44px}
   .cmdrow{grid-template-columns:minmax(0,1fr) auto;row-gap:2px}
@@ -684,8 +702,10 @@ s.dz-av{text-decoration-color:var(--subtle-foreground)}
   .apl .lnk{position:relative}
   .apl .lnk::before{content:"";position:absolute;inset:-14px -10px}
   .dz>.dz-act,.doc .mmd-f{opacity:1}
-  /* §5: no hover linking on mobile, so the meta line (with Affects) is always there; no margin cites. */
-  .dz .dz-h{max-height:none;opacity:1;margin-top:4px}
+  /* §5: no hover linking on mobile, so the meta line (with Affects) is always there; no margin cites.
+     The :hover form too: a tapped card stays "hovered" on a phone, and the desktop rule's 40px cap clipped its
+     line until the next tap elsewhere let it grow, moving everything below just as that tap landed. */
+  .dz .dz-h,.dz:hover .dz-h,html[data-kbd] .dz:focus-within .dz-h{max-height:none;opacity:1;margin-top:4px}
   .gut{display:none}
 }
 
@@ -1069,11 +1089,11 @@ body:has(.acc4) .mbar{display:none}
 .doc .mm5 .act .icon-btn{background:var(--sel)}
 .doc .mm5:focus-visible .mmd-f{opacity:1;transition:none}
 @media not ((hover:hover) and (pointer:fine)){.doc .mm5:hover .mmd-f{opacity:0}}
-/* Mermaid output: Inter, muted edge labels with a halo in the container colour (§6.2) */
-.mmw svg text,.mmw svg .nodeLabel,.mmw svg .label{font-family:"Inter Variable",Inter,sans-serif!important}
-.mmw svg .edgeLabel text,.mmw svg .edgeLabel tspan{fill:var(--muted-foreground)!important}
-.mmw svg .edgeLabel rect,.mmw svg .labelBkg{fill:var(--mm-bg)!important;opacity:1!important}
-.mmw svg .edgeLabel text{paint-order:stroke;stroke:var(--mm-bg);stroke-width:5px;stroke-linejoin:round}
+/* Diagrams are drawn by pele (https://pele.run), which reads its colors and fonts from these variables: the
+   look comes from the app's tokens, and a theme switch needs no redraw. Nodes sit on the page color with a
+   strong border, lines and edge labels are muted, and an edge label covers its line with the container's color (§6.2). */
+.pele{--pele-bg:var(--mm-bg,var(--sel));--pele-fg:var(--foreground);--pele-muted:var(--muted-foreground);--pele-line:var(--muted-foreground);--pele-surface:var(--background);--pele-surface-alt:var(--sel);--pele-border:var(--border-strong);--pele-accent:var(--muted-foreground);--pele-radius:6px;--pele-font:var(--sans);--pele-font-mono:var(--mono)}
+.mmw svg .pele-edge-label text{fill:var(--muted-foreground)}
 .mm5,.lp5,.fs5{--mm-bg:var(--sel)}
 .sgb5{--mm-bg:color-mix(in oklab,var(--success) var(--sgb-a),var(--sel))}
 .rmb{--mm-bg:color-mix(in oklab,var(--destructive) var(--rm-a),var(--sel))}
@@ -1228,7 +1248,7 @@ body:has(.acc4) .mbar{display:none}
 @media (prefers-reduced-motion:reduce){
   .pop5,.fs5{transform:none!important}
 }
-/* Flat nodes (§6.2): look "classic" draws no shadow; this also beats any inline filter Mermaid adds. */
+/* Flat nodes (§6.2): no shadow, whatever a diagram's own style lines ask for. */
 .mmw svg,.mmw svg *{filter:none!important}
 
 /* Item 5 review (#6): opened from the keyboard (⌘K, Enter on ⋯, F), the popover and full screen
@@ -1411,3 +1431,224 @@ html[data-kbd] .ue,html[data-kbd] .ue *{transition:none!important}
 html .th.in1{transition:opacity var(--d-quick) var(--ease-out)}
 @media (prefers-reduced-motion:no-preference){html .th.in1{transition:opacity var(--d-quick) var(--ease-out),background-color var(--d-quick) var(--ease-out),text-decoration-color var(--d-quick) var(--ease-out)}}
 @starting-style{.th.in1{opacity:0}}
+
+/* ---------- reading the project (plan 002) ---------- */
+/* Composer chip: the agent chip's shape, after it in the row. Never wraps the row: the name truncates. */
+.composer .ar{min-width:0}
+.readchip{display:inline-flex;align-items:center;gap:6px;height:32px;min-width:0;max-width:min(240px,45vw);padding:0 8px;border-radius:9px;border:0;background:none;font-size:var(--t-body);color:var(--muted-foreground);white-space:nowrap;transition:background-color var(--d-quick) var(--ease-out),color var(--d-quick) var(--ease-out)}
+.readchip .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.readchip>svg{flex:none}
+@media (hover:hover){.readchip:hover{background:var(--muted);color:var(--foreground)}}
+.readchip[aria-expanded=true]{background:var(--muted);color:var(--foreground)}
+.readpop{z-index:50;width:min(320px,calc(100vw - 32px));display:grid;gap:8px;padding:14px 16px;border-radius:12px;border:1px solid var(--border);background:var(--popover);color:var(--muted-foreground);font-size:var(--t-body);line-height:20px;box-shadow:0 10px 30px color-mix(in oklab,black 16%,transparent);overflow-wrap:anywhere}
+.readpop .t{color:var(--foreground);font-weight:500}
+.readpop .check{margin-top:4px;color:var(--foreground)}
+.readpop:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+
+/* File chips: mono, the path shortened from the left in markup; the full path is the title. */
+.fchip{display:inline-flex;align-items:center;height:24px;max-width:100%;padding:0 7px;border-radius:6px;border:0;background:color-mix(in oklab,var(--foreground) 6%,transparent);color:var(--foreground);font:400 12px/16px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+button.fchip{cursor:pointer;transition:background-color var(--d-quick) var(--ease-out)}
+@media (hover:hover){button.fchip:hover{background:color-mix(in oklab,var(--foreground) 11%,transparent)}}
+button.fchip[aria-expanded=true]{background:color-mix(in oklab,var(--foreground) 11%,transparent)}
+.fchip.more{font-family:var(--sans);color:var(--muted-foreground)}
+
+/* "Found in your code" under the round's intro: closed until opened. */
+.found-code{margin-top:6px;color:var(--muted-foreground)}
+.found-code summary{display:inline-flex;align-items:center;gap:6px;min-height:28px;cursor:pointer;list-style:none;border-radius:8px;font-size:var(--t-body)}
+.found-code summary::-webkit-details-marker{display:none}
+.found-code summary .t{color:var(--foreground);font-weight:500}
+.found-code summary>svg{transition:transform var(--d-quick) var(--ease-out)}
+.found-code[open] summary>svg{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.found-code summary>svg{transition:none}}
+.found-code ul{display:grid;gap:10px;margin:8px 0 0;padding:0 0 0 20px;list-style:none}
+.found-code li{display:grid;grid-template-columns:minmax(72px,auto) minmax(0,1fr);gap:4px 12px;align-items:baseline;min-width:0}
+.found-code li .k{color:var(--foreground);font-weight:500}
+.found-code li .files{grid-column:2;display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+@media (max-width:767px){.found-code li{grid-template-columns:minmax(0,1fr)}.found-code li .files{grid-column:1}}
+
+/* "From your code" on a card, under its description. */
+.q>.from-code{order:2;margin-top:8px;min-width:0}
+.from-code .fc-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.from-code .t{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);margin-right:2px}
+.from-code .note{margin-top:6px;font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+
+/* ---------- while it reads, and corrections (plan 003) ---------- */
+.reads .status{margin-bottom:2px}
+.reads .trail{display:grid;gap:2px;margin:2px 0 4px;padding:0 0 0 16px;list-style:none;min-width:0}
+.reads .trail li{font:400 12px/18px var(--mono);color:var(--muted-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;min-width:0}
+/* The newest line fades in: a transition from its first style, nothing loops (reduced motion: it just appears). */
+@media (prefers-reduced-motion:no-preference){
+  .reads .trail li{transition:opacity var(--d-quick) var(--ease-out)}
+  @starting-style{.reads .trail li{opacity:0}}
+}
+.reads .status:has(.ember)~.trail,.reads .status:has(.ember)~.wait-note{padding-left:16px}
+.reads .status .btn{margin-left:4px}
+
+.fin6 details.rfiles{font-size:var(--t-meta);line-height:18px;color:var(--muted-foreground)}
+.fin6 details.rfiles summary{cursor:pointer;list-style:none;width:fit-content;border-radius:6px}
+.fin6 details.rfiles summary::-webkit-details-marker{display:none}
+.fin6 details.rfiles ul{margin:4px 0 0;padding:0;list-style:none;display:grid;gap:2px}
+.fin6 details.rfiles code{font-size:11px;color:var(--foreground)}
+
+.found-code li .v del{text-decoration-thickness:1px;color:var(--subtle-foreground)}
+.found-code li .yours{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;margin-top:2px;color:var(--foreground)}
+.found-code li .yours .who{color:var(--gr-ember-ink);font-size:var(--t-meta);font-weight:500}
+.found-code li .fix{grid-column:2;display:grid;gap:6px;margin-top:2px;min-width:0}
+.found-code li .fix label{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.found-code li .fix .in{display:flex;gap:6px;min-width:0}
+.found-code li .fix input{flex:1;min-width:0;height:32px;padding:0 10px;border:0;border-radius:9px;background:var(--background);box-shadow:inset 0 0 0 1px var(--hair);color:var(--foreground);font:inherit}
+.found-code li .fix input:focus-visible{outline:2px solid var(--ring);outline-offset:0}
+.found-code li .fix .err{font-size:var(--t-meta);color:var(--destructive-ink)}
+@media (max-width:767px){.found-code li .fix{grid-column:1}}
+
+/* Plan 005: the project chip's popover. Sections: the project, where plans are saved, reading. */
+.readpop{width:min(360px,calc(100vw - 32px));max-height:min(560px,calc(100vh - 96px));overflow-y:auto;gap:0;padding:6px 0}
+.readpop .psec{display:grid;gap:8px;padding:10px 16px}
+.readpop .psec+.psec{border-top:1px solid var(--border)}
+.readpop .plist{display:grid;gap:2px;margin:0 -8px;padding:0;list-style:none}
+.readpop .prow{display:grid;grid-template-columns:16px minmax(0,auto) minmax(0,1fr);align-items:center;gap:8px;width:100%;min-height:36px;padding:0 8px;border:0;border-radius:8px;background:none;color:var(--foreground);font:inherit;text-align:left;cursor:pointer;transition:background-color var(--d-quick) var(--ease-out)}
+.readpop .prow[aria-current]{cursor:default}
+@media (hover:hover){.readpop .prow:not([aria-current]):hover{background:var(--muted)}}
+.readpop .prow:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.readpop .prow .ck{display:inline-flex;color:var(--foreground)}
+.readpop .prow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.readpop .prow .at,.readpop .at1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground);font:400 12px/16px var(--mono)}
+.readpop .at1{margin:0}
+.readpop .pfield{display:grid;gap:6px;min-width:0}
+.readpop .pfield label{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.readpop .pfield .in{display:flex;gap:6px;min-width:0}
+.readpop .pfield input{flex:1;min-width:0;height:32px;padding:0 10px;border:0;border-radius:9px;background:var(--background);box-shadow:inset 0 0 0 1px var(--hair);color:var(--foreground);font:400 13px/16px var(--mono)}
+.readpop .pfield input:focus-visible{outline:2px solid var(--ring);outline-offset:0}
+.readpop .pfield .hint{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground);overflow-wrap:anywhere}
+.readpop .err{font-size:var(--t-meta);color:var(--destructive-ink)}
+@media (max-width:767px){.readpop .pfield input{font-size:16px}}
+
+/* Option previews ("See before you choose"): a small look at each option under the question, then
+   Compare at full size. The frame of a UI mock takes the app's theme, so the mock's own dark colors apply. */
+.pv{display:grid;gap:10px;margin:12px 0 0;min-width:0}
+.q>.pv{order:2}
+.pv-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(200px,1fr);gap:10px;margin:0;padding:2px;list-style:none;overflow-x:auto;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
+.pv-tile{position:relative;display:grid;grid-template-rows:148px auto;min-width:0;border-radius:12px;background:var(--card);box-shadow:0 0 0 1px var(--hair);overflow:hidden;scroll-snap-align:start;transition:box-shadow var(--d-quick) var(--ease-out)}
+.pv-tile[data-selected]{box-shadow:0 0 0 2px var(--foreground)}
+.pv-view{position:relative;overflow:hidden;background:var(--sel);pointer-events:none}
+.pv-view .pv-frame{position:absolute;inset:0 auto auto 0;width:200%;height:200%;transform:scale(.5);transform-origin:0 0}
+.pv-frame{display:block;width:100%;height:100%;border:0;background:Canvas;color-scheme:light}
+.dark .pv-frame{color-scheme:dark}
+/* The mock's own dark colors are switched in its document (uiDocument), to match this theme. */
+.pv-code{margin:0;padding:12px 14px;overflow:auto;font:400 12px/18px var(--mono);color:var(--foreground);white-space:pre;tab-size:2}
+.pv-view .pv-code{height:100%;box-sizing:border-box;overflow:hidden;font-size:11px;line-height:16px}
+.pv-code .tk-c{color:var(--muted-foreground);font-style:italic}
+.pv-code .tk-s{color:var(--gr-ember-ink)}
+.pv-code .tk-k{font-weight:600}
+.pv-code .tk-n{color:var(--gr-ember-ink)}
+.pv-diagram{display:grid;place-items:center;width:100%;height:100%;padding:10px;box-sizing:border-box;overflow:hidden}
+.pv-diagram svg{max-width:100%;max-height:100%;height:auto}
+.pv-none,.pv-bad{display:grid;place-items:center;height:100%;margin:0;padding:12px;box-sizing:border-box;text-align:center;color:var(--muted-foreground);font-size:var(--t-meta)}
+.pv-pick{display:flex;align-items:center;gap:8px;min-height:40px;padding:0 12px;border:0;background:none;color:var(--foreground);font:inherit;font-size:var(--t-body);text-align:left;cursor:pointer}
+.pv-pick::before{content:"";position:absolute;inset:0;border-radius:12px}
+.pv-pick:focus-visible{outline:0}
+.pv-pick:focus-visible::before{outline:2px solid var(--ring);outline-offset:-2px}
+.pv-pick .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-pick kbd,.cmp-col kbd{flex:none;display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;border-radius:5px;box-shadow:inset 0 0 0 1px var(--hair);font-size:11px;color:var(--muted-foreground)}
+.pv .rec,.cmp-col .rec{flex:none;font-size:var(--t-meta);color:var(--muted-foreground)}
+.pv-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.pv-acts .err{font-size:var(--t-meta);color:var(--destructive-ink)}
+.pv-acts .lnk{padding:0;border:0;background:none;color:inherit;font:inherit;text-decoration:underline;cursor:pointer}
+@media (hover:hover){.pv-tile:not([data-selected]):hover{box-shadow:0 0 0 1px var(--muted-foreground)}}
+
+.fs5.cmp{grid-template-rows:auto minmax(0,1fr) auto}
+/* One set of rows for every column, so the previews start on the same line whatever the descriptions' lengths. */
+.cmp-grid{display:grid;grid-template-columns:repeat(var(--cols),minmax(300px,1fr));grid-template-rows:auto minmax(0,1fr) auto;gap:0 1px;min-height:0;overflow-x:auto;background:var(--hair)}
+.cmp-grid>.cmp-col{grid-row:span 3;grid-template-rows:subgrid}
+.cmp-one{display:grid;min-height:0}
+.cmp-col{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-width:0;min-height:0;background:var(--background)}
+.cmp-col>header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 16px 12px}
+.cmp-col>header b{font-weight:600}
+.cmp-col>header p{flex-basis:100%;margin:0;color:var(--muted-foreground);font-size:var(--t-meta);line-height:16px}
+.cmp-view{min-height:0;overflow:auto;background:var(--sel)}
+.cmp-view .pv-code{min-height:100%;box-sizing:border-box}
+.cmp-col>footer{display:flex;padding:10px 16px;border-top:1px solid var(--hair)}
+.cmp-col[data-selected]>header b{text-decoration:underline;text-underline-offset:4px}
+.cmp-foot{display:flex;align-items:center;justify-content:center;gap:12px;min-height:44px;padding:0 16px;border-top:1px solid var(--hair)}
+.fs5.cmp.m .cmp-foot{justify-content:space-between}
+@media (max-width:767px){.pv-row{grid-auto-columns:minmax(220px,72%)}.pv-pick{min-height:44px}}
+
+/* Plan-to-build loop. The ask card is the round's question card (.q), pinned above the plan with an
+   ember tag: a coding agent is waiting on it. */
+.asks{display:grid;gap:10px;width:calc(100% - 40px);max-width:720px;margin:4px auto 10px}
+.askc[data-slot=agent-question]{max-width:none;width:auto;font-size:inherit;line-height:inherit;animation:none;gap:0;border:0;background:var(--sel);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--gr-ember) 55%,transparent);padding:14px 20px 12px;border-radius:14px}
+.askc>[data-slot=agent-question-body],.askc>[data-slot=agent-question-body]>div,.askc>[data-slot=agent-question-body]>div>div{display:contents}
+.askc>[data-slot=agent-question-record]{display:none}
+.askc .q{margin:0;padding:6px 0 4px;background:none}
+.askc .ask-tag{display:flex;align-items:center;gap:8px;margin:0;color:var(--gr-ember-ink);font-size:var(--t-meta);line-height:16px;font-weight:500}
+.askc .ask-tag .dot{width:7px;height:7px;border-radius:50%;background:var(--gr-ember)}
+.askc .ask-tag .at{color:var(--muted-foreground);font-weight:400}
+.askc .ask-foot{padding:4px 0 0}
+.askc .ask-foot>div{display:flex;align-items:center;gap:12px;min-width:0}
+.askc .ask-foot .spacer{flex:1}
+.askc .ask-foot [data-slot=agent-question-continue]{height:32px;padding:0 14px;border-radius:9px;font-size:var(--t-body);font-weight:500;box-shadow:none}
+.askc:not([aria-busy]) .ask-foot [data-slot=agent-question-continue]::after{content:"↵" / "";margin-left:8px;font:400 var(--t-meta)/1 var(--sans);opacity:.75}
+.askc .ask-foot [data-slot=agent-question-footer-hints],.askc .ask-foot kbd{display:none}
+.ask-badge{flex:none;margin-left:8px;color:var(--gr-ember-ink);font-size:var(--t-meta);font-weight:500;white-space:nowrap}
+
+/* The Build tab: the plan's steps, their status, and what was asked. */
+.btab{max-width:720px;margin:0 auto;padding:20px 20px 48px;display:grid;gap:10px}
+.btab-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.btab-h h1{margin:0;font-size:var(--t-h);line-height:24px;font-weight:600}
+.btab .err{margin:0;font-size:var(--t-meta);color:var(--destructive-ink)}
+.bsteps{display:grid;gap:2px;margin:6px 0 0;padding:0;list-style:none}
+.bstep{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 8px 10px 10px;border-radius:12px;transition:background-color var(--d-quick) var(--ease-out)}
+.bstep:focus-within{background:var(--sel)}
+@media (hover:hover){.bstep:hover{background:var(--sel)}}
+.bmark{display:grid;place-items:center;width:16px;height:16px;margin-top:3px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--subtle-foreground);color:var(--background)}
+.bmark[data-status=started]{box-shadow:inset 0 0 0 1.5px var(--gr-ember);background:conic-gradient(var(--gr-ember) 0 50%,transparent 0)}
+.bmark[data-status=done]{box-shadow:none;background:var(--foreground)}
+.bbody{min-width:0;display:grid;gap:2px}
+.btab .bt{margin:0;font-size:var(--t-body);line-height:22px;font-weight:500;overflow-wrap:anywhere}
+.btab .bn{color:var(--muted-foreground);font-weight:400;font-variant-numeric:tabular-nums}
+.btab .btag{margin-left:8px;color:var(--gr-ember-ink);font-size:var(--t-meta);font-weight:500}
+.btab .bd{margin:0;color:var(--muted-foreground);font-size:var(--t-meta);line-height:18px;overflow-wrap:anywhere}
+.btab .bd>span:first-child{color:var(--foreground)}
+.bstep[data-status=done] .bt{color:var(--muted-foreground)}
+.bacts{display:flex;align-items:center;gap:2px;opacity:0;transition:opacity var(--d-quick) var(--ease-out)}
+.bstep:hover .bacts,.bstep:focus-within .bacts{opacity:1}
+.bacts .icon-btn{width:28px;height:28px}
+.bacts .flip{display:inline-flex;transform:rotate(180deg)}
+.bform{grid-column:2/-1;display:grid;gap:6px;min-width:0}
+.bform label{font-size:var(--t-meta);line-height:16px;color:var(--muted-foreground)}
+.bform input{min-width:0;height:32px;padding:0 10px;border:0;border-radius:9px;background:var(--background);box-shadow:inset 0 0 0 1px var(--hair);color:var(--foreground);font:inherit}
+.bform input:focus-visible{outline:2px solid var(--ring);outline-offset:0}
+.bform-acts{display:flex;gap:6px;margin-top:2px}
+.badd{margin-top:4px;padding:0 10px}
+.badd summary{display:inline-flex;align-items:center;gap:6px;min-height:32px;cursor:pointer;list-style:none;border-radius:8px;color:var(--muted-foreground);font-size:var(--t-body)}
+.badd summary::-webkit-details-marker{display:none}
+.badd summary:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.badd[open] summary{color:var(--foreground)}
+.badd .bform{margin:6px 0 4px}
+.basks{margin-top:14px;padding:0 10px}
+.basks h2{margin:0 0 6px;font-size:var(--t-meta);line-height:16px;font-weight:500;color:var(--muted-foreground)}
+.basks ul{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.basks li[data-state=open] .bd{color:var(--gr-ember-ink)}
+@media (max-width:767px){
+  .asks{width:calc(100% - 24px);margin:4px auto 10px}
+  .askc[data-slot=agent-question]{padding:12px 14px 12px}
+  .askc .ask-foot [data-slot=agent-question-continue]{flex:1;height:44px;border-radius:12px}
+  .btab{padding:16px 12px 40px}
+  .bstep{grid-template-columns:20px minmax(0,1fr)}
+  .bacts{grid-column:2;opacity:1;flex-wrap:wrap}
+  .bacts .icon-btn{width:44px;height:44px}
+  .bform input{height:44px;font-size:16px}
+}
+
+/* A chosen UI preview in the plan: the mock in its frame, its source behind a disclosure. */
+.doc .pv-chosen{margin:12px 0;border-radius:12px;background:var(--sel);overflow:hidden}
+.doc .pv-chosen-view{height:320px;resize:vertical;overflow:hidden;min-height:160px;max-height:720px}
+.doc .pv-chosen details{border-top:1px solid var(--hair)}
+.doc .pv-chosen summary{display:flex;align-items:center;min-height:36px;padding:0 16px;cursor:pointer;list-style:none;color:var(--muted-foreground);font-size:var(--t-meta)}
+.doc .pv-chosen summary::-webkit-details-marker{display:none}
+.doc .pv-chosen summary:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.doc .pv-chosen details[open] summary{color:var(--foreground)}
+.doc .pv-chosen pre.pv-code{margin:0;border-radius:0;background:none;max-height:320px;overflow:auto}
+.doc pre.pv-code.wrap{white-space:pre-wrap;overflow-wrap:anywhere}
+.doc pre.pv-code{font:400 13px/21px var(--mono)}
+@media (max-width:767px){.doc .pv-chosen-view{height:280px}.doc .pv-chosen summary{min-height:44px}}

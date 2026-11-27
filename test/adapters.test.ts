@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { classifyFailure } from "../src/core/classify.ts";
 import { GROK_DISALLOWED_TOOLS, SPECS, createAdapters } from "../src/core/providers/adapters.ts";
+import { claudeDenyRules, grokDenyRules } from "../src/core/project-read.ts";
 import { scriptFromCmdShim, spawnTarget, which } from "../src/core/providers/resolve.ts";
 import type { ProviderAdapter, ProviderEvent, RunFiles, RunRequest } from "../src/core/providers/types.ts";
 import { fakeBinDir, fakeEnv } from "./helpers.ts";
@@ -70,6 +71,58 @@ describe("AC4: exact argv per adapter (tools off / read-only)", () => {
     expect(SPECS.claude.buildInvocation(withModel, files).args.slice(-2)).toEqual(["--model", "m1"]);
     expect(SPECS.codex.buildInvocation(withModel, files).args.slice(-3)).toEqual(["-m", "m1", "-"]);
     expect(SPECS.pi.buildInvocation(withModel, files).args.slice(-2)).toEqual(["--model", "m1"]);
+  });
+});
+
+describe("plan 002: exact read-only argv per adapter", () => {
+  const read: RunRequest = { ...req, access: "read", cwd: "/repo" };
+  test("claude: Read, Grep and Glob only, user settings only, no MCP servers, sensitive files denied", () => {
+    expect(SPECS.claude.buildInvocation(read, files)).toEqual({
+      args: [
+        "-p", "--output-format", "json", "--json-schema", '{"type":"object"}', "--tools", "Read,Grep,Glob",
+        "--setting-sources", "user", "--strict-mcp-config", "--disallowedTools", ...claudeDenyRules(),
+        "--permission-mode", "dontAsk", "--system-prompt-file", "/tmp/run/system.md", "--no-session-persistence",
+      ],
+      stdin: "USER",
+    });
+    expect(claudeDenyRules()).toContain("Read(**/.env)");
+    expect(claudeDenyRules()).toContain("Read(**/.git/**)");
+  });
+  test("claude: the streaming variant keeps every read-only flag", () => {
+    const args = SPECS.claude.stream!.buildInvocation(read, files).args;
+    for (const f of ["Read,Grep,Glob", "--setting-sources", "user", "--strict-mcp-config", "dontAsk", ...claudeDenyRules()]) expect(args).toContain(f);
+  });
+  test("codex can't read: its app and plugin tools can't be removed, so it keeps today's argv", () => {
+    expect(SPECS.codex.canRead).toBeUndefined();
+    expect(SPECS.codex.buildInvocation(read, files)).toEqual(SPECS.codex.buildInvocation({ ...req, cwd: "/repo" }, files));
+  });
+  test("grok: read_file, grep and list_dir only; every other built-in and the MCP gateway removed; MCP calls and secrets denied", () => {
+    expect(SPECS.grok.buildInvocation(read, files)).toEqual({
+      args: [
+        "--prompt-file", "/tmp/run/prompt.md", "--output-format", "json", "--json-schema", '{"type":"object"}',
+        "--system-prompt-override", "SYSTEM", "--tools", "read_file,grep,list_dir",
+        "--disallowed-tools", "run_terminal_cmd,search_replace,write,web_search,web_fetch,todo_write,task,Agent,search_tool,use_tool",
+        ...grokDenyRules().flatMap((r) => ["--deny", r]),
+        "--disable-web-search", "--no-subagents", "--no-plan", "--max-turns", "24", "--sandbox", "read-only",
+        "--no-auto-update", "--cwd", "/repo",
+      ],
+      env: { GROK_MEMORY: "0" },
+    });
+  });
+  test("grok denies every MCP call and the sensitive files", () => {
+    expect(grokDenyRules()[0]).toBe("MCPTool");
+    expect(grokDenyRules()).toContain("Read(**/.env)");
+    expect(grokDenyRules()).toContain("Grep(**/.env)");
+  });
+  test("pi can't read yet: no canRead, and a read request gets today's tools-off argv", () => {
+    expect(SPECS.pi.canRead).toBeUndefined();
+    expect(SPECS.pi.buildInvocation(read, files)).toEqual(SPECS.pi.buildInvocation(req, files));
+    const byId = Object.fromEntries(createAdapters().map((a) => [a.id, a.canRead]));
+    expect(byId).toEqual({ claude: true, codex: false, grok: true, pi: false });
+  });
+  test('access "none" is exactly the tools-off argv', () => {
+    for (const id of ["claude", "codex", "grok", "pi"] as const)
+      expect(SPECS[id].buildInvocation({ ...req, access: "none" }, files)).toEqual(SPECS[id].buildInvocation(req, files));
   });
 });
 

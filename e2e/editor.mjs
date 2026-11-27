@@ -49,7 +49,7 @@ const freePort = () =>
 async function server(data = ".grillado") {
   const home = mkdtempSync(path.join(WORK, "home-"));
   const env = { PATH: `${bin}:${path.dirname(NODE)}:/usr/bin:/bin`, HOME: home, GRILLADO_HOME: path.join(home, data), FAKE_STATE_DIR: home };
-  const child = spawn(NODE, [CLI, "--no-open", "--no-scan", "--port", String(await freePort())], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(NODE, [CLI, "--no-open", "--no-scan", "--port", String(await freePort())], { cwd: home, env, stdio: ["ignore", "pipe", "pipe"] });
   started.add(child);
   let out = "";
   const url = await new Promise((resolve, reject) => {
@@ -163,7 +163,7 @@ try {
     const entry = pg.getByRole("button", { name: "Use in your editor" });
     await entry.waitFor();
     const recent = pg.locator(".rrow", { hasText: "A booking page for my barber shop" });
-    check(`${theme}: Recent says where a start_plan session came from`, (await recent.locator(".meta").textContent()) === "From Cursor · waiting for your answers");
+    check(`${theme}: Recent says where a start_plan session came from`, /^(\S+ · )?From Cursor · waiting for your answers$/.test(await recent.locator(".meta").textContent()), await recent.locator(".meta").textContent());
     check(`${theme}: Home entry is quiet, not blue`, !(await entry.getAttribute("class")).includes("primary") && (await entry.getAttribute("aria-haspopup")) === "dialog");
     if (one) {
       await pg.getByRole("button", { name: "More" }).click();

@@ -6,6 +6,15 @@
 // FAKE_EDIT2_FILE (when it exists, its text is the second edit's "after"), FAKE_DELAY_MS, FAKE_STATE_DIR (counters), FAKE_LOG (jsonl of invocations),
 // FAKE_CTL (JSON env overrides, read per run), FAKE_REPLY_TEXT (a comment reply to use), FAKE_STREAM_CUT (hold/fail right after this text), FAKE_STREAM (hold | fail | retry-once: Claude's stream-json, #97), FAKE_STREAM_MS (pause per chunk, default 25), FAKE_GATE (stream only once this file exists),
 // FAKE_PLAN_OMIT (decision keys the plan leaves out, comma-separated), FAKE_ADDPLAN (none | fail-once | fail | bad-once), FAKE_ADDPLAN_DELAY_MS,
+// Read access (plan 002): a round or plan prompt that asks for findings/touches gets evidence, findings and touches back, some of them
+// paths Grillado must drop (outside the project, sensitive, missing); FAKE_READ_FINDING overrides the good finding's fact.
+// FAKE_READ_TRAIL (plan 003): Claude's stream-json prints these tool calls first, comma-separated Tool:target (Read:package.json,
+// Grep:autosave, Glob:**/*), FAKE_READ_TRAIL_MS apart; Read targets are made absolute like Claude's.
+// Option previews: FAKE_PREVIEWS (ui | code | diagram: the "platform" question's options carry previews; big-once: the first reply's
+// are over the limit; partial: one option's never fits; evil: ui previews with a script and requests to FAKE_PREVIEW_EVIL_URL),
+// FAKE_ANOTHER (fail | dup: "Show me another" never works), FAKE_ANOTHER_DELAY_MS.
+// FAKE_PLAN_OPEN (open lines the plan writer lists by itself, "|"-separated), FAKE_PLAN_SCOPE (the plan's Out of scope lines, "|"-separated).
+// FAKE_STEPS (none | none-once | bare-once): the plan's build steps (plan-to-build loop).
 // FAKE_IMPORT (fail | fail-once), FAKE_IMPORT_DELAY_MS, FAKE_SPLIT (fail | many), FAKE_SPLIT_DELAY_MS, FAKE_SPLIT_LOG (a file that gets one line per split run), FAKE_GROUP (empty | missing | dup | invent).
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -112,6 +121,52 @@ const isAddPlan = /"type":"addplan"/.test(system);
 const isImport = /"type":"decisions"/.test(system);
 const isGroup = /"type":"groups"/.test(system);
 const isSplit = /"type":"slices"/.test(system) || isGroup;
+const isAnother = /"type":"option"/.test(system);
+/** "Show me another" sends the question as a second <state> tag. */
+const asked = isAnother ? JSON.parse([...prompt.matchAll(/<state>([\s\S]*?)<\/state>/g)][1]?.[1] ?? "{}") : null;
+
+// ---- option previews
+const NONE = { kind: "none", lang: "", source: "" };
+const evilUrl = process.env.FAKE_PREVIEW_EVIL_URL ?? "http://127.0.0.1:9/";
+function uiPreview(label, evil) {
+  const bad = evil
+    ? `<script>fetch("${evilUrl}script");document.title="ran";try{parent.document.title="escaped"}catch{};new Image().src="${evilUrl}js-img"</script><img src="${evilUrl}img" alt=""><link rel="stylesheet" href="${evilUrl}css"><meta http-equiv="refresh" content="0;url=${evilUrl}refresh"><form action="${evilUrl}form"><input name="q" value="x"><button id="send">Send</button></form><p style="background:url(${evilUrl}bg)">bg</p>`
+    : "";
+  return {
+    kind: "ui",
+    lang: "",
+    source: `<style>body{margin:0;padding:16px;font:14px/1.4 system-ui,sans-serif;background:#fff;color:#111}h1{font-size:16px;margin:0 0 12px}li{padding:6px 0;border-bottom:1px solid #ddd}ul{list-style:none;margin:0;padding:0}button{margin-top:12px;padding:6px 12px}@media (prefers-color-scheme:dark){body{background:#161616;color:#eee}li{border-color:#333}}</style><h1 data-preview="${label}">${label}: shopping list</h1><ul><li>Milk</li><li>Bread</li><li>Coffee</li></ul><button type="button">Add item</button>${bad}`,
+  };
+}
+const codePreview = (label, id) => ({ kind: "code", lang: "ts", source: `// ${label}\nconst list = createList({ target: "${id}" });\nlist.add("Milk");\nawait list.save(); // returns once it is stored` });
+const diagramPreview = (label) => ({ kind: "diagram", lang: "", source: `flowchart LR\n  accTitle: ${label} flow\n  accDescr: How a new item is saved with ${label}.\n  A["New item"] --> B["${label}"]\n  B --> C["Saved"]` });
+function previewFor(kind, label, id) {
+  if (kind === "code") return codePreview(label, id);
+  if (kind === "diagram") return diagramPreview(label);
+  return uiPreview(label, kind === "evil");
+}
+/** FAKE_PREVIEWS: put previews on the options of the "platform" question. */
+function addPreviews(q) {
+  const want = process.env.FAKE_PREVIEWS;
+  for (const o of q.options) o.preview = NONE;
+  if (!want || q.key !== "platform") return q;
+  const kind = want === "big-once" || want === "partial" ? "ui" : want;
+  for (const o of q.options) o.preview = previewFor(kind, o.label, o.id);
+  if ((want === "big-once" && once("big-preview")) || want === "partial") q.options[1].preview = { kind: "ui", lang: "", source: `<p>${"x".repeat(40_000)}</p>` };
+  return q;
+}
+function anotherReply() {
+  const m = process.env.FAKE_ANOTHER;
+  if (m === "fail") return "No JSON this time.";
+  const n = (asked.options?.length ?? 0) + 1;
+  const label = m === "dup" ? asked.options[0].label : `Option ${n}`;
+  const kind = /<script/.test(asked.options?.[0]?.preview ?? "") ? "evil" : asked.previewKind;
+  return { type: "option", label, description: `A ${n}th way to do it.`, preview: previewFor(kind, label, `opt${n}`) };
+}
+/** The grounded prompts (plan 002) ask for findings in rounds and touches in the plan. */
+const grounded = /"findings":\[/.test(system) || /"touches":\[/.test(system);
+const GOOD_EVIDENCE = { path: "package.json", note: "Scripts and dependencies" };
+const BAD_EVIDENCE = [{ path: "../outside.txt", note: "Outside the project" }, { path: ".env", note: "A secret" }, { path: "src/missing.ts", note: "Not there" }];
 
 const BASE = [
   { key: "scope", label: "Scope", title: "Ship a narrow first version?", deps: [], options: [["mvp", "Yes, one core flow"], ["full", "No, the full vision"]] },
@@ -159,14 +214,16 @@ function roundReply() {
     return { type: "plan", title: "Too early", markdown: "# nope", decisions: [], openDecisions: [] };
   }
   if (state.pendingQuestions?.length) {
+    // A topic made from a line of the plan (open-…, scope-…) carries the whole line: the question gets a short label of its own.
+    const short = (item) => (/^(open|scope)-/.test(item.key) ? (item.wasOutOfScope ? "Brought in" : "Open line") : item.label);
     const questions = state.pendingQuestions.slice(0, 6).map((item) => question(
-      TEMPLATES.find((template) => template.key === item.key) ?? { key: item.key, label: item.label, title: `Decide ${item.label}?`, deps: [], options: yn },
+      TEMPLATES.find((template) => template.key === item.key) ?? { key: item.key, label: short(item), title: `Decide ${item.label}`.slice(0, 150).replace(/[.;]$/, "") + "?", deps: [], options: yn },
     ));
     return { type: "ask_round", summary: "Finish the open decisions", questions, upcoming: [] };
   }
   const ready = TEMPLATES.filter((t) => !settled.has(t.key) && t.deps.every((d) => settled.has(d)));
   if (ready.length) {
-    const q = ready.map(question);
+    const q = ready.map(question).map(addPreviews);
     if (mode === "leak-once" && once("leak")) q[0].body = "This follows the grilling method.";
     const asked = new Set(ready.map((t) => t.key));
     const upcoming = TEMPLATES.filter((t) => !settled.has(t.key) && !asked.has(t.key) && t.hint !== false && t.deps.some((d) => asked.has(d))).map((t) => ({
@@ -174,6 +231,16 @@ function roundReply() {
       label: t.label,
       dependsOn: t.deps,
     }));
+    if (grounded) {
+      q.forEach((x) => (x.evidence = []));
+      // Grok names absolute paths: Grillado makes one inside the project relative. The other cards have none.
+      q[0].evidence = [GOOD_EVIDENCE, { path: path.join(process.cwd(), "README.md"), note: "What the project says it is" }, ...BAD_EVIDENCE];
+      const findings = [
+        { label: "Stack", fact: process.env.FAKE_READ_FINDING ?? "The project is a Node package.", paths: ["package.json", "nope.json"] },
+        { label: "Secrets", fact: "An API key is set.", paths: [".env"] },
+      ];
+      return { type: "ask_round", summary: `Round ${state.nextRound}`, questions: q, upcoming, findings };
+    }
     return { type: "ask_round", summary: `Round ${state.nextRound}`, questions: q, upcoming };
   }
   if (state.keepGoing && !settled.has("extras")) {
@@ -209,16 +276,33 @@ function longMarkdown(ds) {
   return `## Problem\n${state.idea}. Ideas show up while walking or in the middle of something else, and most of them are gone by the time a laptop is open.\n\n${body}`;
 }
 
+/** The plan's build steps, one per decision. FAKE_STEPS: none (never any), none-once (the first reply has none), bare-once (the first reply's have no done check). */
+function planSteps(ds) {
+  const m = process.env.FAKE_STEPS;
+  if (m === "none" || (m === "none-once" && once("no-steps"))) return [];
+  const bare = m === "bare-once" && once("bare-steps");
+  const steps = ds.map((d) => ({ title: `Build ${d.key}: ${d.answer}`, done: bare ? "" : `The ${d.key} choice works end to end and its test passes.` }));
+  return steps.length ? steps : [{ title: "Build the first version", done: bare ? "" : "It runs end to end." }];
+}
+
 function planReply() {
   // FAKE_PLAN_OMIT: the text leaves these decisions out, so they read "Not in the plan text yet" (#104).
   const omit = new Set((process.env.FAKE_PLAN_OMIT ?? "").split(",").filter(Boolean));
   const ds = (state.decisions ?? []).filter((d) => !omit.has(d.key));
+  // FAKE_PLAN_SCOPE: lines of an Out of scope section, "|"-separated; one the user brought in (nowInScope) moves out of it.
+  const inScope = new Set(state.nowInScope ?? []);
+  const outScope = (process.env.FAKE_PLAN_SCOPE ?? "").split("|").filter((line) => line && !inScope.has(line));
+  // FAKE_PLAN_OPEN: open lines the writer lists by itself, "|"-separated, until a question made from one is answered.
+  const ownOpen = ds.some((d) => /^open-/.test(d.key)) ? [] : (process.env.FAKE_PLAN_OPEN ?? "").split("|").filter(Boolean);
+  const extra = `${inScope.size ? `\n\n## Now in scope\n${[...inScope].map((line) => `- ${line}`).join("\n")}` : ""}${outScope.length ? `\n\n## Out of scope\n${outScope.map((line) => `- ${line}`).join("\n")}` : ""}`;
   return {
     type: "plan",
     title: `Plan: ${state.idea}`,
-    markdown: mode === "long" ? longMarkdown(ds) : `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`,
+    markdown: (mode === "long" ? longMarkdown(ds) : `## Problem\n${state.idea}\n\n## Implementation decisions\n${ds.map((d) => `- ${d.answer} [R${d.round}:${d.key}]`).join("\n")}`) + extra,
     decisions: ds.map((d) => ({ round: d.round, questionId: d.key, statement: `Decided: ${d.answer}.` })),
-    openDecisions: state.openDecisions ?? [],
+    openDecisions: [...(state.openDecisions ?? []), ...ownOpen],
+    steps: planSteps(ds),
+    ...(grounded ? { touches: [{ path: "package.json", why: "Add the new script" }, { path: "src/nope.ts", why: "Not there" }, { path: ".env", why: "A secret" }] } : {}),
   };
 }
 
@@ -347,8 +431,9 @@ if (isImport && process.env.FAKE_IMPORT_DELAY_MS) await new Promise((r) => setTi
 // FAKE_COMMENT_DELAY_MS: comment replies and Apply runs take this long (the e2e sees "{agent} is writing suggestions").
 if ((isComment || isEdit) && process.env.FAKE_COMMENT_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COMMENT_DELAY_MS)));
 if (isDiagram && process.env.FAKE_DIAGRAM_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_DIAGRAM_DELAY_MS)));
+if (isAnother && process.env.FAKE_ANOTHER_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ANOTHER_DELAY_MS)));
 if (isAddPlan && process.env.FAKE_ADDPLAN_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_ADDPLAN_DELAY_MS)));
-const reply = isGroup ? groupReply() : isSplit ? splitReply() : isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
+const reply = isAnother ? anotherReply() : isGroup ? groupReply() : isSplit ? splitReply() : isImport ? importReply() : isAddPlan ? addPlanReply() : isDiagram ? diagramReply() : isComment || isEdit ? commentReply() : isPlan ? planReply() : roundReply();
 const text = typeof reply === "string" ? reply : JSON.stringify(reply);
 
 if (name === "claude" && flag("--output-format") === "stream-json") {
@@ -380,13 +465,21 @@ if (name === "claude" && flag("--output-format") === "stream-json") {
 // ends it), fail errors halfway, retry-once makes a first StructuredOutput call that Claude Code
 // rejects and calls again (the streamed text starts over).
 async function claudeStream(reply, text) {
-  const pause = () => new Promise((r) => setTimeout(r, Number(process.env.FAKE_STREAM_MS ?? 25)));
+  // Comment replies stream slowly enough to watch (#97); rounds and plans (plan 003: reading runs stream too) don't wait.
+  const pause = () => new Promise((r) => setTimeout(r, Number(process.env.FAKE_STREAM_MS ?? (isComment || isEdit ? 25 : 0))));
   const line = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
   const ev = (event) => line({ type: "stream_event", event, session_id: "fake", uuid: "u" });
   const mode = process.env.FAKE_STREAM ?? "";
   // FAKE_GATE: hold everything until this file exists, so a test can look at "before the first delta" for as long as it needs.
   if (process.env.FAKE_GATE) for (const end = Date.now() + 60_000; !existsSync(process.env.FAKE_GATE) && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));
   line({ type: "system", subtype: "init", session_id: "fake", tools: ["StructuredOutput"] });
+  for (const [i, item] of (process.env.FAKE_READ_TRAIL ?? "").split(",").filter(Boolean).entries()) {
+    const [tool, ...rest] = item.split(":");
+    const target = rest.join(":");
+    const input = tool === "Read" ? { file_path: path.isAbsolute(target) ? target : path.join(process.cwd(), target) } : { pattern: target };
+    line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `read${i}`, name: tool, input }] } });
+    await new Promise((r) => setTimeout(r, Number(process.env.FAKE_READ_TRAIL_MS ?? 50)));
+  }
   ev({ type: "message_start", message: { id: "m1", role: "assistant", content: [] } });
   ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
   ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Here is my reply." } });

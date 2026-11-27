@@ -8,7 +8,8 @@ import { reasonText } from "../../../../src/core/reason.ts";
 import { openActivity } from "../activity/Activity";
 import { api } from "../api";
 import type { PlanDraft } from "../editor/PlanEditor";
-import type { MermaidLike } from "../editor/diagram";
+import { RENDER_OPTIONS } from "../editor/diagram";
+import { loadRenderer } from "../editor/DiagramView";
 import { IAlert, ICheck, IShape, ISq, IX } from "../icons";
 import type { SessionView } from "../types";
 
@@ -35,8 +36,6 @@ export const DCOPY = {
   stopped: "Stopped",
 };
 
-let mermaid: Promise<MermaidLike> | null = null;
-const loadMermaid = () => (mermaid ??= import("mermaid").then((m) => m.default as unknown as MermaidLike));
 
 export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentName: string; mobile: boolean; enabled: boolean; moreRef: RefObject<HTMLButtonElement | null>; setNote: (t: string) => void }) {
   const { session, draft, agentName, mobile } = o;
@@ -58,18 +57,23 @@ export function useDiagrams(o: { session: SessionView; draft: PlanDraft; agentNa
     }
   };
 
-  // The browser draws with real Mermaid: a suggestion it can't parse never shows (counts as skipped, #40).
+  // The browser draws with the real renderer: a suggestion it can't draw never shows (counts as skipped, #40).
   const checked = useRef(new Set<string>());
   useEffect(() => {
     for (const s of session.suggestions ?? []) {
       if (s.kind !== "diagram" || s.status !== "pending" || checked.current.has(s.id)) continue;
       checked.current.add(s.id);
-      void loadMermaid()
-        .then((m) => m.parse(suggestedCode(s)))
-        .catch((err) => {
-          if (/addHook|chunk|import/i.test(String(err?.message ?? err))) return;
-          void api.action(session.id, "suggestions", { op: "drop", id: s.id }).catch(() => {});
-        });
+      void loadRenderer().then(
+        (r) => {
+          try {
+            r.render(suggestedCode(s), RENDER_OPTIONS);
+          } catch {
+            void api.action(session.id, "suggestions", { op: "drop", id: s.id }).catch(() => {});
+          }
+        },
+        // The renderer itself didn't load: that says nothing about the diagram.
+        () => {},
+      );
     }
   }, [session.suggestions, session.id]);
 

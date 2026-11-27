@@ -106,6 +106,7 @@ describe("scan: on-screen strings only", () => {
       "src/core/diagrams.ts",
       "src/core/editor.ts",
       "src/core/floor.ts",
+      "src/core/previews.ts",
       "src/core/reason.ts",
       "src/core/shell.ts",
       "src/core/text-hash.ts",

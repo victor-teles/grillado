@@ -1,7 +1,19 @@
 {
   "name": "grillado",
   "version": "0.1.7",
-  "description": "Turn a raw idea into a plan you understand, one round of questions at a time. Runs on your local coding agent CLI.",
+  "description": "Plan software with your coding agent: answer a few rounds of questions in the browser and get a plan where every decision is yours. Runs on Claude Code, Codex, Grok or pi, with no API key.",
+  "keywords": [
+    "planning",
+    "spec",
+    "prd",
+    "coding-agent",
+    "claude-code",
+    "codex",
+    "grok",
+    "mcp",
+    "agent-skills",
+    "ai"
+  ],
   "license": "MIT",
   "author": "Victor Mesquita",
   "repository": {
@@ -33,7 +45,7 @@
     "check:banned": "bun scripts/check-banned.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
     "test": "bun test test/",
-    "e2e": "node e2e/run.mjs && node e2e/comments.mjs && node e2e/streaming.mjs && node e2e/accept-hold.mjs && node e2e/hover-pill.mjs && node e2e/refind.mjs && node e2e/margins.mjs && node e2e/thread-menu.mjs && node e2e/add-to-plan.mjs && node e2e/slash.mjs && node e2e/diagrams.mjs && node e2e/phone-edit.mjs && node e2e/activity.mjs && node e2e/mcp.mjs && node e2e/editor.mjs && node e2e/found.mjs && node e2e/found-budget.mjs && node e2e/issues.mjs && node e2e/slow-agent.mjs && node e2e/demo-findings.mjs"
+    "e2e": "node e2e/run.mjs && node e2e/comments.mjs && node e2e/streaming.mjs && node e2e/accept-hold.mjs && node e2e/hover-pill.mjs && node e2e/refind.mjs && node e2e/margins.mjs && node e2e/thread-menu.mjs && node e2e/add-to-plan.mjs && node e2e/slash.mjs && node e2e/diagrams.mjs && node e2e/phone-edit.mjs && node e2e/activity.mjs && node e2e/mcp.mjs && node e2e/editor.mjs && node e2e/found.mjs && node e2e/found-budget.mjs && node e2e/issues.mjs && node e2e/slow-agent.mjs && node e2e/demo-findings.mjs && node e2e/grounded.mjs && node e2e/reading.mjs && node e2e/previews.mjs && node e2e/plan-topics.mjs && node e2e/build.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
@@ -55,7 +67,7 @@
     "cn": "^0.5.0",
     "esbuild": "^0.28.2",
     "lucide-react": "^1.61.0",
-    "mermaid": "12.2.0",
+    "pele": "1.13.0",
     "playwright-core": "^1.64.1",
     "radix-ui": "^1.8.1",
     "react": "^19.3.1",

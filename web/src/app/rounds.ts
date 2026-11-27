@@ -11,6 +11,12 @@ export function finishingPlanRound(s: Pick<SessionView, "rounds" | "plan">, roun
   return round.questions.some((question) => !asked.has(question.key));
 }
 
+/** A round that asks about an Out of scope line the user brought into the plan. */
+export function scopeRound(s: Pick<SessionView, "rounds" | "topics">, roundN: number): boolean {
+  const round = s.rounds.find((item) => item.n === roundN);
+  return !!round?.questions.some((question) => s.topics?.some((topic) => topic.kind === "scope" && topic.key === question.key));
+}
+
 /** Rounds that count toward the cap: re-asks of reopened or stale decisions don't. */
 export const counted = (s: Pick<CapView, "rounds">) => s.rounds.filter((r) => !r.reask).length;
 
@@ -77,12 +83,14 @@ export function preparing(s: CapView): string {
 export const sendAndWrap = (s: CapView, roundN: number) => !s.extra && s.rounds.filter((x) => x.n <= roundN && !x.reask).length < s.maxRounds;
 
 /** Confirm's second button at the cap (#37, PR43 review): the extra round, or the owed decisions by name. */
-export function capAction(s: CapView & Pick<SessionView, "decisions">): { label: string; action: "ask-more" | "keep-going" } | null {
+export function capAction(s: CapView & Pick<SessionView, "decisions" | "topics">): { label: string; action: "ask-more" | "keep-going" } | null {
   if (!capReached(s)) return null;
   const owed = owedKeys(s);
   if (owed.length === 1) {
     const k = owed[0];
     const d = s.stale?.[k] ?? s.decisions[k];
+    // A line of the plan sent to be asked about has no decision yet: its key isn't a name.
+    if (!d && s.topics?.some((topic) => topic.key === k)) return { label: "Ask it again", action: "keep-going" };
     return { label: `Ask ${d?.label || d?.title || k} again`, action: "keep-going" };
   }
   if (owed.length) return { label: `Ask ${owed.length} again`, action: "keep-going" };

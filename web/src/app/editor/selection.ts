@@ -6,7 +6,7 @@
 // selection sits in the block.
 
 const MARK = "[*_~`]*";
-const GAP = String.raw`(?:\s|[*_~\x60]|\[R\d+:[^\]]*\]|\]\([^)]*\)|\[|\n\s*(?:[-*]|\d+\.|#{1,4})\s+)+`;
+const GAP = String.raw`(?:\s|[*_~\x60]|\[(?:R\d+|B):[^\]]*\]|\]\([^)]*\)|\[|\n\s*(?:[-*]|\d+\.|#{1,4})\s+)+`;
 const esc = (c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Selected text without the citation chips' labels ("R1·2"). */
